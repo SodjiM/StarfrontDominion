@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS sector_objects (
     x INTEGER,
     y INTEGER,
     owner_id INTEGER,
-    meta TEXT, -- JSON for properties (HP, name, visibility, stealth, etc.)
+    meta TEXT, -- JSON for properties (HP, name, visibility, stealth, alwaysKnown, etc.)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (sector_id) REFERENCES sectors(id),
@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS movement_orders (
     destination_y INTEGER,
     movement_speed INTEGER DEFAULT 4,
     eta_turns INTEGER,
+    movement_path TEXT, -- JSON array of path coordinates
+    current_step INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'active', -- 'active', 'blocked', 'completed', 'cancelled'
+    blocked_by TEXT, -- JSON info about what blocked the movement
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (object_id) REFERENCES sector_objects(id)
 ); 

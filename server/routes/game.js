@@ -184,6 +184,91 @@ class GameWorldManager {
             }
         );
     }
+
+    // Calculate combined vision from all player units
+    static async calculatePlayerVision(gameId, userId, turnNumber) {
+        return new Promise((resolve, reject) => {
+            // Get player's sector
+            db.get(
+                'SELECT id FROM sectors WHERE game_id = ? AND owner_id = ?',
+                [gameId, userId],
+                (err, sector) => {
+                    if (err || !sector) return reject(new Error('Sector not found'));
+                    
+                    // Get all player's units with scan capabilities
+                    db.all(
+                        'SELECT * FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND type IN ("ship", "starbase")',
+                        [sector.id, userId],
+                        (err, units) => {
+                            if (err) return reject(err);
+                            
+                            const visionTiles = new Set();
+                            const detailedScanTiles = new Set();
+                            
+                            units.forEach(unit => {
+                                const meta = JSON.parse(unit.meta || '{}');
+                                const scanRange = meta.scanRange || 5; // Default scan range
+                                const detailedRange = meta.detailedScanRange || 2; // Close-range detailed scan
+                                
+                                // Add vision tiles around this unit
+                                for (let dx = -scanRange; dx <= scanRange; dx++) {
+                                    for (let dy = -scanRange; dy <= scanRange; dy++) {
+                                        const distance = Math.sqrt(dx * dx + dy * dy);
+                                        if (distance <= scanRange) {
+                                            const tileKey = `${unit.x + dx},${unit.y + dy}`;
+                                            visionTiles.add(tileKey);
+                                            
+                                            // Add detailed scan for close range
+                                            if (distance <= detailedRange) {
+                                                detailedScanTiles.add(tileKey);
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                            
+                            // Update visibility in database
+                            this.updatePlayerVisibility(gameId, userId, sector.id, visionTiles, detailedScanTiles, turnNumber, resolve, reject);
+                        }
+                    );
+                }
+            );
+        });
+    }
+
+    // Update player visibility in database
+    static updatePlayerVisibility(gameId, userId, sectorId, visionTiles, detailedScanTiles, turnNumber, resolve, reject) {
+        let updateCount = 0;
+        const totalUpdates = visionTiles.size;
+        
+        if (totalUpdates === 0) {
+            return resolve([]);
+        }
+        
+        visionTiles.forEach(tileKey => {
+            const [x, y] = tileKey.split(',').map(Number);
+            const visibilityLevel = detailedScanTiles.has(tileKey) ? 2 : 1; // 2=detailed, 1=basic
+            
+            db.run(
+                `INSERT OR REPLACE INTO player_visibility 
+                 (game_id, user_id, sector_id, x, y, last_seen_turn, visibility_level) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [gameId, userId, sectorId, x, y, turnNumber, visibilityLevel],
+                (err) => {
+                    if (err) {
+                        console.error('Error updating visibility:', err);
+                        return reject(err);
+                    }
+                    
+                    updateCount++;
+                    if (updateCount === totalUpdates) {
+                        console.log(`👁️ Updated ${totalUpdates} visibility tiles for player ${userId} on turn ${turnNumber}`);
+                        resolve(Array.from(visionTiles));
+                    }
+                }
+            );
+        });
+    }
     
     // Get game state for a specific player (works asynchronously)
     static async getPlayerGameState(gameId, userId) {
@@ -196,10 +281,26 @@ class GameWorldManager {
                     if (err) return reject(err);
                     if (!sector) return reject(new Error('Sector not found for player'));
                     
-                    // Get all objects in player's sector
+                    // Get visible objects with fog of war filtering, including movement data
                     db.all(
-                        'SELECT * FROM sector_objects WHERE sector_id = ?',
-                        [sector.id],
+                        `SELECT so.*, pv.visibility_level, pv.last_seen_turn, 
+                                mo.destination_x, mo.destination_y, mo.movement_path, 
+                                mo.eta_turns, mo.status as movement_status
+                         FROM sector_objects so
+                         LEFT JOIN player_visibility pv ON (
+                             pv.game_id = ? AND pv.user_id = ? AND pv.sector_id = so.sector_id 
+                             AND pv.x = so.x AND pv.y = so.y
+                         )
+                         LEFT JOIN movement_orders mo ON (
+                             so.id = mo.object_id AND mo.status IN ('active', 'blocked', 'completed')
+                         )
+                         WHERE so.sector_id = ? 
+                         AND (
+                             so.owner_id = ? OR 
+                             pv.visibility_level > 0 OR
+                             JSON_EXTRACT(so.meta, '$.alwaysKnown') = 1
+                         )`,
+                        [gameId, userId, sector.id, userId],
                         (err, objects) => {
                             if (err) return reject(err);
                             
@@ -225,16 +326,45 @@ class GameWorldManager {
                                                 (err, playerData) => {
                                                     if (err) return reject(err);
                                                     
-                                                    // Parse meta JSON for objects
-                                                    const parsedObjects = objects.map(obj => ({
-                                                        ...obj,
-                                                        meta: JSON.parse(obj.meta || '{}'),
-                                                        sectorInfo: {
-                                                            name: sector.name,
-                                                            archetype: sector.archetype,
-                                                            id: sector.id
+                                                    // Parse meta JSON and determine visibility status for objects
+                                                    const parsedObjects = objects.map(obj => {
+                                                        const meta = JSON.parse(obj.meta || '{}');
+                                                        const isOwned = obj.owner_id === userId;
+                                                        const isVisible = obj.visibility_level > 0;
+                                                        const isAlwaysKnown = meta.alwaysKnown === true;
+                                                        
+                                                        // Parse movement data if available
+                                                        let movementData = null;
+                                                        if (obj.movement_path && obj.movement_status) {
+                                                            const movementPath = JSON.parse(obj.movement_path || '[]');
+                                                            movementData = {
+                                                                movementPath: movementPath,
+                                                                plannedDestination: obj.destination_x && obj.destination_y ? 
+                                                                    { x: obj.destination_x, y: obj.destination_y } : null,
+                                                                movementETA: obj.eta_turns,
+                                                                movementActive: obj.movement_status === 'active' || obj.movement_status === 'completed',
+                                                                movementStatus: obj.movement_status
+                                                            };
                                                         }
-                                                    }));
+                                                        
+                                                        return {
+                                                            ...obj,
+                                                            meta,
+                                                            ...movementData, // Spread movement data directly into object
+                                                            sectorInfo: {
+                                                                name: sector.name,
+                                                                archetype: sector.archetype,
+                                                                id: sector.id
+                                                            },
+                                                            visibilityStatus: {
+                                                                owned: isOwned,
+                                                                visible: isVisible || isOwned,
+                                                                dimmed: isAlwaysKnown && !isVisible && !isOwned,
+                                                                level: obj.visibility_level || 0,
+                                                                lastSeen: obj.last_seen_turn || (isOwned ? turnNumber : null)
+                                                            }
+                                                        };
+                                                    });
                                                     
                                                     resolve({
                                                         sector: {
@@ -497,4 +627,107 @@ router.post('/setup/:gameId', (req, res) => {
         });
 });
 
-module.exports = router; 
+// Active scan route - temporary extended vision
+router.post('/scan/:gameId', (req, res) => {
+    const { gameId } = req.params;
+    const { userId, unitId, scanType = 'active' } = req.body;
+    
+    console.log(`🔍 Active scan request for game ${gameId}, user ${userId}, unit ${unitId}`);
+    
+    // Get the unit being used for scanning
+    db.get(
+        'SELECT so.*, s.id as sector_id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE so.id = ? AND so.owner_id = ? AND s.game_id = ?',
+        [unitId, userId, gameId],
+        (err, unit) => {
+            if (err) {
+                console.error('Error finding unit:', err);
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!unit) {
+                return res.status(404).json({ error: 'Unit not found or not owned by player' });
+            }
+            
+            const meta = JSON.parse(unit.meta || '{}');
+            
+            // Check if unit can perform active scans
+            if (!meta.canActiveScan) {
+                return res.status(400).json({ error: 'Unit cannot perform active scans' });
+            }
+            
+            // Check energy/cooldown (if implemented)
+            const activeScanRange = meta.activeScanRange || meta.scanRange * 2 || 10;
+            const energyCost = meta.activeScanCost || 1;
+            
+            if (meta.energy !== undefined && meta.energy < energyCost) {
+                return res.status(400).json({ error: 'Insufficient energy for active scan' });
+            }
+            
+            // Get current turn
+            db.get(
+                'SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1',
+                [gameId],
+                (err, turn) => {
+                    if (err) {
+                        console.error('Error getting current turn:', err);
+                        return res.status(500).json({ error: 'Database error' });
+                    }
+                    
+                    const currentTurn = turn?.turn_number || 1;
+                    
+                    // Create temporary extended vision
+                    const visionTiles = new Set();
+                    const detailedScanTiles = new Set();
+                    
+                    for (let dx = -activeScanRange; dx <= activeScanRange; dx++) {
+                        for (let dy = -activeScanRange; dy <= activeScanRange; dy++) {
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            if (distance <= activeScanRange) {
+                                const tileKey = `${unit.x + dx},${unit.y + dy}`;
+                                visionTiles.add(tileKey);
+                                
+                                // Detailed scan for closer range
+                                if (distance <= activeScanRange / 2) {
+                                    detailedScanTiles.add(tileKey);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Update visibility with temporary high-level scan
+                    GameWorldManager.updatePlayerVisibility(
+                        gameId, userId, unit.sector_id, visionTiles, detailedScanTiles, currentTurn,
+                        (updatedTiles) => {
+                            // Optionally reduce unit energy
+                            if (meta.energy !== undefined) {
+                                meta.energy = Math.max(0, meta.energy - energyCost);
+                                
+                                db.run(
+                                    'UPDATE sector_objects SET meta = ? WHERE id = ?',
+                                    [JSON.stringify(meta), unitId],
+                                    (err) => {
+                                        if (err) console.error('Error updating unit energy:', err);
+                                    }
+                                );
+                            }
+                            
+                            console.log(`✅ Active scan completed: ${updatedTiles.length} tiles revealed`);
+                            res.json({
+                                success: true,
+                                tilesRevealed: updatedTiles.length,
+                                energyRemaining: meta.energy,
+                                message: `Active scan revealed ${updatedTiles.length} new tiles`
+                            });
+                        },
+                        (error) => {
+                            console.error('Error updating visibility:', error);
+                            res.status(500).json({ error: 'Failed to update visibility' });
+                        }
+                    );
+                }
+            );
+        }
+    );
+});
+
+module.exports = { router, GameWorldManager }; 

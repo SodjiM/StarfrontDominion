@@ -28,6 +28,7 @@
         .title {
             font-size: 2em;
             background: linear-gradient(45deg, #64b5f6, #42a5f5);
+            background-clip: text;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
@@ -162,6 +163,12 @@
             box-shadow: 0 5px 15px rgba(211, 47, 47, 0.3);
         }
         
+        .btn-danger:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(211, 47, 47, 0.4);
+            background: linear-gradient(45deg, #c62828, #b71c1c);
+        }
+        
         .btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
@@ -187,6 +194,11 @@
             margin-bottom: 5px;
             display: flex;
             justify-content: space-between;
+        }
+        
+        .player-item.creator {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid rgba(255, 193, 7, 0.3);
         }
         
         .loading {
@@ -354,6 +366,14 @@
             const canJoin = !isUserGame && game.status === 'recruiting';
             const canLeave = isUserGame;
             
+            // Check if current user is the creator (first player to join)
+            const isCreator = game.players.length > 0 && 
+                             game.players.reduce((first, player) => {
+                                 const joinTime = new Date(player.joined_at);
+                                 const firstTime = new Date(first.joined_at);
+                                 return joinTime < firstTime ? player : first;
+                             }).username === localStorage.getItem('username');
+            
             detailsContainer.innerHTML = `
                 <h3>🎮 ${game.name}</h3>
                 <div><strong>Mode:</strong> ${game.mode}</div>
@@ -362,19 +382,20 @@
                 
                 <div class="players-list">
                     <h4>Players (${game.players.length}):</h4>
-                    ${game.players.map(player => `
-                        <div class="player-item">
-                            <span>${player.username}</span>
+                    ${game.players.map((player, index) => `
+                        <div class="player-item ${index === 0 ? 'creator' : ''}">
+                            <span>${player.username} ${index === 0 ? '👑 Creator' : ''}</span>
                             <span>Joined: ${new Date(player.joined_at).toLocaleDateString()}</span>
                         </div>
                     `).join('')}
                 </div>
                 
-                <div style="margin-top: 20px; display: flex; gap: 10px;">
+                <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
                     ${canJoin ? `<button class="btn btn-primary" onclick="joinGame(${game.id})">✅ Join Game</button>` : ''}
                     ${canLeave ? `<button class="btn btn-danger" onclick="leaveGame(${game.id})">❌ Leave Game</button>` : ''}
                     ${isUserGame && game.status === 'recruiting' ? `<button class="btn btn-primary" onclick="startGame(${game.id})">🚀 Start Game</button>` : ''}
                     ${game.status === 'active' && isUserGame ? `<button class="btn btn-primary" onclick="enterGame(${game.id})">🎮 Enter Game</button>` : ''}
+                    ${isCreator ? `<button class="btn btn-danger" onclick="deleteGame(${game.id}, '${game.name}')" style="margin-left: auto;">🗑️ Delete Game</button>` : ''}
                     <button class="btn btn-secondary" onclick="hideGameDetails()">Close</button>
                 </div>
             `;
@@ -428,6 +449,39 @@
                     hideGameDetails();
                 } else {
                     showError(data.error || 'Failed to leave game');
+                }
+            } catch (err) {
+                showError('Connection failed');
+            }
+        }
+
+        // Delete a game (creators only)
+        async function deleteGame(gameId, gameName) {
+            const confirmText = `Are you sure you want to PERMANENTLY DELETE the game "${gameName}"?\n\nThis action cannot be undone and will:\n• Remove the game from the lobby\n• Delete all game data (sectors, ships, turns, etc.)\n• Remove all players from the game\n\nType "DELETE" to confirm:`;
+            
+            const confirmation = prompt(confirmText);
+            if (confirmation !== 'DELETE') {
+                if (confirmation !== null) {
+                    alert('Deletion cancelled. You must type "DELETE" exactly to confirm.');
+                }
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/lobby/game/${gameId}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: currentUserId })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert(`✅ ${data.message}`);
+                    await loadGames();
+                    hideGameDetails();
+                } else {
+                    showError(data.error || 'Failed to delete game');
                 }
             } catch (err) {
                 showError('Connection failed');

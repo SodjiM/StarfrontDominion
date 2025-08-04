@@ -7,7 +7,7 @@ const { Server } = require('socket.io');
 const db = require('./db');
 const authRoutes = require('./routes/auth');
 const lobbyRoutes = require('./routes/lobby');
-const gameRoutes = require('./routes/game');
+const { router: gameRoutes, GameWorldManager } = require('./routes/game');
 
 const app = express();
 const server = createServer(app);
@@ -83,36 +83,101 @@ io.on('connection', (socket) => {
     
     // Handle movement orders - Store in database for asynchronous processing
     socket.on('move-ship', (data) => {
-        const { gameId, shipId, destinationX, destinationY } = data;
-        console.log(`🚢 Ship ${shipId} ordered to move to (${destinationX}, ${destinationY}) in game ${gameId}`);
+        const { gameId, shipId, currentX, currentY, destinationX, destinationY, movementPath, estimatedTurns } = data;
+        console.log(`🚢 Ship ${shipId} move order: from (${currentX || 'unknown'}, ${currentY || 'unknown'}) to (${destinationX}, ${destinationY}) in game ${gameId}`);
         
-        // Store movement order in database
+        // Get ship's current position and metadata
+        db.get('SELECT x, y, meta FROM sector_objects WHERE id = ?', [shipId], (err, ship) => {
+            if (err || !ship) {
+                console.error('Error finding ship:', err);
+                socket.emit('error', { message: 'Ship not found' });
+                return;
+            }
+            
+            const meta = JSON.parse(ship.meta || '{}');
+            const movementSpeed = meta.movementSpeed || 1;
+            const pathLength = movementPath ? movementPath.length - 1 : 0;
+            const actualETA = Math.ceil(pathLength / movementSpeed);
+            
+            // Log position validation
+            const serverX = ship.x;
+            const serverY = ship.y;
+            const clientX = currentX;
+            const clientY = currentY;
+            
+            if (clientX !== undefined && clientY !== undefined) {
+                const positionDiff = Math.abs(serverX - clientX) + Math.abs(serverY - clientY);
+                if (positionDiff > 0) {
+                    console.log(`⚠️ Position desync detected: Ship ${shipId} server:(${serverX},${serverY}) vs client:(${clientX},${clientY}) diff:${positionDiff}`);
+                } else {
+                    console.log(`✅ Position sync confirmed: Ship ${shipId} at (${serverX},${serverY})`);
+                }
+            }
+            
+            // First, cancel any existing movement orders for this ship
+            db.run(
+                'DELETE FROM movement_orders WHERE object_id = ? AND status IN ("active", "blocked")',
+                [shipId],
+                function(err) {
+                    if (err) {
+                        console.error('Error canceling old movement orders:', err);
+                        socket.emit('error', { message: 'Failed to cancel previous movement order' });
+                        return;
+                    }
+                    
+                    if (this.changes > 0) {
+                        console.log(`🗑️ Canceled ${this.changes} existing movement orders for ship ${shipId}`);
+                    }
+                    
+                    // Now store the new movement order with timestamp to prevent duplicates
+                    const orderTimestamp = new Date().toISOString();
         db.run(
-            'INSERT OR REPLACE INTO movement_orders (object_id, destination_x, destination_y, movement_speed, eta_turns) VALUES (?, ?, ?, ?, ?)',
-            [shipId, destinationX, destinationY, 4, calculateETA(destinationX, destinationY, shipId)],
+                        `INSERT INTO movement_orders 
+                         (object_id, destination_x, destination_y, movement_speed, eta_turns, movement_path, current_step, status, created_at) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            shipId, 
+                            destinationX, 
+                            destinationY, 
+                            movementSpeed, 
+                            actualETA,
+                            JSON.stringify(movementPath || []),
+                            0,
+                            'active',
+                            orderTimestamp
+                        ],
             (err) => {
                 if (err) {
                     console.error('Error storing movement order:', err);
                     socket.emit('error', { message: 'Failed to store movement order' });
                 } else {
+                                console.log(`📝 Movement order stored: ${pathLength} tiles, ETA ${actualETA} turns`);
+                                
                     // Confirm order received
                     socket.emit('movement-confirmed', { 
                         shipId, 
                         destinationX, 
                         destinationY,
-                        message: 'Movement order confirmed' 
+                                    pathLength,
+                                    estimatedTurns: actualETA,
+                                    message: `Movement order confirmed: ${pathLength} tiles, ETA ${actualETA} turns`
                     });
                     
-                    // Notify other players (if online) about the movement
+                                // Notify other players about the movement
                     socket.to(`game-${gameId}`).emit('ship-movement-ordered', {
                         shipId,
                         destinationX,
                         destinationY,
+                                    pathLength,
+                                    estimatedTurns: actualETA,
                         userId: socket.userId
                     });
                 }
             }
         );
+                }
+            );
+        });
     });
     
     socket.on('disconnect', () => {
@@ -190,48 +255,305 @@ function checkTurnResolution(gameId, turnNumber) {
 }
 
 // Resolve a turn (process all moves, combat, etc.)
-function resolveTurn(gameId, turnNumber) {
-    console.log(`🎬 Resolving turn ${turnNumber} for game ${gameId}`);
+// ✅ ATOMIC TURN RESOLUTION POLICY:
+// - No real-time updates during resolution
+// - All changes happen server-side first
+// - Clients receive final results via 'turn-resolved' + loadGameState()
+// - This ensures consistent game state and eliminates timing bugs
+async function resolveTurn(gameId, turnNumber) {
+    console.log(`🎬 Resolving turn ${turnNumber} for game ${gameId} (Atomic Resolution)`);
     
-    // Notify all players (online and offline will see this when they reconnect)
+    // Notify all players that resolution has started
     io.to(`game-${gameId}`).emit('turn-resolving', { 
         turnNumber,
         message: `Turn ${turnNumber} is now resolving...` 
     });
     
-    // TODO: Implement actual turn resolution logic
+    try {
     // 1. Process movement orders
-    // 2. Handle combat
-    // 3. Update visibility
-    // 4. Process resource generation
-    
-    // For now, just simulate processing time
-    setTimeout(() => {
+        await processMovementOrders(gameId, turnNumber);
+        
+        // 2. Update visibility for all players
+        await updateAllPlayersVisibility(gameId, turnNumber);
+        
+        // 3. Clean up old completed movement orders (older than 2 turns)
+        await cleanupOldMovementOrders(gameId, turnNumber);
+        
+        // 4. TODO: Handle combat, resource generation, etc.
+        
+        // Create next turn
         const nextTurn = turnNumber + 1;
         
-        // Create next turn in database
+        await new Promise((resolve, reject) => {
         db.run(
             'INSERT INTO turns (game_id, turn_number, status) VALUES (?, ?, ?)',
             [gameId, nextTurn, 'waiting'],
-            () => {
+                (err) => {
+                    if (err) return reject(err);
+                    
                 // Mark current turn as resolved
                 db.run(
                     'UPDATE turns SET status = ?, resolved_at = ? WHERE game_id = ? AND turn_number = ?',
                     ['completed', new Date().toISOString(), gameId, turnNumber],
-                    () => {
-                        console.log(`✅ Turn ${turnNumber} resolved, starting turn ${nextTurn}`);
+                        (err) => {
+                            if (err) return reject(err);
+                            resolve();
+                        }
+                    );
+                }
+            );
+        });
+        
+                        console.log(`✅ Turn ${turnNumber} atomically resolved, starting turn ${nextTurn}`);
                         
-                        // Notify all players
+                        // Notify all players - they will now loadGameState() to see all changes
                         io.to(`game-${gameId}`).emit('turn-resolved', { 
+                            turnNumber: turnNumber,
+                            nextTurn: nextTurn,
                             completedTurn: turnNumber,
                             newTurn: nextTurn,
-                            message: `Turn ${turnNumber} complete! Turn ${nextTurn} has begun.`
+                            message: `Turn ${turnNumber} resolved! All changes are now visible.`
                         });
+        
+    } catch (error) {
+        console.error(`❌ Error resolving turn ${turnNumber}:`, error);
+        
+        // Notify players of error
+        io.to(`game-${gameId}`).emit('turn-error', {
+            turnNumber,
+            error: 'Turn resolution failed'
+        });
+    }
+}
+
+// Process all movement orders for a turn with collision detection
+async function processMovementOrders(gameId, turnNumber) {
+    return new Promise((resolve, reject) => {
+        // Get all active movement orders for this game (only the most recent per ship)
+        db.all(
+            `SELECT mo.*, so.x as current_x, so.y as current_y, so.sector_id, so.meta 
+             FROM movement_orders mo 
+             JOIN sector_objects so ON mo.object_id = so.id 
+             JOIN sectors s ON so.sector_id = s.id 
+             WHERE s.game_id = ? AND mo.status = 'active'
+             AND mo.created_at = (
+                 SELECT MAX(mo2.created_at) 
+                 FROM movement_orders mo2 
+                 WHERE mo2.object_id = mo.object_id AND mo2.status = 'active'
+             )`,
+            [gameId],
+            async (err, orders) => {
+                if (err) return reject(err);
+                
+                console.log(`🚀 Processing ${orders.length} movement orders for turn ${turnNumber}`);
+                
+                // Clean up any duplicate movement orders (keep only the most recent per ship)
+                db.run(
+                    `DELETE FROM movement_orders 
+                     WHERE status = 'active' 
+                     AND created_at NOT IN (
+                         SELECT MAX(created_at) 
+                         FROM movement_orders mo2 
+                         WHERE mo2.object_id = movement_orders.object_id 
+                         AND mo2.status = 'active'
+                     )`,
+                    (err) => {
+                        if (err) {
+                            console.error('Error cleaning duplicate movement orders:', err);
+                        } else if (this.changes > 0) {
+                            console.log(`🧹 Cleaned up ${this.changes} duplicate movement orders`);
+                        }
                     }
                 );
+                
+                const movementResults = [];
+                
+                // Process each movement order
+                for (const order of orders) {
+                    try {
+                        const result = await processSingleMovement(order, turnNumber, gameId);
+                        movementResults.push(result);
+                    } catch (error) {
+                        console.error(`Error processing movement for object ${order.object_id}:`, error);
+                        movementResults.push({
+                            objectId: order.object_id,
+                            status: 'error',
+                            error: error.message
+                        });
+                    }
+                }
+                
+                console.log(`📝 Movement processing complete: ${movementResults.length} orders processed`);
+                resolve(movementResults);
             }
         );
-    }, 3000); // 3 second processing simulation
+    });
+}
+
+// Process a single ship's movement with collision detection
+async function processSingleMovement(order, turnNumber, gameId) {
+    return new Promise((resolve, reject) => {
+        const movementPath = JSON.parse(order.movement_path || '[]');
+        const currentStep = order.current_step || 0;
+        const movementSpeed = order.movement_speed || 1;
+        const meta = JSON.parse(order.meta || '{}');
+        
+        // Calculate how many steps to take this turn
+        const stepsToTake = Math.min(movementSpeed, movementPath.length - 1 - currentStep);
+        
+        if (stepsToTake <= 0) {
+            // Movement already complete
+            db.run(
+                'UPDATE movement_orders SET status = ? WHERE id = ?',
+                ['completed', order.id],
+                () => resolve({ objectId: order.object_id, status: 'completed' })
+            );
+            return;
+        }
+        
+        const newStep = currentStep + stepsToTake;
+        const targetTile = movementPath[newStep];
+        
+        if (!targetTile) {
+            return reject(new Error('Invalid movement path'));
+        }
+        
+        // Check for collision at target position
+        db.get(
+            'SELECT id, type, owner_id, meta FROM sector_objects WHERE sector_id = ? AND x = ? AND y = ? AND id != ?',
+            [order.sector_id, targetTile.x, targetTile.y, order.object_id],
+            (err, collision) => {
+                if (err) return reject(err);
+                
+                if (collision) {
+                    // Collision detected - stop movement
+                    console.log(`🚧 Movement blocked: Ship ${order.object_id} blocked by ${collision.type} ${collision.id} at (${targetTile.x}, ${targetTile.y})`);
+                    
+                    const blockingInfo = {
+                        blockingObjectId: collision.id,
+                        blockingType: collision.type,
+                        blockingOwner: collision.owner_id,
+                        blockedAt: targetTile,
+                        turn: turnNumber
+                    };
+                    
+                    // Update movement order as blocked
+                    db.run(
+                        'UPDATE movement_orders SET status = ?, blocked_by = ? WHERE id = ?',
+                        ['blocked', JSON.stringify(blockingInfo), order.id],
+                        () => {
+                                                                const result = {
+                                        objectId: order.object_id,
+                                        status: 'blocked',
+                                        blockingInfo,
+                                        finalPosition: { x: order.current_x, y: order.current_y }
+                                    };
+                                    
+                                    // ✅ No real-time updates - clients will see results after turn resolves
+                                    console.log(`🚫 Ship ${order.object_id} movement blocked at (${order.current_x}, ${order.current_y})`);
+                                    
+                                    resolve(result);
+                        }
+                    );
+                } else {
+                    // No collision - move ship
+                    db.run(
+                        'UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?',
+                        [targetTile.x, targetTile.y, new Date().toISOString(), order.object_id],
+                        (err) => {
+                            if (err) return reject(err);
+                            
+                            // Update movement order progress
+                            const isComplete = newStep >= movementPath.length - 1;
+                            const newStatus = isComplete ? 'completed' : 'active';
+                            
+                            db.run(
+                                'UPDATE movement_orders SET current_step = ?, status = ? WHERE id = ?',
+                                [newStep, newStatus, order.id],
+                                () => {
+                                    console.log(`🚢 Ship ${order.object_id} moved to (${targetTile.x}, ${targetTile.y}) - Step ${newStep}/${movementPath.length-1}`);
+                                    
+                                    const result = {
+                                        objectId: order.object_id,
+                                        status: newStatus,
+                                        newPosition: targetTile,
+                                        currentStep: newStep,
+                                        totalSteps: movementPath.length - 1
+                                    };
+                                    
+                                    // ✅ No real-time updates - clients will see all results after turn resolves
+                                    if (newStatus === 'completed') {
+                                        console.log(`✅ Ship ${order.object_id} completed movement to (${targetTile.x}, ${targetTile.y})`);
+                                    } else {
+                                        console.log(`➡️ Ship ${order.object_id} continuing movement - step ${newStep}/${movementPath.length-1}`);
+                                    }
+                                    
+                                    resolve(result);
+                                }
+                            );
+                        }
+                    );
+                }
+            }
+        );
+    });
+}
+
+// Update visibility for all players after movements
+async function updateAllPlayersVisibility(gameId, turnNumber) {
+    return new Promise((resolve, reject) => {
+        // Get all players in the game
+        db.all(
+            'SELECT DISTINCT user_id FROM game_players WHERE game_id = ?',
+            [gameId],
+            async (err, players) => {
+                if (err) return reject(err);
+                
+                console.log(`👁️ Updating visibility for ${players.length} players`);
+                
+                // Update visibility for each player
+                for (const player of players) {
+                    try {
+                        await GameWorldManager.calculatePlayerVision(gameId, player.user_id, turnNumber);
+                    } catch (error) {
+                        console.error(`Error updating visibility for player ${player.user_id}:`, error);
+                    }
+                }
+                
+                resolve();
+            }
+        );
+    });
+}
+
+// Clean up old completed movement orders to prevent database bloat
+async function cleanupOldMovementOrders(gameId, currentTurn) {
+    return new Promise((resolve, reject) => {
+        // Delete movement orders that have been completed for more than 2 turns
+        // This gives time for players to see the path completion before it disappears
+        db.run(
+            `DELETE FROM movement_orders 
+             WHERE status = 'completed' 
+             AND id IN (
+                 SELECT mo.id FROM movement_orders mo
+                 JOIN sector_objects so ON mo.object_id = so.id
+                 JOIN sectors s ON so.sector_id = s.id
+                 WHERE s.game_id = ? AND (? - COALESCE(mo.current_step, 0)) > 2
+             )`,
+            [gameId, currentTurn],
+            function(err) {
+                if (err) {
+                    console.error('Error cleaning up movement orders:', err);
+                    return reject(err);
+                }
+                
+                if (this.changes > 0) {
+                    console.log(`🧹 Cleaned up ${this.changes} old movement orders for game ${gameId}`);
+                }
+                resolve();
+            }
+        );
+    });
 }
 
 // Helper function to calculate ETA for movement

@@ -89,9 +89,32 @@ class GameClient {
             this.loadGameState(); // Refresh game state
         });
 
+        // ✅ Atomic Turn Resolution Policy: No real-time movement updates
+        // All movement results will be visible after 'turn-resolved' via loadGameState()
+        // 
+        // Future: We can add post-resolution animations here if desired
+        // this.socket.on('turn-resolved', (data) => {
+        //     // Optional: Add smooth animations for movement changes
+        //     this.animateMovementResults(data.movementSummary);
+        // });
+
         this.socket.on('disconnect', () => {
             console.log('🔌 Disconnected from server');
         });
+    }
+
+    // ✅ Atomic Turn Resolution Policy: Removed real-time movement updates
+    // All movement changes now happen atomically after turn resolution via loadGameState()
+    // 
+    // This function is preserved for potential future use (animations, etc.)
+    // but is no longer called during normal gameplay
+    handleMovementUpdate(data) {
+        console.log('⚠️ handleMovementUpdate called - this should not happen with atomic turn resolution');
+        console.log('Movement update data:', data);
+        
+        // Future: Could be used for post-resolution animations
+        // const { objectId, status, newPosition } = data;
+        // this.animateMovementChange(objectId, status, newPosition);
     }
 
     // Load game state from server
@@ -164,6 +187,18 @@ class GameClient {
 
         this.objects = this.gameState.objects;
         this.units = playerObjects;
+        
+        // Debug: Log ships with movement data
+        const movingShips = this.objects.filter(obj => obj.movementPath && obj.movementActive);
+        if (movingShips.length > 0) {
+            console.log(`🚢 Found ${movingShips.length} ships with active movement paths:`, movingShips.map(s => ({
+                id: s.id,
+                name: s.meta.name,
+                pathLength: s.movementPath?.length,
+                destination: s.plannedDestination,
+                active: s.movementActive
+            })));
+        }
 
         // Auto-select first unit if none selected
         if (!this.selectedUnit && this.units.length > 0) {
@@ -214,11 +249,48 @@ class GameClient {
             this.camera.x = this.selectedUnit.x;
             this.camera.y = this.selectedUnit.y;
             
+            // Restore movement path if ship has active movement orders
+            this.restoreMovementPath(this.selectedUnit);
+            
             // Update unit details panel
             this.updateUnitDetails();
             
             // Re-render map
             this.render();
+        }
+    }
+
+    // Restore movement path data for a selected unit
+    restoreMovementPath(unit) {
+        if (unit.type !== 'ship') return;
+        
+        // Check if the ship has an active movement order
+        if (unit.plannedDestination && unit.movementETA && !unit.movementPath) {
+            // Recalculate path from current position to planned destination
+            const currentPath = this.calculateMovementPath(
+                unit.x,
+                unit.y,
+                unit.plannedDestination.x,
+                unit.plannedDestination.y
+            );
+            
+            // Only restore if there's still a valid path to the destination
+            if (currentPath.length > 1) {
+                unit.movementPath = currentPath;
+                unit.movementActive = true;
+                
+                // Recalculate ETA based on current position
+                const updatedETA = this.calculateETA(currentPath, unit.meta.movementSpeed || 1);
+                unit.movementETA = updatedETA;
+                
+                this.addLogEntry(`${unit.meta.name} movement path restored (${currentPath.length - 1} tiles, ETA: ${updatedETA}T)`, 'info');
+            } else {
+                // Clear invalid movement data if destination is unreachable
+                unit.movementPath = null;
+                unit.movementActive = false;
+                unit.plannedDestination = null;
+                unit.movementETA = null;
+            }
         }
     }
 
@@ -280,6 +352,24 @@ class GameClient {
                     <span>${meta.pilots}</span>
                 </div>
                 ` : ''}
+                
+                ${meta.energy !== undefined ? `
+                <div class="stat-item">
+                    <span>⚡ Energy:</span>
+                    <span>${meta.energy}/${meta.maxEnergy || meta.energy}</span>
+                </div>
+                ` : ''}
+                
+                ${meta.canActiveScan ? `
+                <div class="stat-item">
+                    <span>🔍 Active Scan Range:</span>
+                    <span>${meta.activeScanRange || meta.scanRange * 2 || 10} tiles</span>
+                </div>
+                <div class="stat-item">
+                    <span>💡 Scan Cost:</span>
+                    <span>${meta.activeScanCost || 1} energy</span>
+                </div>
+                ` : ''}
             </div>
             
             <div style="margin-top: 20px;">
@@ -287,8 +377,8 @@ class GameClient {
                     <button class="action-btn" onclick="setMoveMode()" ${this.turnLocked ? 'disabled' : ''}>
                         🎯 Set Destination
                     </button>
-                    <button class="action-btn" onclick="scanArea()" ${this.turnLocked ? 'disabled' : ''}>
-                        🔍 Scan Area
+                    <button class="action-btn" onclick="scanArea()" ${this.turnLocked || !meta.canActiveScan ? 'disabled' : ''}>
+                        ${meta.canActiveScan ? '🔍 Active Scan' : '🔍 Scan Area (N/A)'}
                     </button>
                 ` : ''}
                 
@@ -326,6 +416,9 @@ class GameClient {
         
         // Draw objects
         this.drawObjects(ctx, centerX, centerY);
+        
+        // Draw movement paths for all ships with active movement orders
+        this.drawMovementPaths(ctx, centerX, centerY);
         
         // Draw selection highlight
         this.drawSelection(ctx, centerX, centerY);
@@ -380,18 +473,43 @@ class GameClient {
     drawObject(ctx, obj, x, y) {
         const size = this.tileSize * 0.8;
         const isOwned = obj.owner_id === this.userId;
+        const visibility = obj.visibilityStatus || { visible: isOwned, dimmed: false };
+        
+        // Determine visual state based on visibility
+        let alpha = 1.0;
+        let borderColor = '#666';
+        let backgroundColor = 'rgba(255, 255, 255, 0.1)';
+        
+        if (isOwned) {
+            borderColor = '#4caf50';
+            backgroundColor = 'rgba(76, 175, 80, 0.3)';
+        } else if (visibility.dimmed) {
+            // AlwaysKnown celestial objects that haven't been scanned
+            alpha = 0.4;
+            borderColor = '#64b5f6';
+            backgroundColor = 'rgba(100, 181, 246, 0.1)';
+        } else if (visibility.visible) {
+            // Scanned objects
+            alpha = 0.8;
+            borderColor = '#ff9800';
+            backgroundColor = 'rgba(255, 152, 0, 0.1)';
+        }
+        
+        // Save context for alpha
+        ctx.save();
+        ctx.globalAlpha = alpha;
         
         // Draw object background
-        ctx.fillStyle = isOwned ? 'rgba(76, 175, 80, 0.3)' : 'rgba(255, 255, 255, 0.1)';
+        ctx.fillStyle = backgroundColor;
         ctx.fillRect(x - size/2, y - size/2, size, size);
         
         // Draw object border
-        ctx.strokeStyle = isOwned ? '#4caf50' : '#666';
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = visibility.dimmed ? 1 : 2;
         ctx.strokeRect(x - size/2, y - size/2, size, size);
         
         // Draw object icon/text
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = visibility.dimmed ? '#64b5f6' : '#ffffff';
         ctx.font = `${this.tileSize * 0.6}px Arial`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -399,11 +517,21 @@ class GameClient {
         const icon = this.getUnitIcon(obj.type);
         ctx.fillText(icon, x, y);
         
-        // Draw object name if zoomed in enough
-        if (this.tileSize > 15) {
+        // Draw object name if zoomed in enough (only for owned or fully visible objects)
+        if (this.tileSize > 15 && (isOwned || (visibility.visible && !visibility.dimmed))) {
             ctx.font = `${this.tileSize * 0.3}px Arial`;
             ctx.fillText(obj.meta.name || obj.type, x, y + size/2 + 10);
         }
+        
+        // Draw fog of war indicator for dimmed objects
+        if (visibility.dimmed && this.tileSize > 12) {
+            ctx.fillStyle = 'rgba(100, 181, 246, 0.6)';
+            ctx.font = `${this.tileSize * 0.2}px Arial`;
+            ctx.fillText('?', x + size/4, y - size/4);
+        }
+        
+        // Restore context
+        ctx.restore();
     }
 
     // Draw selection highlight
@@ -483,11 +611,55 @@ class GameClient {
         // Canvas click for selection/movement
         this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
         
+        // Canvas right-click for movement/attack commands
+        this.canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); // Prevent context menu
+            this.handleCanvasRightClick(e);
+        });
+        
+        // Mouse move for cursor feedback
+        this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
+        
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
     }
 
-    // Handle canvas clicks
+    // Handle mouse movement for cursor feedback
+    handleCanvasMouseMove(e) {
+        if (!this.selectedUnit || this.turnLocked) {
+            this.canvas.style.cursor = 'default';
+            return;
+        }
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        // Convert screen coordinates to world coordinates
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const worldX = Math.round(this.camera.x + (x - centerX) / this.tileSize);
+        const worldY = Math.round(this.camera.y + (y - centerY) / this.tileSize);
+        
+        // Check what's under the cursor
+        const hoveredObject = this.objects.find(obj => 
+            Math.abs(obj.x - worldX) <= 0.5 && Math.abs(obj.y - worldY) <= 0.5
+        );
+        
+        if (hoveredObject) {
+            if (hoveredObject.owner_id === this.userId) {
+                this.canvas.style.cursor = 'pointer'; // Own unit - select
+            } else {
+                this.canvas.style.cursor = 'crosshair'; // Enemy - attack
+            }
+        } else if (this.selectedUnit.type === 'ship') {
+            this.canvas.style.cursor = 'move'; // Empty space - move
+        } else {
+            this.canvas.style.cursor = 'default';
+        }
+    }
+
+    // Handle canvas clicks (left-click for unit selection only)
     handleCanvasClick(e) {
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -499,7 +671,7 @@ class GameClient {
         const worldX = Math.round(this.camera.x + (x - centerX) / this.tileSize);
         const worldY = Math.round(this.camera.y + (y - centerY) / this.tileSize);
         
-        console.log(`Clicked world position: (${worldX}, ${worldY})`);
+        console.log(`Left-clicked world position: (${worldX}, ${worldY})`);
         
         // Check if clicking on an object
         const clickedObject = this.objects.find(obj => 
@@ -507,18 +679,167 @@ class GameClient {
         );
         
         if (clickedObject && clickedObject.owner_id === this.userId) {
+            // Select owned unit
             this.selectUnit(clickedObject.id);
-        } else if (this.selectedUnit && this.selectedUnit.type === 'ship' && !this.turnLocked) {
-            // Move command
-            console.log(`Ordering ship to move to (${worldX}, ${worldY})`);
-            this.addLogEntry(`Ordered ${this.selectedUnit.meta.name} to move to (${worldX}, ${worldY})`, 'info');
+            console.log(`Selected unit: ${clickedObject.meta.name || clickedObject.type}`);
+        } else if (clickedObject) {
+            // Clicked on enemy/neutral object - just show info, don't select
+            this.addLogEntry(`Detected ${clickedObject.meta.name || clickedObject.type} (${clickedObject.owner_id === this.userId ? 'Friendly' : 'Enemy'})`, 'info');
+        } else {
+            // Clicked on empty space - deselect current unit
+            if (this.selectedUnit) {
+                console.log(`Deselected unit: ${this.selectedUnit.meta.name || this.selectedUnit.type}`);
+                this.selectedUnit = null;
+                
+                // Update unit details panel to show nothing selected
+                this.updateUnitDetails();
+                
+                // Re-render to remove selection highlight
+                this.render(); 
+            }
+        }
+    }
+
+    // Handle canvas right-clicks for movement/attack
+    handleCanvasRightClick(e) {
+        if (!this.selectedUnit || this.turnLocked) return;
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        // Convert screen coordinates to world coordinates
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const worldX = Math.round(this.camera.x + (x - centerX) / this.tileSize);
+        const worldY = Math.round(this.camera.y + (y - centerY) / this.tileSize);
+        
+        console.log(`Right-clicked world position: (${worldX}, ${worldY}) - checking for move/attack command`);
+        
+        // Check if right-clicking on an object
+        const clickedObject = this.objects.find(obj => 
+            Math.abs(obj.x - worldX) <= 0.5 && Math.abs(obj.y - worldY) <= 0.5
+        );
+        
+        if (clickedObject) {
+            if (clickedObject.owner_id === this.userId) {
+                // Right-clicked on own unit - show context menu or info
+                this.addLogEntry(`Selected ${clickedObject.meta.name || clickedObject.type}`, 'info');
+            } else {
+                // Right-clicked on enemy/neutral object - attack command
+                this.handleAttackCommand(clickedObject, worldX, worldY);
+            }
+        } else {
+            // Right-clicked on empty space - movement command
+            this.handleMoveCommand(worldX, worldY);
+        }
+    }
+
+    // Handle move command (right-click on empty space)
+    handleMoveCommand(worldX, worldY) {
+        if (!this.selectedUnit || this.selectedUnit.type !== 'ship') {
+            this.addLogEntry('Only ships can be moved', 'warning');
+            return;
+        }
+        
+        // Get ship's current position (might have moved from original position)
+        const currentX = this.selectedUnit.x;
+        const currentY = this.selectedUnit.y;
+        
+        console.log(`🚢 handleMoveCommand: Ship ${this.selectedUnit.id} at (${currentX}, ${currentY}) moving to (${worldX}, ${worldY})`);
+        
+        // Calculate movement path from current position using Bresenham algorithm
+        const movementPath = this.calculateMovementPath(
+            currentX, 
+            currentY, 
+            worldX, 
+            worldY
+        );
+        
+        if (movementPath.length > 1) {
+            const eta = this.calculateETA(movementPath, this.selectedUnit.meta.movementSpeed || 1);
             
-            // TODO: Send move command to server
+            // Clear ALL movement data for this ship completely
+            const wasMoving = this.selectedUnit.movementPath !== null;
+            this.selectedUnit.movementPath = null;
+            this.selectedUnit.movementActive = false;
+            this.selectedUnit.plannedDestination = null;
+            this.selectedUnit.movementETA = null;
+            
+            if (wasMoving) {
+                this.addLogEntry(`${this.selectedUnit.meta.name} new route: canceling previous destination`, 'info');
+            }
+            
+            // Set new movement data
+            this.selectedUnit.movementPath = movementPath;
+            this.selectedUnit.plannedDestination = { x: worldX, y: worldY };
+            this.selectedUnit.movementETA = eta;
+            this.selectedUnit.movementActive = true; // Flag for persistent rendering
+            
+            // Re-render to show the path
+            this.render();
+            
+            console.log(`📍 Movement path calculated: ${movementPath.length - 1} tiles from (${currentX},${currentY}) to (${worldX},${worldY})`);
+            this.addLogEntry(`${this.selectedUnit.meta.name} ordered to move: ${movementPath.length - 1} tiles, ETA: ${eta} turns`, 'info');
+            
+            // Send move command to server with explicit current position
             this.socket.emit('move-ship', {
                 gameId: this.gameId,
                 shipId: this.selectedUnit.id,
+                currentX: currentX,
+                currentY: currentY,
                 destinationX: worldX,
-                destinationY: worldY
+                destinationY: worldY,
+                movementPath: movementPath,
+                estimatedTurns: eta
+            });
+        } else {
+            this.addLogEntry('Invalid movement destination', 'warning');
+        }
+    }
+
+    // Handle attack command (right-click on enemy)
+    handleAttackCommand(target, worldX, worldY) {
+        if (!this.selectedUnit || this.selectedUnit.type !== 'ship') {
+            this.addLogEntry('Only ships can attack', 'warning');
+            return;
+        }
+        
+        const distance = Math.sqrt(
+            Math.pow(this.selectedUnit.x - target.x, 2) + 
+            Math.pow(this.selectedUnit.y - target.y, 2)
+        );
+        
+        const attackRange = this.selectedUnit.meta.attackRange || 1;
+        
+        if (distance > attackRange) {
+            // Too far to attack - move into range first
+            this.addLogEntry(`Target out of range. Moving to attack ${target.meta.name || target.type}`, 'warning');
+            
+            // Calculate position just within attack range
+            const dx = target.x - this.selectedUnit.x;
+            const dy = target.y - this.selectedUnit.y;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const moveToX = Math.round(target.x - (dx / length) * (attackRange * 0.9));
+            const moveToY = Math.round(target.y - (dy / length) * (attackRange * 0.9));
+            
+            // Move into range, then attack next turn
+            this.handleMoveCommand(moveToX, moveToY);
+            
+            // Store attack target for next turn
+            this.selectedUnit.pendingAttackTarget = target.id;
+            
+        } else {
+            // In range - issue attack command
+            this.addLogEntry(`${this.selectedUnit.meta.name} attacking ${target.meta.name || target.type}!`, 'success');
+            
+            // TODO: Send attack command to server
+            this.socket.emit('attack-target', {
+                gameId: this.gameId,
+                attackerId: this.selectedUnit.id,
+                targetId: target.id,
+                attackerPosition: { x: this.selectedUnit.x, y: this.selectedUnit.y },
+                targetPosition: { x: target.x, y: target.y }
             });
         }
     }
@@ -543,6 +864,164 @@ class GameClient {
                 }
                 break;
         }
+    }
+
+    // Bresenham line algorithm for tile-based pathfinding
+    calculateMovementPath(startX, startY, endX, endY) {
+        const path = [];
+        let x0 = Math.round(startX);
+        let y0 = Math.round(startY);
+        const x1 = Math.round(endX);
+        const y1 = Math.round(endY);
+        
+        const dx = Math.abs(x1 - x0);
+        const dy = Math.abs(y1 - y0);
+        const sx = x0 < x1 ? 1 : -1;
+        const sy = y0 < y1 ? 1 : -1;
+        let err = dx - dy;
+        
+        while (true) {
+            path.push({ x: x0, y: y0 });
+            
+            if (x0 === x1 && y0 === y1) break;
+            
+            const e2 = 2 * err;
+            if (e2 > -dy) {
+                err -= dy;
+                x0 += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+        
+        return path;
+    }
+
+    // Calculate ETA for movement path
+    calculateETA(path, movementSpeed) {
+        if (!path || path.length <= 1) return 0;
+        const distance = path.length - 1; // Exclude starting position
+        return Math.ceil(distance / (movementSpeed || 1));
+    }
+
+    // Draw movement paths for all visible ships with active movement orders
+    drawMovementPaths(ctx, centerX, centerY) {
+        // Find all ships with active movement paths (visible to this player)
+        const movingShips = this.objects.filter(obj => 
+            obj.type === 'ship' && 
+            obj.movementPath && 
+            obj.movementActive &&
+            (obj.visibilityStatus?.visible || obj.owner_id === this.userId)
+        );
+        
+        // ✅ With atomic turn resolution, phantom paths should no longer occur
+        if (movingShips.length > 0) {
+            console.log(`🎨 Drawing ${movingShips.length} movement paths (post-resolution state)`);
+        }
+        
+        movingShips.forEach(ship => {
+            this.drawSingleMovementPath(ctx, centerX, centerY, ship);
+        });
+    }
+
+    // Draw movement path for a single ship
+    drawSingleMovementPath(ctx, centerX, centerY, ship) {
+        if (!ship.movementPath || ship.movementPath.length <= 1) return;
+        
+        const path = ship.movementPath;
+        const isSelected = this.selectedUnit && this.selectedUnit.id === ship.id;
+        const isOwned = ship.owner_id === this.userId;
+        
+        ctx.save();
+        
+        // Different styling for owned vs enemy, and selected vs background
+        if (isSelected) {
+            // Selected unit - bright yellow (regardless of ownership)
+            ctx.strokeStyle = '#ffeb3b';
+            ctx.lineWidth = 3;
+            ctx.globalAlpha = 1.0;
+        } else if (isOwned) {
+            // Own ship - green/yellow
+            ctx.strokeStyle = '#8bc34a';
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 0.8;
+        } else {
+            // Enemy ship - red/orange
+            ctx.strokeStyle = '#f44336';
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 0.7;
+        }
+        
+        ctx.setLineDash([5, 5]);
+        
+        // Draw dotted line path
+        ctx.beginPath();
+        for (let i = 0; i < path.length; i++) {
+            const tile = path[i];
+            const screenX = centerX + (tile.x - this.camera.x) * this.tileSize;
+            const screenY = centerY + (tile.y - this.camera.y) * this.tileSize;
+            
+            if (i === 0) {
+                ctx.moveTo(screenX, screenY);
+            } else {
+                ctx.lineTo(screenX, screenY);
+            }
+        }
+        ctx.stroke();
+        
+        // Draw current position marker (ship's actual current tile)
+        const currentScreenX = centerX + (ship.x - this.camera.x) * this.tileSize;
+        const currentScreenY = centerY + (ship.y - this.camera.y) * this.tileSize;
+        
+        ctx.setLineDash([]);
+        
+        // Current position marker color based on ownership and selection
+        if (isSelected) {
+            ctx.fillStyle = '#4caf50'; // Green for selected
+        } else if (isOwned) {
+            ctx.fillStyle = '#66bb6a'; // Light green for owned
+        } else {
+            ctx.fillStyle = '#ef5350'; // Light red for enemy
+        }
+        
+        ctx.beginPath();
+        ctx.arc(currentScreenX, currentScreenY, isSelected ? 7 : 5, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw destination marker
+        if (path.length > 1) {
+            const dest = path[path.length - 1];
+            const destScreenX = centerX + (dest.x - this.camera.x) * this.tileSize;
+            const destScreenY = centerY + (dest.y - this.camera.y) * this.tileSize;
+            
+            // Destination marker color matching the path
+            if (isSelected) {
+                ctx.fillStyle = '#ffeb3b'; // Yellow for selected
+            } else if (isOwned) {
+                ctx.fillStyle = '#8bc34a'; // Green for owned
+            } else {
+                ctx.fillStyle = '#f44336'; // Red for enemy
+            }
+            
+            ctx.beginPath();
+            ctx.arc(destScreenX, destScreenY, isSelected ? 8 : 6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw ETA near destination (only for owned ships to avoid revealing enemy info)
+            if (isSelected || isOwned) {
+                const eta = this.calculateETA(path, ship.meta.movementSpeed || 1);
+                if (eta > 0) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '12px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`ETA: ${eta}T`, destScreenX, destScreenY - 15);
+                }
+            }
+        }
+        
+        ctx.restore();
     }
 
     // Add entry to activity log
@@ -855,15 +1334,80 @@ function centerOnSelected() {
 }
 
 function setMoveMode() {
-    if (gameClient) {
+    if (gameClient && gameClient.selectedUnit && gameClient.selectedUnit.type === 'ship') {
         gameClient.addLogEntry('Click on map to set destination', 'info');
+        // Enable visual feedback that we're in movement mode
+        gameClient.canvas.style.cursor = 'crosshair';
+        
+        // Temporarily highlight the selected ship
+        gameClient.render();
+    } else if (gameClient) {
+        gameClient.addLogEntry('Select a ship first', 'warning');
     }
 }
 
-function scanArea() {
-    if (gameClient) {
-        gameClient.addLogEntry('Scanning area...', 'info');
-        // TODO: Implement scanning
+async function scanArea() {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No unit selected for scanning', 'warning');
+        return;
+    }
+    
+    const unit = gameClient.selectedUnit;
+    const meta = unit.meta;
+    
+    // Check if unit can perform active scans
+    if (!meta.canActiveScan) {
+        gameClient.addLogEntry('Selected unit cannot perform active scans', 'warning');
+        UI.showAlert('This unit does not have active scanning capabilities');
+        return;
+    }
+    
+    // Check energy requirements
+    const energyCost = meta.activeScanCost || 1;
+    if (meta.energy !== undefined && meta.energy < energyCost) {
+        gameClient.addLogEntry('Insufficient energy for active scan', 'warning');
+        UI.showAlert(`Active scan requires ${energyCost} energy. Current: ${meta.energy || 0}`);
+        return;
+    }
+    
+    try {
+        gameClient.addLogEntry('Performing active scan...', 'info');
+        
+        const response = await fetch(`/game/scan/${gameClient.gameId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId: gameClient.userId,
+                unitId: unit.id,
+                scanType: 'active'
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            gameClient.addLogEntry(`Active scan complete! Revealed ${data.tilesRevealed} new tiles`, 'success');
+            
+            // Update unit energy display
+            if (data.energyRemaining !== undefined) {
+                unit.meta.energy = data.energyRemaining;
+                gameClient.updateUnitDetails(); // Refresh the unit details panel
+            }
+            
+            // Refresh game state to show newly revealed objects
+            await gameClient.loadGameState();
+            
+        } else {
+            gameClient.addLogEntry(`Scan failed: ${data.error}`, 'error');
+            UI.showAlert(`Active scan failed: ${data.error}`);
+        }
+        
+    } catch (error) {
+        console.error('Active scan error:', error);
+        gameClient.addLogEntry('Active scan connection failed', 'error');
+        UI.showAlert('Connection failed. Please try again.');
     }
 }
 

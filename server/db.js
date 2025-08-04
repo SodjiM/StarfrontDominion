@@ -100,6 +100,31 @@ const initializeDatabase = async () => {
                 if (err && !err.message.includes('duplicate column')) {
                     console.error('Migration error (archetype):', err);
                 }
+            });
+            
+            // Add new movement order columns
+            db.run(`ALTER TABLE movement_orders ADD COLUMN movement_path TEXT`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (movement_path):', err);
+                }
+            });
+            
+            db.run(`ALTER TABLE movement_orders ADD COLUMN current_step INTEGER DEFAULT 0`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (current_step):', err);
+                }
+            });
+            
+            db.run(`ALTER TABLE movement_orders ADD COLUMN status TEXT DEFAULT 'active'`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (status):', err);
+                }
+            });
+            
+            db.run(`ALTER TABLE movement_orders ADD COLUMN blocked_by TEXT`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (blocked_by):', err);
+                }
                 resolve();
             });
         });
