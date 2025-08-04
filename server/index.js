@@ -467,25 +467,30 @@ async function processSingleMovement(order, turnNumber, gameId) {
                             const isComplete = newStep >= movementPath.length - 1;
                             const newStatus = isComplete ? 'completed' : 'active';
                             
+                            // STAGE A FIX: Calculate remaining ETA after movement
+                            const remainingSteps = movementPath.length - 1 - newStep;
+                            const newETA = Math.ceil(remainingSteps / movementSpeed);
+                            
                             db.run(
-                                'UPDATE movement_orders SET current_step = ?, status = ? WHERE id = ?',
-                                [newStep, newStatus, order.id],
+                                'UPDATE movement_orders SET current_step = ?, status = ?, eta_turns = ? WHERE id = ?',
+                                [newStep, newStatus, newETA, order.id],
                                 () => {
-                                    console.log(`🚢 Ship ${order.object_id} moved to (${targetTile.x}, ${targetTile.y}) - Step ${newStep}/${movementPath.length-1}`);
+                                    console.log(`🚢 Ship ${order.object_id} moved to (${targetTile.x}, ${targetTile.y}) - Step ${newStep}/${movementPath.length-1} - ETA: ${newETA}T`);
                                     
                                     const result = {
                                         objectId: order.object_id,
                                         status: newStatus,
                                         newPosition: targetTile,
                                         currentStep: newStep,
-                                        totalSteps: movementPath.length - 1
+                                        totalSteps: movementPath.length - 1,
+                                        eta: newETA
                                     };
                                     
                                     // ✅ No real-time updates - clients will see all results after turn resolves
                                     if (newStatus === 'completed') {
                                         console.log(`✅ Ship ${order.object_id} completed movement to (${targetTile.x}, ${targetTile.y})`);
                                     } else {
-                                        console.log(`➡️ Ship ${order.object_id} continuing movement - step ${newStep}/${movementPath.length-1}`);
+                                        console.log(`➡️ Ship ${order.object_id} continuing movement - step ${newStep}/${movementPath.length-1} - ETA: ${newETA}T`);
                                     }
                                     
                                     resolve(result);

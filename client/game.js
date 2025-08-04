@@ -7,6 +7,7 @@ class GameClient {
         this.socket = null;
         this.gameState = null;
         this.selectedUnit = null;
+        this.selectedObjectId = null; // STAGE B: Track selection by ID across turns
         this.canvas = null;
         this.ctx = null;
         this.miniCanvas = null;
@@ -16,6 +17,7 @@ class GameClient {
         this.turnLocked = false;
         this.objects = [];
         this.units = [];
+        this.isFirstLoad = true; // Track if this is the initial game load
     }
 
     // Initialize the game
@@ -200,9 +202,40 @@ class GameClient {
             })));
         }
 
-        // Auto-select first unit if none selected
-        if (!this.selectedUnit && this.units.length > 0) {
+        // STAGE B & C: Selection persistence and conditional auto-selection
+        if (this.selectedObjectId) {
+            // Try to restore previous selection by ID (selection persistence)
+            const previouslySelected = this.objects.find(obj => obj.id === this.selectedObjectId);
+            if (previouslySelected) {
+                const oldPosition = this.selectedUnit ? { x: this.selectedUnit.x, y: this.selectedUnit.y } : null;
+                this.selectedUnit = previouslySelected;
+                
+                // Check if object moved and log it
+                if (oldPosition && (oldPosition.x !== previouslySelected.x || oldPosition.y !== previouslySelected.y)) {
+                    console.log(`📍 Selected object moved from (${oldPosition.x},${oldPosition.y}) to (${previouslySelected.x},${previouslySelected.y})`);
+                    // Update camera to follow moved object
+                    this.camera.x = previouslySelected.x;
+                    this.camera.y = previouslySelected.y;
+                }
+                
+                // Ensure UI selection highlight is applied
+                document.querySelectorAll('.unit-item').forEach(item => item.classList.remove('selected'));
+                const unitElement = document.getElementById(`unit-${this.selectedObjectId}`);
+                if (unitElement) {
+                    unitElement.classList.add('selected');
+                }
+                
+                this.updateUnitDetails();
+            } else {
+                // Previously selected object no longer exists (destroyed?)
+                console.log(`⚠️ Previously selected object ${this.selectedObjectId} no longer exists`);
+                this.selectedUnit = null;
+                this.selectedObjectId = null;
+            }
+        } else if (!this.selectedUnit && this.units.length > 0 && this.isFirstLoad) {
+            // STAGE C FIX: Only auto-select on first load, not every turn
             this.selectUnit(this.units[0].id);
+            this.isFirstLoad = false;
         }
     }
 
@@ -243,6 +276,7 @@ class GameClient {
 
         // Find the unit object
         this.selectedUnit = this.objects.find(obj => obj.id === unitId);
+        this.selectedObjectId = unitId; // STAGE B: Track selection by ID
         
         if (this.selectedUnit) {
             // Center camera on selected unit
@@ -257,6 +291,8 @@ class GameClient {
             
             // Re-render map
             this.render();
+            
+            console.log(`🎯 Selected unit ${this.selectedUnit.meta.name || this.selectedUnit.type} (ID: ${unitId}) at (${this.selectedUnit.x}, ${this.selectedUnit.y})`);
         }
     }
 
@@ -279,11 +315,12 @@ class GameClient {
                 unit.movementPath = currentPath;
                 unit.movementActive = true;
                 
-                // Recalculate ETA based on current position
-                const updatedETA = this.calculateETA(currentPath, unit.meta.movementSpeed || 1);
-                unit.movementETA = updatedETA;
+                // Preserve server-provided ETA if available, otherwise recalculate
+                if (unit.movementETA === undefined) {
+                    unit.movementETA = this.calculateETA(currentPath, unit.meta.movementSpeed || 1);
+                }
                 
-                this.addLogEntry(`${unit.meta.name} movement path restored (${currentPath.length - 1} tiles, ETA: ${updatedETA}T)`, 'info');
+                this.addLogEntry(`${unit.meta.name} movement path restored (${currentPath.length - 1} tiles, ETA: ${unit.movementETA}T)`, 'info');
             } else {
                 // Clear invalid movement data if destination is unreachable
                 unit.movementPath = null;
@@ -690,6 +727,7 @@ class GameClient {
             if (this.selectedUnit) {
                 console.log(`Deselected unit: ${this.selectedUnit.meta.name || this.selectedUnit.type}`);
                 this.selectedUnit = null;
+                this.selectedObjectId = null; // STAGE B: Clear ID tracking
                 
                 // Update unit details panel to show nothing selected
                 this.updateUnitDetails();
@@ -849,6 +887,7 @@ class GameClient {
         switch(e.key) {
             case 'Escape':
                 this.selectedUnit = null;
+                this.selectedObjectId = null; // STAGE B: Clear ID tracking
                 this.updateUnitDetails();
                 this.render();
                 break;
@@ -1011,7 +1050,16 @@ class GameClient {
             
             // Draw ETA near destination (only for owned ships to avoid revealing enemy info)
             if (isSelected || isOwned) {
-                const eta = this.calculateETA(path, ship.meta.movementSpeed || 1);
+                // STAGE A FIX: Use server-provided ETA instead of recalculating
+                const eta = ship.movementETA !== undefined ? ship.movementETA : this.calculateETA(path, ship.meta.movementSpeed || 1);
+                const usingServerETA = ship.movementETA !== undefined;
+                
+                // Debug logging for ETA source (only once per render to avoid spam)
+                if (isSelected && !this._lastETADebug || this._lastETADebug !== `${ship.id}-${eta}`) {
+                    console.log(`📊 ETA Display: Ship ${ship.id} showing ${eta}T (${usingServerETA ? 'server-provided' : 'client-calculated'})`);
+                    this._lastETADebug = `${ship.id}-${eta}`;
+                }
+                
                 if (eta > 0) {
                     ctx.fillStyle = '#ffffff';
                     ctx.font = '12px Arial';

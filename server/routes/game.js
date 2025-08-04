@@ -450,6 +450,11 @@ class GameWorldManager {
                                                                 movementActive: obj.movement_status === 'active' || obj.movement_status === 'completed',
                                                                 movementStatus: obj.movement_status
                                                             };
+                                                            
+                                                            // Debug: Log ETA being sent to client for moving objects
+                                                            if (isOwned && obj.movement_status === 'active') {
+                                                                console.log(`📊 Sending ETA to client: Ship ${obj.id} (${meta.name || obj.type}) ETA: ${obj.eta_turns}T`);
+                                                            }
                                                         }
                                                         
                                                         return {
