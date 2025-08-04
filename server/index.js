@@ -499,7 +499,7 @@ async function processSingleMovement(order, turnNumber, gameId) {
     });
 }
 
-// Update visibility for all players after movements
+// STAGE 3 OPTIMIZATION: Parallel processing for all players visibility updates
 async function updateAllPlayersVisibility(gameId, turnNumber) {
     return new Promise((resolve, reject) => {
         // Get all players in the game
@@ -509,18 +509,27 @@ async function updateAllPlayersVisibility(gameId, turnNumber) {
             async (err, players) => {
                 if (err) return reject(err);
                 
-                console.log(`👁️ Updating visibility for ${players.length} players`);
+                console.log(`👁️ Updating visibility for ${players.length} players (parallel processing)`);
+                const startTime = Date.now();
                 
-                // Update visibility for each player
-                for (const player of players) {
-                    try {
-                        await GameWorldManager.calculatePlayerVision(gameId, player.user_id, turnNumber);
-                    } catch (error) {
-                        console.error(`Error updating visibility for player ${player.user_id}:`, error);
-                    }
+                // PARALLEL PROCESSING: Update visibility for all players simultaneously
+                const visibilityPromises = players.map(player => 
+                    GameWorldManager.calculatePlayerVision(gameId, player.user_id, turnNumber)
+                        .catch(error => {
+                            console.error(`Error updating visibility for player ${player.user_id}:`, error);
+                            return null; // Don't fail entire batch for one player error
+                        })
+                );
+                
+                try {
+                    await Promise.all(visibilityPromises);
+                    const endTime = Date.now();
+                    console.log(`👁️ Completed visibility updates for ${players.length} players in ${endTime - startTime}ms (optimized)`);
+                    resolve();
+                } catch (error) {
+                    console.error('Error in parallel visibility processing:', error);
+                    reject(error);
                 }
-                
-                resolve();
             }
         );
     });

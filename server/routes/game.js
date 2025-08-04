@@ -202,33 +202,69 @@ class GameWorldManager {
                         (err, units) => {
                             if (err) return reject(err);
                             
-                            const visionTiles = new Set();
-                            const detailedScanTiles = new Set();
+                            if (units.length === 0) {
+                                return resolve([]);
+                            }
                             
-                            units.forEach(unit => {
+                            // STAGE 1 OPTIMIZATION: Object-based visibility calculation
+                            // Instead of checking every tile, find objects within vision range of our units
+                            const visibleObjects = new Map(); // objectId -> {object, visibilityLevel}
+                            let unitsProcessed = 0;
+                            
+                            const processUnit = (unit) => {
                                 const meta = JSON.parse(unit.meta || '{}');
-                                const scanRange = meta.scanRange || 5; // Default scan range
-                                const detailedRange = meta.detailedScanRange || 2; // Close-range detailed scan
+                                const scanRange = meta.scanRange || 5;
+                                const detailedRange = meta.detailedScanRange || 2;
                                 
-                                // Add vision tiles around this unit
-                                for (let dx = -scanRange; dx <= scanRange; dx++) {
-                                    for (let dy = -scanRange; dy <= scanRange; dy++) {
-                                        const distance = Math.sqrt(dx * dx + dy * dy);
-                                        if (distance <= scanRange) {
-                                            const tileKey = `${unit.x + dx},${unit.y + dy}`;
-                                            visionTiles.add(tileKey);
+                                // Query for objects within this unit's vision range
+                                db.all(
+                                    `SELECT * FROM sector_objects 
+                                     WHERE sector_id = ? 
+                                     AND x BETWEEN ? AND ?
+                                     AND y BETWEEN ? AND ?`,
+                                    [
+                                        sector.id,
+                                        unit.x - scanRange, unit.x + scanRange,
+                                        unit.y - scanRange, unit.y + scanRange
+                                    ],
+                                    (err, objectsInRange) => {
+                                        if (err) return reject(err);
+                                        
+                                        // Filter by actual distance and determine visibility level
+                                        objectsInRange.forEach(obj => {
+                                            const distance = Math.sqrt(
+                                                Math.pow(obj.x - unit.x, 2) + Math.pow(obj.y - unit.y, 2)
+                                            );
                                             
-                                            // Add detailed scan for close range
-                                            if (distance <= detailedRange) {
-                                                detailedScanTiles.add(tileKey);
+                                            if (distance <= scanRange) {
+                                                const visibilityLevel = distance <= detailedRange ? 2 : 1;
+                                                const existing = visibleObjects.get(obj.id);
+                                                
+                                                // Keep highest visibility level if object seen by multiple units
+                                                if (!existing || existing.visibilityLevel < visibilityLevel) {
+                                                    visibleObjects.set(obj.id, {
+                                                        object: obj,
+                                                        visibilityLevel: visibilityLevel
+                                                    });
+                                                }
                                             }
+                                        });
+                                        
+                                        unitsProcessed++;
+                                        if (unitsProcessed === units.length) {
+                                            // All units processed, now update visibility
+                                            this.updatePlayerVisibilityOptimized(
+                                                gameId, userId, sector.id, 
+                                                Array.from(visibleObjects.values()), 
+                                                turnNumber, resolve, reject
+                                            );
                                         }
                                     }
-                                }
-                            });
+                                );
+                            };
                             
-                            // Update visibility in database
-                            this.updatePlayerVisibility(gameId, userId, sector.id, visionTiles, detailedScanTiles, turnNumber, resolve, reject);
+                            // Process all units
+                            units.forEach(processUnit);
                         }
                     );
                 }
@@ -236,7 +272,76 @@ class GameWorldManager {
         });
     }
 
-    // Update player visibility in database
+    // STAGE 2 OPTIMIZATION: Batch database operations for visibility updates
+    static updatePlayerVisibilityOptimized(gameId, userId, sectorId, visibleObjects, turnNumber, resolve, reject) {
+        if (visibleObjects.length === 0) {
+            console.log(`👁️ No objects visible for player ${userId} on turn ${turnNumber}`);
+            return resolve([]);
+        }
+        
+        // Use transaction for atomic batch operations
+        db.serialize(() => {
+            db.run('BEGIN TRANSACTION');
+            
+            // Clear old visibility data for this player
+            db.run(
+                'DELETE FROM player_visibility WHERE game_id = ? AND user_id = ? AND sector_id = ?',
+                [gameId, userId, sectorId],
+                (err) => {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        return reject(err);
+                    }
+                    
+                    // Prepare bulk insert statement
+                    const stmt = db.prepare(
+                        `INSERT INTO player_visibility 
+                         (game_id, user_id, sector_id, x, y, last_seen_turn, visibility_level) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?)`
+                    );
+                    
+                    let insertCount = 0;
+                    let hasError = false;
+                    
+                    visibleObjects.forEach(({object, visibilityLevel}) => {
+                        stmt.run(
+                            [gameId, userId, sectorId, object.x, object.y, turnNumber, visibilityLevel],
+                            function(err) {
+                                if (err && !hasError) {
+                                    hasError = true;
+                                    stmt.finalize();
+                                    db.run('ROLLBACK');
+                                    return reject(err);
+                                }
+                                
+                                insertCount++;
+                                if (insertCount === visibleObjects.length && !hasError) {
+                                    stmt.finalize((err) => {
+                                        if (err) {
+                                            db.run('ROLLBACK');
+                                            return reject(err);
+                                        }
+                                        
+                                        db.run('COMMIT', (err) => {
+                                            if (err) {
+                                                db.run('ROLLBACK');
+                                                return reject(err);
+                                            }
+                                            
+                                            console.log(`👁️ Updated ${visibleObjects.length} object tiles for player ${userId} on turn ${turnNumber} (optimized)`);
+                                            resolve(visibleObjects.map(vo => vo.object));
+                                        });
+                                    });
+                                }
+                            }
+                        );
+                    });
+                }
+            );
+        });
+    }
+
+    // Legacy method kept for compatibility if needed
     static updatePlayerVisibility(gameId, userId, sectorId, visionTiles, detailedScanTiles, turnNumber, resolve, reject) {
         let updateCount = 0;
         const totalUpdates = visionTiles.size;

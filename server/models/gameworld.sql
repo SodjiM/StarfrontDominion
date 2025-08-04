@@ -81,4 +81,26 @@ CREATE TABLE IF NOT EXISTS movement_orders (
     blocked_by TEXT, -- JSON info about what blocked the movement
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (object_id) REFERENCES sector_objects(id)
-); 
+);
+
+-- STAGE 4 OPTIMIZATION: Spatial indexing for performance
+-- Index for spatial queries on sector objects (used in visibility calculations)
+CREATE INDEX IF NOT EXISTS idx_sector_objects_spatial ON sector_objects(sector_id, x, y);
+
+-- Index for sector objects by owner (used when finding player units)
+CREATE INDEX IF NOT EXISTS idx_sector_objects_owner ON sector_objects(sector_id, owner_id);
+
+-- Index for player visibility lookups (used when getting game state)
+CREATE INDEX IF NOT EXISTS idx_player_visibility_lookup ON player_visibility(game_id, user_id, sector_id);
+
+-- Index for player visibility spatial queries
+CREATE INDEX IF NOT EXISTS idx_player_visibility_spatial ON player_visibility(game_id, user_id, sector_id, x, y);
+
+-- Index for movement orders by object and status
+CREATE INDEX IF NOT EXISTS idx_movement_orders_active ON movement_orders(object_id, status);
+
+-- Index for turn management
+CREATE INDEX IF NOT EXISTS idx_turns_game_status ON turns(game_id, turn_number, status);
+
+-- Index for turn locks
+CREATE INDEX IF NOT EXISTS idx_turn_locks_game_turn ON turn_locks(game_id, turn_number, locked); 
