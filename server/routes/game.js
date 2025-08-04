@@ -218,18 +218,37 @@ class GameWorldManager {
                                         (err, lockStatus) => {
                                             if (err) return reject(err);
                                             
-                                            // Parse meta JSON for objects
-                                            const parsedObjects = objects.map(obj => ({
-                                                ...obj,
-                                                meta: JSON.parse(obj.meta || '{}')
-                                            }));
-                                            
-                                            resolve({
-                                                sector,
-                                                objects: parsedObjects,
-                                                currentTurn: currentTurn || { turn_number: 1, status: 'waiting' },
-                                                turnLocked: lockStatus?.locked || false
-                                            });
+                                            // Get player setup data
+                                            db.get(
+                                                'SELECT avatar, color_primary, color_secondary, setup_completed FROM game_players WHERE game_id = ? AND user_id = ?',
+                                                [gameId, userId],
+                                                (err, playerData) => {
+                                                    if (err) return reject(err);
+                                                    
+                                                    // Parse meta JSON for objects
+                                                    const parsedObjects = objects.map(obj => ({
+                                                        ...obj,
+                                                        meta: JSON.parse(obj.meta || '{}'),
+                                                        sectorInfo: {
+                                                            name: sector.name,
+                                                            archetype: sector.archetype,
+                                                            id: sector.id
+                                                        }
+                                                    }));
+                                                    
+                                                    resolve({
+                                                        sector: {
+                                                            ...sector,
+                                                            name: sector.name,
+                                                            archetype: sector.archetype
+                                                        },
+                                                        objects: parsedObjects,
+                                                        currentTurn: currentTurn || { turn_number: 1, status: 'waiting' },
+                                                        turnLocked: lockStatus?.locked || false,
+                                                        playerSetup: playerData || { setup_completed: false }
+                                                    });
+                                                }
+                                            );
                                         }
                                     );
                                 }
@@ -406,6 +425,76 @@ router.get('/:gameId/map/:userId/:x/:y', (req, res) => {
             );
         }
     );
+});
+
+// Player setup route
+router.post('/setup/:gameId', (req, res) => {
+    const { gameId } = req.params;
+    const { userId, avatar, colorPrimary, colorSecondary, systemName, archetype } = req.body;
+    
+    console.log(`🎨 Setup request for game ${gameId}, user ${userId}:`, {
+        avatar, colorPrimary, colorSecondary, systemName, archetype
+    });
+    
+    // Validate input
+    if (!userId || !avatar || !colorPrimary || !colorSecondary || !systemName || !archetype) {
+        console.error('❌ Missing required fields:', { userId, avatar, colorPrimary, colorSecondary, systemName, archetype });
+        return res.status(400).json({ error: 'Missing required setup fields' });
+    }
+    
+    // Validate system name length
+    if (systemName.length > 30) {
+        return res.status(400).json({ error: 'System name too long (max 30 characters)' });
+    }
+    
+    // Validate color codes
+    const colorRegex = /^#[0-9A-F]{6}$/i;
+    if (!colorRegex.test(colorPrimary) || !colorRegex.test(colorSecondary)) {
+        return res.status(400).json({ error: 'Invalid color format' });
+    }
+    
+    // Check if setup already completed
+    db.get('SELECT setup_completed FROM game_players WHERE game_id = ? AND user_id = ?', 
+        [gameId, userId], (err, player) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!player) {
+                return res.status(404).json({ error: 'Player not found in game' });
+            }
+            
+            if (player.setup_completed) {
+                return res.status(400).json({ error: 'Setup already completed' });
+            }
+            
+            // Update player customization
+            db.run(`UPDATE game_players SET 
+                avatar = ?, color_primary = ?, color_secondary = ?, setup_completed = 1 
+                WHERE game_id = ? AND user_id = ?`,
+                [avatar, colorPrimary, colorSecondary, gameId, userId], function(err) {
+                    if (err) {
+                        console.error('Error updating player:', err);
+                        return res.status(500).json({ error: 'Failed to update player' });
+                    }
+                    
+                    // Update sector name and archetype
+                    db.run('UPDATE sectors SET name = ?, archetype = ? WHERE game_id = ? AND owner_id = ?',
+                        [systemName, archetype, gameId, userId], function(sectorErr) {
+                            if (sectorErr) {
+                                console.error('Error updating sector:', sectorErr);
+                                return res.status(500).json({ error: 'Failed to update sector' });
+                            }
+                            
+                            console.log(`✅ Player ${userId} completed setup for game ${gameId}`);
+                            res.json({ 
+                                success: true,
+                                message: 'Setup completed successfully'
+                            });
+                        });
+                });
+        });
 });
 
 module.exports = router; 

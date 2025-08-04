@@ -191,7 +191,161 @@ document.addEventListener('keydown', (event) => {
     }
 });
 
+// Modal system for game-wide popups
+const Modal = {
+    activeModal: null,
+
+    create(config) {
+        if (this.activeModal) {
+            this.activeModal.remove();
+        }
+
+        const modal = document.createElement('div');
+        modal.className = 'game-modal-overlay';
+        modal.innerHTML = `
+            <div class="game-modal-container">
+                <div class="game-modal-header">
+                    <h2>${config.title || 'Dialog'}</h2>
+                    ${config.allowClose !== false ? '<button class="modal-close" aria-label="Close">×</button>' : ''}
+                </div>
+                <div class="game-modal-content"></div>
+                ${config.actions ? '<div class="game-modal-actions"></div>' : ''}
+            </div>
+        `;
+
+        // Add content
+        const contentContainer = modal.querySelector('.game-modal-content');
+        if (typeof config.content === 'string') {
+            contentContainer.innerHTML = config.content;
+        } else if (config.content instanceof Element) {
+            contentContainer.appendChild(config.content);
+        }
+
+        // Add action buttons
+        if (config.actions) {
+            const actionsContainer = modal.querySelector('.game-modal-actions');
+            config.actions.forEach(action => {
+                const btn = document.createElement('button');
+                btn.textContent = action.text || 'OK';
+                btn.className = `btn btn-${action.style || 'primary'}`;
+                btn.onclick = () => {
+                    const result = action.action ? action.action() : null;
+                    if (result !== false) {
+                        this.close(modal);
+                    }
+                };
+                actionsContainer.appendChild(btn);
+            });
+        }
+
+        // Close button handler
+        const closeBtn = modal.querySelector('.modal-close');
+        if (closeBtn) {
+            closeBtn.onclick = () => {
+                if (config.onCancel) config.onCancel();
+                this.close(modal);
+            };
+        }
+
+        // Backdrop click to close (if allowed)
+        if (config.allowClose !== false) {
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    if (config.onCancel) config.onCancel();
+                    this.close(modal);
+                }
+            };
+        }
+
+        // Prevent backdrop clicks from propagating
+        modal.querySelector('.game-modal-container').onclick = (e) => {
+            e.stopPropagation();
+        };
+
+        this.activeModal = modal;
+        return modal;
+    },
+
+    show(config) {
+        const modal = this.create(config);
+        document.body.appendChild(modal);
+        
+        // Prevent game interactions
+        const gameContainer = document.querySelector('.game-container');
+        if (gameContainer) {
+            gameContainer.classList.add('modal-active');
+        }
+        
+        // Focus management
+        const container = modal.querySelector('.game-modal-container');
+        container.setAttribute('tabindex', '-1');
+        container.focus();
+        
+        // Handle ESC key
+        const escHandler = (e) => {
+            if (e.key === 'Escape' && config.allowClose !== false) {
+                if (config.onCancel) config.onCancel();
+                this.close(modal);
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+        
+        return modal;
+    },
+
+    close(modal) {
+        if (modal && modal.parentNode) {
+            modal.remove();
+        }
+        
+        // Re-enable game interactions
+        const gameContainer = document.querySelector('.game-container');
+        if (gameContainer) {
+            gameContainer.classList.remove('modal-active');
+        }
+        
+        if (this.activeModal === modal) {
+            this.activeModal = null;
+        }
+    },
+
+    confirm(message, onConfirm, onCancel) {
+        return this.show({
+            title: 'Confirm Action',
+            content: `<p style="padding: 20px; text-align: center;">${message}</p>`,
+            actions: [
+                { text: 'Cancel', style: 'secondary', action: onCancel },
+                { text: 'Confirm', style: 'primary', action: onConfirm }
+            ]
+        });
+    },
+
+    alert(message, title = 'Notice') {
+        return this.show({
+            title,
+            content: `<p style="padding: 20px; text-align: center;">${message}</p>`,
+            actions: [
+                { text: 'OK', style: 'primary' }
+            ]
+        });
+    }
+};
+
+// Extend UI object with modal functions
+UI.showModal = function(config) {
+    return Modal.show(config);
+};
+
+UI.confirmAction = function(message, onConfirm, onCancel) {
+    return Modal.confirm(message, onConfirm, onCancel);
+};
+
+UI.showAlert = function(message, title) {
+    return Modal.alert(message, title);
+};
+
 // Export for potential future use
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { Session, UI, Game, Events, apiRequest };
+    module.exports = { Session, UI, Game, Events, apiRequest, Modal };
 } 

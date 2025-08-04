@@ -67,7 +67,44 @@ const initializeDatabase = async () => {
             );
         });
         
-        console.log('🎮 Database initialization complete!');
+        // Apply database migrations for new columns
+        await new Promise((resolve, reject) => {
+            // Add new columns to game_players if they don't exist
+            db.run(`ALTER TABLE game_players ADD COLUMN avatar TEXT DEFAULT NULL`, (err) => {
+                // Ignore error if column already exists
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (avatar):', err);
+                }
+            });
+            
+            db.run(`ALTER TABLE game_players ADD COLUMN color_primary TEXT DEFAULT NULL`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (color_primary):', err);
+                }
+            });
+            
+            db.run(`ALTER TABLE game_players ADD COLUMN color_secondary TEXT DEFAULT NULL`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (color_secondary):', err);
+                }
+            });
+            
+            db.run(`ALTER TABLE game_players ADD COLUMN setup_completed BOOLEAN DEFAULT FALSE`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (setup_completed):', err);
+                }
+            });
+            
+            // Add archetype column to sectors if it doesn't exist
+            db.run(`ALTER TABLE sectors ADD COLUMN archetype TEXT DEFAULT NULL`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (archetype):', err);
+                }
+                resolve();
+            });
+        });
+        
+        console.log('🎮 Database initialization and migrations complete!');
         
     } catch (error) {
         console.error('❌ Database initialization failed:', error);

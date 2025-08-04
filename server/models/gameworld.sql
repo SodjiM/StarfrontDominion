@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS sectors (
     game_id INTEGER,
     owner_id INTEGER,
     name TEXT,
+    archetype TEXT DEFAULT NULL,
     width INTEGER DEFAULT 5000,
     height INTEGER DEFAULT 5000,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

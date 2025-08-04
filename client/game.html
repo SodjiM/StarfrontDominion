@@ -293,6 +293,266 @@
                 max-height: 200px;
             }
         }
+        
+        /* Modal System Styles */
+        .game-modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(12, 12, 30, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: modalFadeIn 0.2s ease-out;
+        }
+
+        .game-modal-container {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            min-width: 400px;
+            max-width: 80vw;
+            max-height: 80vh;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        .game-modal-header {
+            background: rgba(100, 181, 246, 0.1);
+            padding: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .game-modal-header h2 {
+            margin: 0;
+            color: #64b5f6;
+            font-size: 1.3em;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #ffffff;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: background-color 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .game-modal-content {
+            padding: 20px;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        .game-modal-actions {
+            padding: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .game-modal-actions .btn {
+            min-width: 100px;
+        }
+
+        /* Disable interactions when modal is active */
+        .game-container.modal-active {
+            pointer-events: none;
+            filter: brightness(0.7) blur(1px);
+            transition: filter 0.2s ease-out;
+        }
+
+        /* Modal animations */
+        @keyframes modalFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes modalSlideIn {
+            from { 
+                opacity: 0;
+                transform: translateY(-20px) scale(0.95);
+            }
+            to { 
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        /* Setup form specific styles */
+        .setup-form {
+            display: grid;
+            gap: 20px;
+        }
+
+        .form-section {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .form-section h3 {
+            margin: 0 0 15px 0;
+            color: #64b5f6;
+            font-size: 1.1em;
+        }
+
+        .avatar-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+            gap: 10px;
+        }
+
+        .avatar-option {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .avatar-option:hover {
+            border-color: #64b5f6;
+            transform: translateY(-2px);
+        }
+
+        .avatar-option.selected {
+            border-color: #4caf50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        .avatar-option img {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-bottom: 8px;
+            object-fit: cover;
+            border: 2px solid transparent;
+            transition: border-color 0.2s;
+        }
+
+        .avatar-option.selected img {
+            border-color: #4caf50;
+        }
+
+        .color-picker-group {
+            display: flex;
+            gap: 15px;
+        }
+
+        .color-picker {
+            flex: 1;
+        }
+
+        .color-picker label {
+            display: block;
+            margin-bottom: 5px;
+            color: #b0bec5;
+        }
+
+        .color-picker input[type="color"] {
+            width: 100%;
+            height: 40px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background: none;
+        }
+
+        .archetype-grid {
+            display: grid;
+            gap: 10px;
+        }
+
+        .archetype-card {
+            padding: 15px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .archetype-card:hover {
+            border-color: #64b5f6;
+            transform: translateY(-2px);
+        }
+
+        .archetype-card.selected {
+            border-color: #4caf50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        .archetype-card h4 {
+            margin: 0 0 8px 0;
+            color: #64b5f6;
+        }
+
+        .archetype-card p {
+            margin: 0 0 8px 0;
+            color: #b0bec5;
+            font-size: 0.9em;
+        }
+
+        .archetype-bonus {
+            color: #4caf50;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 1em;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #64b5f6;
+            box-shadow: 0 0 10px rgba(100, 181, 246, 0.3);
+        }
+
+        /* Mobile responsiveness for modals */
+        @media (max-width: 768px) {
+            .game-modal-container {
+                min-width: 90vw;
+                max-height: 90vh;
+            }
+            
+            .avatar-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+            
+            .color-picker-group {
+                flex-direction: column;
+            }
+        }
     </style>
 </head>
 <body>

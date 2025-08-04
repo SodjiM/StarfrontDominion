@@ -118,8 +118,18 @@ class GameClient {
     updateUI() {
         if (!this.gameState) return;
 
+        // Check if setup is needed (prevent normal UI until setup complete)
+        if (!this.gameState.playerSetup?.setup_completed) {
+            this.showSetupModal();
+            return; // Don't show game UI until setup complete
+        }
+
         // Update turn counter
         document.getElementById('turnCounter').textContent = `Turn ${this.gameState.currentTurn.turn_number}`;
+        
+        // Update game title with sector name
+        const gameTitle = document.getElementById('gameTitle');
+        gameTitle.innerHTML = `🌌 ${this.gameState.sector.name || 'Your System'}`;
         
         // Update turn lock status
         const lockBtn = document.getElementById('lockTurnBtn');
@@ -172,6 +182,17 @@ class GameClient {
         return icons[type] || '⚪';
     }
 
+    // Format archetype for display
+    formatArchetype(archetype) {
+        const archetypes = {
+            'resource-rich': 'Resource Rich ⛏️',
+            'asteroid-heavy': 'Asteroid Belt 🪨',
+            'nebula': 'Nebula Cloud ☁️',
+            'binary-star': 'Binary Star ⭐⭐'
+        };
+        return archetypes[archetype] || (archetype || 'Unknown');
+    }
+
     // Select a unit
     selectUnit(unitId) {
         // Remove previous selection
@@ -222,6 +243,16 @@ class GameClient {
                 <div class="stat-item">
                     <span>Position:</span>
                     <span>(${unit.x}, ${unit.y})</span>
+                </div>
+                
+                <div class="stat-item">
+                    <span>🌌 System:</span>
+                    <span>${this.gameState.sector.name || 'Unnamed System'}</span>
+                </div>
+                
+                <div class="stat-item">
+                    <span>⭐ Type:</span>
+                    <span>${this.formatArchetype(this.gameState.sector.archetype)}</span>
                 </div>
                 
                 <div class="stat-item">
@@ -432,6 +463,19 @@ class GameClient {
         ctx.strokeStyle = '#ffeb3b';
         ctx.lineWidth = 1;
         ctx.strokeRect(viewX, viewY, viewWidth, viewHeight);
+        
+        // Add system name at bottom of mini-map
+        if (this.gameState && this.gameState.sector.name) {
+            ctx.fillStyle = '#64b5f6';
+            ctx.font = '11px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(
+                this.gameState.sector.name, 
+                canvas.width / 2, 
+                canvas.height - 4
+            );
+        }
     }
 
     // Setup event listeners
@@ -517,6 +561,240 @@ class GameClient {
             entries[0].remove();
         }
     }
+
+    // Show setup modal for first-time player configuration
+    showSetupModal() {
+        const setupForm = this.createSetupForm();
+        
+        UI.showModal({
+            title: '🚀 Initialize Your Solar System',
+            content: setupForm,
+            allowClose: false, // Force completion
+            actions: [
+                {
+                    text: 'Complete Setup',
+                    style: 'primary',
+                    action: () => this.submitSetup()
+                }
+            ]
+        });
+    }
+
+    // Create the setup form HTML
+    createSetupForm() {
+        const form = document.createElement('div');
+        form.className = 'setup-form';
+        form.innerHTML = `
+            <div class="form-section">
+                <h3>👤 Choose Your Avatar</h3>
+                <div class="avatar-grid" id="avatarGrid">
+                    ${this.createAvatarSelector()}
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>🎨 Color Scheme</h3>
+                <div class="color-picker-group">
+                    <div class="color-picker">
+                        <label for="primaryColor">Primary Color:</label>
+                        <input type="color" id="primaryColor" value="#64b5f6">
+                    </div>
+                    <div class="color-picker">
+                        <label for="secondaryColor">Secondary Color:</label>
+                        <input type="color" id="secondaryColor" value="#42a5f5">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>🌌 Solar System Name</h3>
+                <input type="text" id="systemName" class="form-input" placeholder="Enter system name..." maxlength="30" required>
+            </div>
+
+            <div class="form-section">
+                <h3>⭐ System Archetype</h3>
+                <div class="archetype-grid" id="archetypeGrid">
+                    ${this.createArchetypeSelector()}
+                </div>
+            </div>
+        `;
+
+        // Add event listeners after creating the form
+        setTimeout(() => {
+            this.attachSetupEventListeners();
+        }, 100);
+
+        return form;
+    }
+
+    // Create avatar selector options
+    createAvatarSelector() {
+        const avatars = [
+            { id: 'commander', name: 'Commander' },
+            { id: 'explorer', name: 'Explorer' },
+            { id: 'merchant', name: 'Merchant' },
+            { id: 'scientist', name: 'Scientist' },
+            { id: 'warrior', name: 'Warrior' },
+            { id: 'diplomat', name: 'Diplomat' }
+        ];
+        
+        return avatars.map(avatar => `
+            <div class="avatar-option" data-avatar="${avatar.id}">
+                <img src="assets/avatars/${avatar.id}.png" alt="${avatar.name}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiM2NGI1ZjYiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI4IiB5PSI4Ij4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxOVYyMEgzVjE5TDUgMTcuMjVWMTFIMTBWMTIuNUgxNFYxMUgxOVYxNy4yNUwyMSAxOVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K'; this.onerror=null;">
+                <span>${avatar.name}</span>
+            </div>
+        `).join('');
+    }
+
+    // Create archetype selector options
+    createArchetypeSelector() {
+        const archetypes = {
+            'resource-rich': {
+                name: 'Resource Rich',
+                desc: 'Abundant minerals and energy sources',
+                bonus: '+25% resource generation'
+            },
+            'asteroid-heavy': {
+                name: 'Asteroid Belt',
+                desc: 'Dense asteroid fields provide cover',
+                bonus: '+15% stealth, mining opportunities'
+            },
+            'nebula': {
+                name: 'Nebula Cloud',
+                desc: 'Colorful gas clouds affect sensors',
+                bonus: '+20% scan range, -10% accuracy'
+            },
+            'binary-star': {
+                name: 'Binary Star',
+                desc: 'Dual star system with high energy',
+                bonus: '+30% energy output, extreme temperatures'
+            }
+        };
+
+        return Object.entries(archetypes).map(([key, archetype]) => `
+            <div class="archetype-card" data-archetype="${key}">
+                <h4>${archetype.name}</h4>
+                <p>${archetype.desc}</p>
+                <div class="archetype-bonus">${archetype.bonus}</div>
+            </div>
+        `).join('');
+    }
+
+    // Attach event listeners to setup form elements
+    attachSetupEventListeners() {
+        // Avatar selection
+        document.querySelectorAll('.avatar-option').forEach(option => {
+            option.addEventListener('click', () => {
+                document.querySelectorAll('.avatar-option').forEach(o => o.classList.remove('selected'));
+                option.classList.add('selected');
+            });
+        });
+
+        // Archetype selection
+        document.querySelectorAll('.archetype-card').forEach(card => {
+            card.addEventListener('click', () => {
+                document.querySelectorAll('.archetype-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+            });
+        });
+
+        // Auto-focus system name input
+        const systemNameInput = document.getElementById('systemName');
+        if (systemNameInput) {
+            systemNameInput.focus();
+        }
+    }
+
+    // Submit setup data to server
+    async submitSetup() {
+        const selectedAvatar = document.querySelector('.avatar-option.selected')?.dataset.avatar;
+        const selectedArchetype = document.querySelector('.archetype-card.selected')?.dataset.archetype;
+        const primaryColor = document.getElementById('primaryColor')?.value;
+        const secondaryColor = document.getElementById('secondaryColor')?.value;
+        const systemName = document.getElementById('systemName')?.value?.trim();
+
+        // Validate form
+        if (!selectedAvatar) {
+            UI.showAlert('Please select an avatar');
+            return false;
+        }
+        if (!selectedArchetype) {
+            UI.showAlert('Please select a system archetype');
+            return false;
+        }
+        if (!systemName) {
+            UI.showAlert('Please enter a system name');
+            return false;
+        }
+        if (systemName.length > 30) {
+            UI.showAlert('System name too long (max 30 characters)');
+            return false;
+        }
+
+        try {
+            console.log('Submitting setup data:', {
+                userId: this.userId,
+                avatar: selectedAvatar,
+                colorPrimary: primaryColor,
+                colorSecondary: secondaryColor,
+                systemName: systemName,
+                archetype: selectedArchetype
+            });
+
+            const response = await fetch(`/game/setup/${this.gameId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    userId: this.userId,
+                    avatar: selectedAvatar,
+                    colorPrimary: primaryColor,
+                    colorSecondary: secondaryColor,
+                    systemName: systemName,
+                    archetype: selectedArchetype
+                })
+            });
+
+            console.log('Setup response status:', response.status);
+
+            if (!response.ok) {
+                // Try to get error message from response
+                let errorMessage = 'Setup failed';
+                try {
+                    const errorData = await response.text();
+                    console.error('Setup error response:', errorData);
+                    
+                    // Try to parse as JSON
+                    try {
+                        const jsonError = JSON.parse(errorData);
+                        errorMessage = jsonError.error || errorMessage;
+                    } catch (e) {
+                        // Not JSON, use the text as error
+                        errorMessage = errorData || errorMessage;
+                    }
+                } catch (e) {
+                    console.error('Error reading response:', e);
+                }
+                
+                UI.showAlert(`Setup failed: ${errorMessage}`);
+                return false;
+            }
+
+            const data = await response.json();
+            console.log('Setup success response:', data);
+
+            this.addLogEntry('System setup completed successfully!', 'success');
+            // Reload game state to reflect setup completion
+            await this.loadGameState();
+            return true; // Allow modal to close
+
+        } catch (error) {
+            console.error('Setup network error:', error);
+            UI.showAlert(`Connection failed: ${error.message}. Please try again.`);
+            return false;
+        }
+    }
 }
 
 // Global game instance
@@ -535,6 +813,13 @@ function selectUnit(unitId) {
 
 function toggleTurnLock() {
     if (!gameClient) return;
+    
+    // Check if setup is completed
+    if (!gameClient.gameState?.playerSetup?.setup_completed) {
+        gameClient.addLogEntry('Complete system setup before locking turn', 'warning');
+        UI.showAlert('Please complete your system setup first!');
+        return;
+    }
     
     const currentTurn = gameClient.gameState?.currentTurn?.turn_number || 1;
     
