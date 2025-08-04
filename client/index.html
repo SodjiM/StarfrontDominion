@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Starfront: Dominion</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0c0c1e 0%, #1a1a3a 100%);
+            color: #ffffff;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            text-align: center;
+            max-width: 600px;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #64b5f6, #42a5f5);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px rgba(100, 181, 246, 0.5);
+        }
+        
+        .subtitle {
+            font-size: 1.2em;
+            margin-bottom: 40px;
+            color: #b0bec5;
+        }
+        
+        .menu-button {
+            display: block;
+            width: 300px;
+            margin: 20px auto;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            background: linear-gradient(45deg, #1976d2, #1565c0);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 5px 15px rgba(25, 118, 210, 0.3);
+        }
+        
+        .menu-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(25, 118, 210, 0.4);
+        }
+        
+        .menu-button.secondary {
+            background: linear-gradient(45deg, #424242, #616161);
+            box-shadow: 0 5px 15px rgba(66, 66, 66, 0.3);
+        }
+        
+        .menu-button.secondary:hover {
+            box-shadow: 0 8px 25px rgba(66, 66, 66, 0.4);
+        }
+        
+        .version {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌌 Starfront: Dominion</h1>
+        <p class="subtitle">A Casual Yet Strategic Turn-Based MMO Space Game</p>
+        
+        <a href="login.html" class="menu-button">🎮 Login</a>
+        <a href="register.html" class="menu-button">✨ Register</a>
+        <a href="#" class="menu-button secondary" onclick="showSettings()">⚙️ Settings</a>
+        <a href="#" class="menu-button secondary" onclick="showAbout()">ℹ️ About</a>
+    </div>
+    
+    <div class="version">v1.0.0 Alpha</div>
+
+    <script>
+        function showSettings() {
+            alert('Settings coming soon!\n\n• Audio controls\n• Graphics options\n• Keybind customization');
+        }
+        
+        function showAbout() {
+            alert('Starfront: Dominion\n\nA turn-based multiplayer space strategy game where players command fleets, construct starbases, and explore vast sectors of space.\n\nDesigned for friends and families to build alliances, engage in wars, or quietly carve out their own corner of the galaxy.');
+        }
+    </script>
+</body>
+</html> 

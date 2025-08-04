@@ -1,0 +1,21 @@
+{
+  "name": "starfront-dominion",
+  "version": "1.0.0",
+  "description": "A turn-based multiplayer space strategy game",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "keywords": ["space", "strategy", "multiplayer", "turn-based"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "bcrypt": "^5.1.1",
+    "socket.io": "^4.7.2"
+  }
+} 

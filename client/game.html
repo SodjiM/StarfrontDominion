@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Starfront: Dominion - Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0c0c1e 0%, #1a1a3a 100%);
+            color: #ffffff;
+            overflow: hidden;
+        }
+        
+        /* Main layout grid */
+        .game-container {
+            display: grid;
+            grid-template-columns: 250px 1fr 300px;
+            grid-template-rows: 60px 1fr 200px;
+            grid-template-areas:
+                "topbar topbar topbar"
+                "leftpanel map rightpanel"
+                "minimap log rightpanel";
+            height: 100vh;
+            gap: 2px;
+        }
+        
+        /* Top bar */
+        .top-bar {
+            grid-area: topbar;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .game-info {
+            display: flex;
+            align-items: center;
+            gap: 30px;
+        }
+        
+        .game-title {
+            font-size: 1.2em;
+            color: #64b5f6;
+        }
+        
+        .turn-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .turn-counter {
+            background: rgba(100, 181, 246, 0.2);
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-weight: bold;
+        }
+        
+        .lock-turn-btn {
+            background: linear-gradient(45deg, #4caf50, #45a049);
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        
+        .lock-turn-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.3);
+        }
+        
+        .lock-turn-btn.locked {
+            background: linear-gradient(45deg, #ff9800, #f57c00);
+        }
+        
+        /* Left panel - Units list */
+        .left-panel {
+            grid-area: leftpanel;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+            overflow-y: auto;
+        }
+        
+        .panel-title {
+            font-size: 1.1em;
+            margin-bottom: 15px;
+            color: #64b5f6;
+            border-bottom: 2px solid rgba(100, 181, 246, 0.3);
+            padding-bottom: 5px;
+        }
+        
+        .unit-item {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .unit-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: #64b5f6;
+        }
+        
+        .unit-item.selected {
+            border-color: #4caf50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+        
+        .unit-name {
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+        
+        .unit-details {
+            font-size: 0.9em;
+            color: #b0bec5;
+        }
+        
+        /* Center map area */
+        .map-container {
+            grid-area: map;
+            background: rgba(0, 0, 0, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #gameCanvas {
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        
+        .map-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            gap: 5px;
+        }
+        
+        .map-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+        }
+        
+        .map-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* Right panel - Selected unit info */
+        .right-panel {
+            grid-area: rightpanel;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            overflow-y: auto;
+        }
+        
+        .unit-info {
+            margin-bottom: 20px;
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .action-btn {
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: linear-gradient(45deg, #1976d2, #1565c0);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .action-btn:hover {
+            transform: translateY(-1px);
+        }
+        
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        /* Mini-map */
+        .mini-map {
+            grid-area: minimap;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        #miniCanvas {
+            width: 100%;
+            height: 100%;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 5px;
+        }
+        
+        /* Activity log */
+        .activity-log {
+            grid-area: log;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 5px 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        
+        .log-entry.info { border-left: 3px solid #2196f3; }
+        .log-entry.success { border-left: 3px solid #4caf50; }
+        .log-entry.warning { border-left: 3px solid #ff9800; }
+        .log-entry.error { border-left: 3px solid #f44336; }
+        
+        /* Loading and error states */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #64b5f6;
+            font-size: 1.2em;
+        }
+        
+        .error {
+            color: #f44336;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 1024px) {
+            .game-container {
+                grid-template-columns: 200px 1fr 250px;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .game-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto 1fr auto auto;
+                grid-template-areas:
+                    "topbar"
+                    "leftpanel"
+                    "map"
+                    "rightpanel"
+                    "log";
+            }
+            
+            .left-panel, .right-panel {
+                max-height: 200px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <div class="game-info">
+                <div class="game-title" id="gameTitle">🌌 Starfront: Dominion</div>
+                <div class="turn-status">
+                    <div class="turn-counter" id="turnCounter">Turn 1</div>
+                    <button class="lock-turn-btn" id="lockTurnBtn" onclick="toggleTurnLock()">
+                        🔓 Lock Turn
+                    </button>
+                </div>
+            </div>
+            <div>
+                <button class="map-btn" onclick="showSettings()">⚙️</button>
+                <button class="map-btn" onclick="exitGame()">❌</button>
+            </div>
+        </div>
+        
+        <!-- Left Panel - Units -->
+        <div class="left-panel">
+            <div class="panel-title">🚢 Your Fleet</div>
+            <div id="unitsList" class="loading">Loading units...</div>
+        </div>
+        
+        <!-- Center Map -->
+        <div class="map-container">
+            <canvas id="gameCanvas"></canvas>
+            <div class="map-controls">
+                <button class="map-btn" onclick="zoomIn()">🔍+</button>
+                <button class="map-btn" onclick="zoomOut()">🔍-</button>
+                <button class="map-btn" onclick="centerOnSelected()">🎯</button>
+            </div>
+        </div>
+        
+        <!-- Right Panel - Selected Unit Info -->
+        <div class="right-panel">
+            <div class="panel-title">📊 Unit Details</div>
+            <div id="unitDetails">
+                <div style="text-align: center; color: #666; padding: 20px;">
+                    Select a unit to view details
+                </div>
+            </div>
+        </div>
+        
+        <!-- Mini Map -->
+        <div class="mini-map">
+            <div style="font-size: 0.9em; margin-bottom: 5px; color: #64b5f6;">Sector Overview</div>
+            <canvas id="miniCanvas"></canvas>
+        </div>
+        
+        <!-- Activity Log -->
+        <div class="activity-log">
+            <div class="panel-title">📜 Activity Log</div>
+            <div id="activityLog">
+                <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="main.js"></script>
+    <script src="game.js"></script>
+    
+    <script>
+        // Initialize game when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            if (Session.requireAuth()) {
+                const gameId = new URLSearchParams(window.location.search).get('id');
+                if (gameId) {
+                    initializeGame(gameId);
+                } else {
+                    window.location.href = 'lobby.html';
+                }
+            }
+        });
+        
+        function showSettings() {
+            alert('Settings coming soon!\n\n• Graphics options\n• Sound controls\n• Keybindings');
+        }
+        
+        function exitGame() {
+            if (confirm('Are you sure you want to exit the game?')) {
+                window.location.href = 'lobby.html';
+            }
+        }
+    </script>
+</body>
+</html> 
