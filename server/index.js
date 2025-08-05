@@ -463,6 +463,36 @@ async function processSingleMovement(order, turnNumber, gameId) {
                         (err) => {
                             if (err) return reject(err);
                             
+                            // PHASE 1B: Record actual movement segment in history
+                            // Get current position from movement path
+                            const fromTile = movementPath[currentStep];
+                            if (fromTile) {
+                                db.run(
+                                    `INSERT INTO movement_history 
+                                     (object_id, game_id, turn_number, from_x, from_y, to_x, to_y, movement_speed) 
+                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                                    [
+                                        order.object_id, 
+                                        gameId, 
+                                        turnNumber, 
+                                        fromTile.x, 
+                                        fromTile.y, 
+                                        targetTile.x, 
+                                        targetTile.y, 
+                                        movementSpeed
+                                    ],
+                                    (historyErr) => {
+                                        if (historyErr) {
+                                            console.error(`❌ Failed to record movement history for ship ${order.object_id}:`, historyErr);
+                                        } else {
+                                            console.log(`📜 Recorded movement history: Ship ${order.object_id} from (${fromTile.x},${fromTile.y}) to (${targetTile.x},${targetTile.y}) on turn ${turnNumber}`);
+                                        }
+                                    }
+                                );
+                            } else {
+                                console.error(`❌ Could not get current position for ship ${order.object_id} movement history - currentStep: ${currentStep}, pathLength: ${movementPath.length}`);
+                            }
+                            
                             // Update movement order progress
                             const isComplete = newStep >= movementPath.length - 1;
                             const newStatus = isComplete ? 'completed' : 'active';

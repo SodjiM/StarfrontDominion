@@ -447,13 +447,18 @@ class GameWorldManager {
                                                                 plannedDestination: obj.destination_x && obj.destination_y ? 
                                                                     { x: obj.destination_x, y: obj.destination_y } : null,
                                                                 movementETA: obj.eta_turns,
+                                                                // STAGE 3 FIX: Proper distinction between active and completed movements
                                                                 movementActive: obj.movement_status === 'active' || obj.movement_status === 'completed',
                                                                 movementStatus: obj.movement_status
                                                             };
                                                             
-                                                            // Debug: Log ETA being sent to client for moving objects
-                                                            if (isOwned && obj.movement_status === 'active') {
-                                                                console.log(`📊 Sending ETA to client: Ship ${obj.id} (${meta.name || obj.type}) ETA: ${obj.eta_turns}T`);
+                                                            // Debug: Log movement data being sent to client
+                                                            if (isOwned) {
+                                                                if (obj.movement_status === 'active') {
+                                                                    console.log(`📊 Sending ACTIVE movement to client: Ship ${obj.id} (${meta.name || obj.type}) ETA: ${obj.eta_turns}T`);
+                                                                } else if (obj.movement_status === 'completed') {
+                                                                    console.log(`👻 Sending LINGERING trail to client: Ship ${obj.id} (${meta.name || obj.type}) - completed movement`);
+                                                                }
                                                             }
                                                         }
                                                         
@@ -838,6 +843,114 @@ router.post('/scan/:gameId', (req, res) => {
             );
         }
     );
+});
+
+// PHASE 1C: Get movement history for accurate trail rendering
+// GET /game/:gameId/movement-history/:userId
+router.get('/:gameId/movement-history/:userId', async (req, res) => {
+    const { gameId, userId } = req.params;
+    const { turns = 10, shipId } = req.query; // Default to 10 turns of history
+    
+    try {
+        // Verify user is in the game
+        const membership = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM game_players WHERE game_id = ? AND user_id = ?',
+                [gameId, userId],
+                (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
+                }
+            );
+        });
+        
+        if (!membership) {
+            return res.status(403).json({ error: 'Not authorized to view this game' });
+        }
+        
+        // Get current turn to calculate history range
+        const currentTurn = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1',
+                [gameId],
+                (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result?.turn_number || 1);
+                }
+            );
+        });
+        
+        // Build query for movement history
+        let historyQuery = `
+            SELECT mh.*, so.owner_id, so.meta, so.type,
+                   pv.visibility_level, pv.last_seen_turn
+            FROM movement_history mh
+            JOIN sector_objects so ON mh.object_id = so.id
+            JOIN sectors s ON so.sector_id = s.id
+            LEFT JOIN player_visibility pv ON (
+                pv.game_id = ? AND pv.user_id = ? AND pv.sector_id = so.sector_id 
+                AND ((pv.x = mh.from_x AND pv.y = mh.from_y) OR (pv.x = mh.to_x AND pv.y = mh.to_y))
+            )
+            WHERE mh.game_id = ? 
+            AND mh.turn_number > ?
+        `;
+        
+        let queryParams = [gameId, userId, gameId, currentTurn - turns];
+        
+        // Filter by specific ship if requested  
+        if (shipId) {
+            historyQuery += ' AND mh.object_id = ?';
+            queryParams.push(shipId);
+        }
+        
+        // Only show movements for owned ships or visible enemy movements
+        historyQuery += ` 
+            AND (so.owner_id = ? OR pv.visibility_level > 0)
+            ORDER BY mh.turn_number DESC, mh.created_at DESC
+        `;
+        queryParams.push(userId);
+        
+        const movementHistory = await new Promise((resolve, reject) => {
+            db.all(historyQuery, queryParams, (err, results) => {
+                if (err) reject(err);
+                else resolve(results || []);
+            });
+        });
+        
+        // Process results to group by ship and add metadata
+        const processedHistory = movementHistory.map(movement => {
+            const meta = JSON.parse(movement.meta || '{}');
+            return {
+                shipId: movement.object_id,
+                shipName: meta.name || `${movement.type} ${movement.object_id}`,
+                turnNumber: movement.turn_number,
+                segment: {
+                    from: { x: movement.from_x, y: movement.from_y },
+                    to: { x: movement.to_x, y: movement.to_y }
+                },
+                movementSpeed: movement.movement_speed,
+                isOwned: movement.owner_id === parseInt(userId),
+                isVisible: movement.visibility_level > 0 || movement.owner_id === parseInt(userId),
+                timestamp: movement.created_at
+            };
+        });
+        
+        console.log(`📜 Retrieved ${processedHistory.length} movement history segments for game ${gameId}, user ${userId} (last ${turns} turns)`);
+        
+        res.json({
+            success: true,
+            currentTurn,
+            turnsRequested: turns,
+            movementHistory: processedHistory
+        });
+        
+    } catch (error) {
+        console.error('❌ Get movement history error:', error);
+        res.status(500).json({ 
+            error: 'Failed to get movement history', 
+            details: error.message 
+        });
+    }
 });
 
 module.exports = { router, GameWorldManager }; 

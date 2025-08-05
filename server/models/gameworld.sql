@@ -103,4 +103,27 @@ CREATE INDEX IF NOT EXISTS idx_movement_orders_active ON movement_orders(object_
 CREATE INDEX IF NOT EXISTS idx_turns_game_status ON turns(game_id, turn_number, status);
 
 -- Index for turn locks
-CREATE INDEX IF NOT EXISTS idx_turn_locks_game_turn ON turn_locks(game_id, turn_number, locked); 
+CREATE INDEX IF NOT EXISTS idx_turn_locks_game_turn ON turn_locks(game_id, turn_number, locked);
+
+-- PHASE 1: Movement history tracking for accurate trail system
+-- Track actual movement segments (where ships really traveled each turn)
+CREATE TABLE IF NOT EXISTS movement_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    object_id INTEGER,
+    game_id INTEGER,
+    turn_number INTEGER,
+    from_x INTEGER,
+    from_y INTEGER,
+    to_x INTEGER,
+    to_y INTEGER,
+    movement_speed INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (object_id) REFERENCES sector_objects(id),
+    FOREIGN KEY (game_id) REFERENCES games(id)
+);
+
+-- Index for movement history queries (by ship, game, turn)
+CREATE INDEX IF NOT EXISTS idx_movement_history_ship ON movement_history(object_id, game_id, turn_number);
+
+-- Index for movement history by game and turn (for cleanup and queries)
+CREATE INDEX IF NOT EXISTS idx_movement_history_game_turn ON movement_history(game_id, turn_number); 

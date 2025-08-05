@@ -18,6 +18,9 @@ class GameClient {
         this.objects = [];
         this.units = [];
         this.isFirstLoad = true; // Track if this is the initial game load
+        this.clientLingeringTrails = []; // FIX 2: Store client-side lingering trails from redirections
+        this.previousMovementStatuses = new Map(); // FIX: Track previous movement statuses to detect completions
+        this.movementHistoryCache = new Map(); // PHASE 2: Cache movement history by ship ID
     }
 
     // Initialize the game
@@ -139,6 +142,46 @@ class GameClient {
         }
     }
 
+    // PHASE 2: Fetch movement history from server for accurate trail rendering
+    async fetchMovementHistory(shipId = null, turns = 10) {
+        try {
+            const url = `/game/${this.gameId}/movement-history/${this.userId}${shipId ? `?shipId=${shipId}&turns=${turns}` : `?turns=${turns}`}`;
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to fetch movement history');
+            }
+            
+            console.log(`📜 Fetched ${data.movementHistory.length} movement history segments (${data.turnsRequested} turns)`);
+            
+            // Update cache
+            data.movementHistory.forEach(movement => {
+                if (!this.movementHistoryCache.has(movement.shipId)) {
+                    this.movementHistoryCache.set(movement.shipId, []);
+                }
+                
+                const shipHistory = this.movementHistoryCache.get(movement.shipId);
+                // Only add if not already cached (avoid duplicates)
+                if (!shipHistory.some(h => h.turnNumber === movement.turnNumber && 
+                    h.segment.from.x === movement.segment.from.x && h.segment.from.y === movement.segment.from.y)) {
+                    shipHistory.push(movement);
+                }
+            });
+            
+            return data.movementHistory;
+            
+        } catch (error) {
+            console.error('❌ Failed to fetch movement history:', error);
+            return [];
+        }
+    }
+
     // Update UI elements with game state
     updateUI() {
         if (!this.gameState) return;
@@ -170,7 +213,16 @@ class GameClient {
 
         // Update units list
         const unitsList = document.getElementById('unitsList');
-        const playerObjects = this.gameState.objects.filter(obj => obj.owner_id === this.userId);
+        const allPlayerObjects = this.gameState.objects.filter(obj => obj.owner_id === this.userId);
+        
+        // STAGE 1 FIX: Deduplicate ships by ID to prevent phantom fleet entries
+        const playerObjects = allPlayerObjects.filter((obj, index, array) => 
+            array.findIndex(duplicate => duplicate.id === obj.id) === index
+        );
+        
+        if (allPlayerObjects.length !== playerObjects.length) {
+            console.log(`🧹 Fleet Panel: Filtered ${allPlayerObjects.length - playerObjects.length} duplicate ship entries`);
+        }
         
         if (playerObjects.length === 0) {
             unitsList.innerHTML = '<div class="error">No units found</div>';
@@ -190,6 +242,92 @@ class GameClient {
         this.objects = this.gameState.objects;
         this.units = playerObjects;
         
+        // FIX: Turn-based cleanup of lingering trails (10 turns max)
+        const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+        const initialClientTrailCount = this.clientLingeringTrails.length;
+        
+        this.clientLingeringTrails = this.clientLingeringTrails.filter(trail => {
+            const turnAge = currentTurn - trail.createdOnTurn;
+            if (turnAge >= 10) return false; // Remove trails older than 10 turns
+            
+            // PHASE 3: Remove fallback trails if accurate trail exists for same ship
+            if (!trail.isAccurate) {
+                const hasAccurateTrial = this.clientLingeringTrails.some(other => 
+                    other.shipId === trail.shipId && 
+                    other.isAccurate && 
+                    Math.abs(other.createdOnTurn - trail.createdOnTurn) <= 1
+                );
+                if (hasAccurateTrial) {
+                    console.log(`🗑️ Removing fallback trail for ship ${trail.shipId} - accurate trail available`);
+                    return false;
+                }
+            }
+            return true;
+        });
+        
+        // FIX: Detect ships that just completed movement and create lingering trails BEFORE cleanup
+        this.objects.forEach(ship => {
+            if (ship.type === 'ship' && ship.movementStatus === 'completed' && ship.movementPath && ship.movementPath.length > 1) {
+                const prevStatus = this.previousMovementStatuses.get(ship.id);
+                
+                // If ship was previously active and is now completed, create lingering trail
+                if (prevStatus === 'active') {
+                    const lingeringTrail = {
+                        id: `completion-${ship.id}-${currentTurn}`,
+                        shipId: ship.id,
+                        movementPath: [...ship.movementPath],
+                        owner_id: ship.owner_id,
+                        meta: { ...ship.meta },
+                        x: ship.x,
+                        y: ship.y,
+                        movementStatus: 'completed',
+                        type: 'ship',
+                        visibilityStatus: ship.visibilityStatus,
+                        createdAt: Date.now(),
+                        createdOnTurn: currentTurn
+                    };
+                    
+                    // Check if we don't already have this trail
+                    const existingTrail = this.clientLingeringTrails.find(t => 
+                        t.shipId === ship.id && t.createdOnTurn === currentTurn
+                    );
+                    
+                    if (!existingTrail) {
+                        this.clientLingeringTrails.push(lingeringTrail);
+                        console.log(`🏁 Created lingering trail for completed ship ${ship.id} (${ship.meta?.name})`);
+                    }
+                }
+            }
+        });
+        
+        // Clean up client trails that are now provided by server (but preserve completion trails for this turn)
+        const serverCompletedMovements = new Set(
+            this.objects
+                .filter(obj => obj.movementStatus === 'completed' && obj.movementPath)
+                .map(obj => obj.id)
+        );
+        
+        this.clientLingeringTrails = this.clientLingeringTrails.filter(trail => {
+            // Keep completion trails from this turn even if server has them
+            if (trail.createdOnTurn === currentTurn && trail.id.startsWith('completion-')) {
+                return true;
+            }
+            // Remove older trails that are now provided by server
+            return !serverCompletedMovements.has(trail.shipId);
+        });
+        
+        if (initialClientTrailCount !== this.clientLingeringTrails.length) {
+            console.log(`🧹 Cleaned up ${initialClientTrailCount - this.clientLingeringTrails.length} expired/duplicate client trails`);
+        }
+        
+        // Update previous movement statuses for next comparison
+        this.previousMovementStatuses.clear();
+        this.objects.forEach(ship => {
+            if (ship.type === 'ship' && ship.movementStatus) {
+                this.previousMovementStatuses.set(ship.id, ship.movementStatus);
+            }
+        });
+        
         // Debug: Log ships with movement data
         const movingShips = this.objects.filter(obj => obj.movementPath && obj.movementActive);
         if (movingShips.length > 0) {
@@ -198,14 +336,15 @@ class GameClient {
                 name: s.meta.name,
                 pathLength: s.movementPath?.length,
                 destination: s.plannedDestination,
-                active: s.movementActive
+                active: s.movementActive,
+                status: s.movementStatus
             })));
         }
 
         // STAGE B & C: Selection persistence and conditional auto-selection
         if (this.selectedObjectId) {
-            // Try to restore previous selection by ID (selection persistence)
-            const previouslySelected = this.objects.find(obj => obj.id === this.selectedObjectId);
+            // STAGE 4 SAFETY: Select from deduplicated player objects to avoid phantom selections
+            const previouslySelected = playerObjects.find(obj => obj.id === this.selectedObjectId);
             if (previouslySelected) {
                 const oldPosition = this.selectedUnit ? { x: this.selectedUnit.x, y: this.selectedUnit.y } : null;
                 this.selectedUnit = previouslySelected;
@@ -300,8 +439,18 @@ class GameClient {
     restoreMovementPath(unit) {
         if (unit.type !== 'ship') return;
         
-        // Check if the ship has an active movement order
-        if (unit.plannedDestination && unit.movementETA && !unit.movementPath) {
+        // FIX 3: Handle different movement statuses properly
+        if (unit.movementStatus === 'completed') {
+            // Ship has reached destination - ensure movementActive is false for completed movements
+            if (unit.movementActive) {
+                unit.movementActive = false;
+                console.log(`✅ Ship ${unit.id} marked movement as inactive (completed)`);
+            }
+            return; // Don't try to restore completed movements
+        }
+        
+        // Check if the ship has an active movement order that needs path restoration
+        if (unit.plannedDestination && unit.movementETA && !unit.movementPath && unit.movementStatus === 'active') {
             // Recalculate path from current position to planned destination
             const currentPath = this.calculateMovementPath(
                 unit.x,
@@ -321,12 +470,12 @@ class GameClient {
                 }
                 
                 this.addLogEntry(`${unit.meta.name} movement path restored (${currentPath.length - 1} tiles, ETA: ${unit.movementETA}T)`, 'info');
-            } else {
-                // Clear invalid movement data if destination is unreachable
-                unit.movementPath = null;
-                unit.movementActive = false;
+            } else if (unit.plannedDestination) {
+                // FIX 3: Ship has reached destination, clear planned destination but keep completed status
+                console.log(`🎯 Ship ${unit.id} has reached destination, clearing planned destination`);
                 unit.plannedDestination = null;
                 unit.movementETA = null;
+                unit.movementActive = false;
             }
         }
     }
@@ -780,52 +929,110 @@ class GameClient {
             return;
         }
         
-        // Get ship's current position (might have moved from original position)
-        const currentX = this.selectedUnit.x;
-        const currentY = this.selectedUnit.y;
+        console.log(`🚢 handleMoveCommand: Ship ${this.selectedUnit.id} at (${this.selectedUnit.x}, ${this.selectedUnit.y}) moving to (${worldX}, ${worldY})`);
         
-        console.log(`🚢 handleMoveCommand: Ship ${this.selectedUnit.id} at (${currentX}, ${currentY}) moving to (${worldX}, ${worldY})`);
-        
-        // Calculate movement path from current position using Bresenham algorithm
+        // PHASE 3: Always calculate movement path from ship's CURRENT position (not original)
         const movementPath = this.calculateMovementPath(
-            currentX, 
-            currentY, 
+            this.selectedUnit.x, // Use actual current position from server
+            this.selectedUnit.y, 
             worldX, 
             worldY
         );
         
+        console.log(`📍 PHASE 3: Movement path calculated from CURRENT position (${this.selectedUnit.x},${this.selectedUnit.y}) to (${worldX},${worldY})`);
+        
         if (movementPath.length > 1) {
             const eta = this.calculateETA(movementPath, this.selectedUnit.meta.movementSpeed || 1);
             
-            // Clear ALL movement data for this ship completely
+            // PHASE 2: Create accurate lingering trail from actual movement history
             const wasMoving = this.selectedUnit.movementPath !== null;
+            if (wasMoving && this.selectedUnit.movementPath && this.selectedUnit.movementPath.length > 1) {
+                const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+                
+                // Fetch actual movement history for this ship (async, but don't wait)
+                this.fetchMovementHistory(this.selectedUnit.id, 10).then(history => {
+                    if (history.length > 0) {
+                        // Create accurate lingering trail from actual movement segments
+                        const actualSegments = history
+                            .filter(h => h.shipId === this.selectedUnit.id)
+                            .sort((a, b) => a.turnNumber - b.turnNumber)
+                            .map(h => h.segment);
+                        
+                        if (actualSegments.length > 0) {
+                            const accurateLingeringTrail = {
+                                id: `accurate-lingering-${this.selectedUnit.id}-${currentTurn}`,
+                                shipId: this.selectedUnit.id,
+                                movementSegments: actualSegments, // PHASE 2: Use actual segments instead of planned path
+                                owner_id: this.selectedUnit.owner_id,
+                                meta: { ...this.selectedUnit.meta },
+                                x: this.selectedUnit.x,
+                                y: this.selectedUnit.y,
+                                movementStatus: 'completed',
+                                type: 'ship',
+                                visibilityStatus: this.selectedUnit.visibilityStatus,
+                                createdAt: Date.now(),
+                                createdOnTurn: currentTurn,
+                                isAccurate: true // Flag to distinguish from fallback trails
+                            };
+                            
+                            this.clientLingeringTrails.push(accurateLingeringTrail);
+                            console.log(`📍 Created ACCURATE lingering trail for redirected ship ${this.selectedUnit.id} with ${actualSegments.length} real segments`);
+                        }
+                    }
+                });
+                
+                // Create immediate fallback trail for instant feedback (will be replaced by accurate one)
+                const fallbackTrail = {
+                    id: `fallback-lingering-${this.selectedUnit.id}-${Date.now()}`,
+                    shipId: this.selectedUnit.id,
+                    movementPath: [...this.selectedUnit.movementPath], // Fallback: use planned path
+                    owner_id: this.selectedUnit.owner_id,
+                    meta: { ...this.selectedUnit.meta },
+                    x: this.selectedUnit.x,
+                    y: this.selectedUnit.y,
+                    movementStatus: 'completed',
+                    type: 'ship',
+                    visibilityStatus: this.selectedUnit.visibilityStatus,
+                    createdAt: Date.now(),
+                    createdOnTurn: currentTurn,
+                    isAccurate: false // Fallback trail
+                };
+                
+                this.clientLingeringTrails.push(fallbackTrail);
+                console.log(`👻 Created fallback lingering trail for redirected ship ${this.selectedUnit.id} (will be replaced by accurate trail)`);
+                this.addLogEntry(`${this.selectedUnit.meta.name} new route: previous path will fade as lingering trail`, 'info');
+                
+                // Cleanup old trails  
+                this.clientLingeringTrails = this.clientLingeringTrails
+                    .filter(trail => currentTurn - trail.createdOnTurn < 10) // 10 turns max
+                    .slice(-20); // Keep max 20 total trails
+            }
+            
+            // Clear movement data for new path
             this.selectedUnit.movementPath = null;
             this.selectedUnit.movementActive = false;
             this.selectedUnit.plannedDestination = null;
             this.selectedUnit.movementETA = null;
-            
-            if (wasMoving) {
-                this.addLogEntry(`${this.selectedUnit.meta.name} new route: canceling previous destination`, 'info');
-            }
             
             // Set new movement data
             this.selectedUnit.movementPath = movementPath;
             this.selectedUnit.plannedDestination = { x: worldX, y: worldY };
             this.selectedUnit.movementETA = eta;
             this.selectedUnit.movementActive = true; // Flag for persistent rendering
+            this.selectedUnit.movementStatus = 'active'; // FIX 1: Set status for immediate rendering
             
             // Re-render to show the path
             this.render();
             
-            console.log(`📍 Movement path calculated: ${movementPath.length - 1} tiles from (${currentX},${currentY}) to (${worldX},${worldY})`);
+            console.log(`📍 Movement path calculated: ${movementPath.length - 1} tiles from (${this.selectedUnit.x},${this.selectedUnit.y}) to (${worldX},${worldY})`);
             this.addLogEntry(`${this.selectedUnit.meta.name} ordered to move: ${movementPath.length - 1} tiles, ETA: ${eta} turns`, 'info');
             
             // Send move command to server with explicit current position
             this.socket.emit('move-ship', {
                 gameId: this.gameId,
                 shipId: this.selectedUnit.id,
-                currentX: currentX,
-                currentY: currentY,
+                currentX: this.selectedUnit.x,
+                currentY: this.selectedUnit.y,
                 destinationX: worldX,
                 destinationY: worldY,
                 movementPath: movementPath,
@@ -945,70 +1152,199 @@ class GameClient {
         return Math.ceil(distance / (movementSpeed || 1));
     }
 
-    // Draw movement paths for all visible ships with active movement orders
+    // Draw movement paths for all visible ships with movement orders (active and lingering)
     drawMovementPaths(ctx, centerX, centerY) {
-        // Find all ships with active movement paths (visible to this player)
-        const movingShips = this.objects.filter(obj => 
+        // STAGE 2 & 4: Include both active and completed movements with safety checks
+        const activeShips = this.objects.filter(obj => 
             obj.type === 'ship' && 
             obj.movementPath && 
+            obj.movementPath.length > 1 && // Safety: ensure valid path
             obj.movementActive &&
+            obj.movementStatus === 'active' &&
             (obj.visibilityStatus?.visible || obj.owner_id === this.userId)
         );
         
-        // ✅ With atomic turn resolution, phantom paths should no longer occur
-        if (movingShips.length > 0) {
-            console.log(`🎨 Drawing ${movingShips.length} movement paths (post-resolution state)`);
+        const serverLingeringShips = this.objects.filter(obj => 
+            obj.type === 'ship' && 
+            obj.movementPath && 
+            obj.movementPath.length > 1 && // Safety: ensure valid path
+            obj.movementStatus === 'completed' &&
+            (obj.visibilityStatus?.visible || obj.owner_id === this.userId)
+        );
+        
+        // FIX 4: Debug logging for lingering trails
+        if (serverLingeringShips.length > 0) {
+            console.log(`🔍 Found ${serverLingeringShips.length} server lingering ships:`, 
+                serverLingeringShips.map(s => ({
+                    id: s.id, 
+                    name: s.meta?.name, 
+                    status: s.movementStatus,
+                    pathLength: s.movementPath?.length,
+                    visible: s.visibilityStatus?.visible,
+                    owned: s.owner_id === this.userId
+                }))
+            );
         }
         
-        movingShips.forEach(ship => {
-            this.drawSingleMovementPath(ctx, centerX, centerY, ship);
+        // PHASE 3: Include client-side lingering trails (both old and new format)
+        const clientLingeringShips = this.clientLingeringTrails.filter(trail => {
+            const hasValidPath = (trail.movementPath && trail.movementPath.length > 1) || 
+                                 (trail.movementSegments && trail.movementSegments.length > 0);
+            const isVisible = trail.visibilityStatus?.visible || trail.owner_id === this.userId;
+            return hasValidPath && isVisible;
+        });
+        
+        if (clientLingeringShips.length > 0) {
+            const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+            console.log(`🔍 Found ${clientLingeringShips.length} client lingering trails:`, 
+                clientLingeringShips.map(t => ({
+                    shipId: t.shipId, 
+                    name: t.meta?.name, 
+                    pathLength: t.movementPath?.length,
+                    ageInTurns: currentTurn - (t.createdOnTurn || 0),
+                    createdOnTurn: t.createdOnTurn
+                }))
+            );
+        }
+        
+        const allLingeringShips = [...serverLingeringShips, ...clientLingeringShips];
+        
+        // STAGE 4: Safety check - ensure no ship appears in both lists
+        const activeShipIds = new Set(activeShips.map(s => s.id));
+        const filteredLingeringShips = allLingeringShips.filter(ship => !activeShipIds.has(ship.id || ship.shipId));
+        
+        if (allLingeringShips.length !== filteredLingeringShips.length) {
+            console.log(`🛡️ Filtered ${allLingeringShips.length - filteredLingeringShips.length} ships with conflicting active/lingering status`);
+        }
+        
+        if (activeShips.length > 0 || filteredLingeringShips.length > 0) {
+            console.log(`🎨 Drawing ${activeShips.length} active trails + ${filteredLingeringShips.length} lingering trails`);
+        }
+        
+        // Draw lingering trails first (behind active trails)
+        filteredLingeringShips.forEach(ship => {
+            this.drawSingleMovementPath(ctx, centerX, centerY, ship, true); // true = lingering
+        });
+        
+        // Draw active trails on top
+        activeShips.forEach(ship => {
+            this.drawSingleMovementPath(ctx, centerX, centerY, ship, false); // false = active
         });
     }
 
-    // Draw movement path for a single ship
-    drawSingleMovementPath(ctx, centerX, centerY, ship) {
-        if (!ship.movementPath || ship.movementPath.length <= 1) return;
+    // PHASE 3: Draw movement path for a single ship (supports both old paths and new segments)
+    drawSingleMovementPath(ctx, centerX, centerY, ship, isLingering = false) {
+        // PHASE 3: Support both old movementPath and new movementSegments  
+        const hasOldPath = ship.movementPath && ship.movementPath.length > 1;
+        const hasNewSegments = ship.movementSegments && ship.movementSegments.length > 0;
         
-        const path = ship.movementPath;
+        if (!hasOldPath && !hasNewSegments) return;
+        
+        // FIX 4: Additional safety checks for consistent rendering
+        if (isLingering && ship.movementStatus === 'active') {
+            console.warn(`⚠️ Skipping rendering of active ship ${ship.id} as lingering trail`);
+            return;
+        }
+        
+        if (!isLingering && ship.movementStatus === 'completed' && !ship.movementActive) {
+            console.warn(`⚠️ Skipping rendering of completed ship ${ship.id} as active trail`);
+            return;
+        }
+        
         const isSelected = this.selectedUnit && this.selectedUnit.id === ship.id;
         const isOwned = ship.owner_id === this.userId;
+        const isAccurate = ship.isAccurate === true; // PHASE 3: Check if this is accurate trail
         
         ctx.save();
         
-        // Different styling for owned vs enemy, and selected vs background
-        if (isSelected) {
-            // Selected unit - bright yellow (regardless of ownership)
-            ctx.strokeStyle = '#ffeb3b';
-            ctx.lineWidth = 3;
-            ctx.globalAlpha = 1.0;
-        } else if (isOwned) {
-            // Own ship - green/yellow
-            ctx.strokeStyle = '#8bc34a';
-            ctx.lineWidth = 2;
-            ctx.globalAlpha = 0.8;
-        } else {
-            // Enemy ship - red/orange
-            ctx.strokeStyle = '#f44336';
-            ctx.lineWidth = 2;
-            ctx.globalAlpha = 0.7;
-        }
-        
-        ctx.setLineDash([5, 5]);
-        
-        // Draw dotted line path
-        ctx.beginPath();
-        for (let i = 0; i < path.length; i++) {
-            const tile = path[i];
-            const screenX = centerX + (tile.x - this.camera.x) * this.tileSize;
-            const screenY = centerY + (tile.y - this.camera.y) * this.tileSize;
-            
-            if (i === 0) {
-                ctx.moveTo(screenX, screenY);
+        // PHASE 3: Enhanced visual distinction for different trail types
+        if (isLingering) {
+            // Lingering trails - different styles for accurate vs fallback
+            if (isAccurate) {
+                // Accurate trails (from actual movement history) - solid faded lines
+                if (isSelected) {
+                    ctx.strokeStyle = '#fff59d'; // Faded yellow for selected accurate
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = 0.5;
+                } else if (isOwned) {
+                    ctx.strokeStyle = '#a5d6a7'; // Slightly brighter green for accurate owned
+                    ctx.lineWidth = 1.5;
+                    ctx.globalAlpha = 0.4;
+                } else {
+                    ctx.strokeStyle = '#ef9a9a'; // Slightly brighter red for accurate enemy
+                    ctx.lineWidth = 1.5;
+                    ctx.globalAlpha = 0.35;
+                }
+                ctx.setLineDash([2, 4]); // Shorter dashes for accurate trails
             } else {
-                ctx.lineTo(screenX, screenY);
+                // Fallback trails (from planned paths) - more faded, longer dashes
+                if (isSelected) {
+                    ctx.strokeStyle = '#fff9c4'; // Very faded yellow for selected fallback
+                    ctx.lineWidth = 1.5;
+                    ctx.globalAlpha = 0.3;
+                } else if (isOwned) {
+                    ctx.strokeStyle = '#c8e6c9'; // Standard faded green for fallback owned
+                    ctx.lineWidth = 1;
+                    ctx.globalAlpha = 0.25;
+                } else {
+                    ctx.strokeStyle = '#ffcdd2'; // Standard faded red for fallback enemy
+                    ctx.lineWidth = 1;
+                    ctx.globalAlpha = 0.2;
+                }
+                ctx.setLineDash([3, 8]); // Longer dashes for fallback effect
             }
+        } else {
+            // Active trails - normal bright styling (unchanged)
+            if (isSelected) {
+                // Selected unit - bright yellow (regardless of ownership)
+                ctx.strokeStyle = '#ffeb3b';
+                ctx.lineWidth = 3;
+                ctx.globalAlpha = 1.0;
+            } else if (isOwned) {
+                // Own ship - green/yellow
+                ctx.strokeStyle = '#8bc34a';
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 0.8;
+            } else {
+                // Enemy ship - red/orange
+                ctx.strokeStyle = '#f44336';
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 0.7;
+            }
+            ctx.setLineDash([5, 5]); // Normal dashes for active trails
         }
-        ctx.stroke();
+        
+        // PHASE 3: Draw path - support both old path format and new segments format
+        if (hasNewSegments) {
+            // Draw segments (accurate movement history)
+            ship.movementSegments.forEach(segment => {
+                ctx.beginPath();
+                const fromScreenX = centerX + (segment.from.x - this.camera.x) * this.tileSize;
+                const fromScreenY = centerY + (segment.from.y - this.camera.y) * this.tileSize;
+                const toScreenX = centerX + (segment.to.x - this.camera.x) * this.tileSize;
+                const toScreenY = centerY + (segment.to.y - this.camera.y) * this.tileSize;
+                
+                ctx.moveTo(fromScreenX, fromScreenY);
+                ctx.lineTo(toScreenX, toScreenY);
+                ctx.stroke();
+            });
+        } else if (hasOldPath) {
+            // Draw traditional path (planned route)
+            const path = ship.movementPath;
+            ctx.beginPath();
+            for (let i = 0; i < path.length; i++) {
+                const tile = path[i];
+                const screenX = centerX + (tile.x - this.camera.x) * this.tileSize;
+                const screenY = centerY + (tile.y - this.camera.y) * this.tileSize;
+                
+                if (i === 0) {
+                    ctx.moveTo(screenX, screenY);
+                } else {
+                    ctx.lineTo(screenX, screenY);
+                }
+            }
+            ctx.stroke();
+        }
         
         // Draw current position marker (ship's actual current tile)
         const currentScreenX = centerX + (ship.x - this.camera.x) * this.tileSize;
@@ -1016,55 +1352,95 @@ class GameClient {
         
         ctx.setLineDash([]);
         
-        // Current position marker color based on ownership and selection
-        if (isSelected) {
-            ctx.fillStyle = '#4caf50'; // Green for selected
-        } else if (isOwned) {
-            ctx.fillStyle = '#66bb6a'; // Light green for owned
-        } else {
-            ctx.fillStyle = '#ef5350'; // Light red for enemy
-        }
-        
-        ctx.beginPath();
-        ctx.arc(currentScreenX, currentScreenY, isSelected ? 7 : 5, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Draw destination marker
-        if (path.length > 1) {
-            const dest = path[path.length - 1];
-            const destScreenX = centerX + (dest.x - this.camera.x) * this.tileSize;
-            const destScreenY = centerY + (dest.y - this.camera.y) * this.tileSize;
-            
-            // Destination marker color matching the path
+        // STAGE 2: Different markers for lingering vs active trails
+        if (!isLingering) {
+            // Only draw current position marker for active trails
             if (isSelected) {
-                ctx.fillStyle = '#ffeb3b'; // Yellow for selected
+                ctx.fillStyle = '#4caf50'; // Green for selected
             } else if (isOwned) {
-                ctx.fillStyle = '#8bc34a'; // Green for owned
+                ctx.fillStyle = '#66bb6a'; // Light green for owned
             } else {
-                ctx.fillStyle = '#f44336'; // Red for enemy
+                ctx.fillStyle = '#ef5350'; // Light red for enemy
             }
             
             ctx.beginPath();
-            ctx.arc(destScreenX, destScreenY, isSelected ? 8 : 6, 0, Math.PI * 2);
+            ctx.arc(currentScreenX, currentScreenY, isSelected ? 7 : 5, 0, Math.PI * 2);
             ctx.fill();
+        }
+        
+        // PHASE 3: Draw destination marker (support both old path and new segments)
+        let destinationPoint = null;
+        
+        if (hasNewSegments && ship.movementSegments.length > 0) {
+            // For segments, use the last segment's 'to' position as destination
+            const lastSegment = ship.movementSegments[ship.movementSegments.length - 1];
+            destinationPoint = lastSegment.to;
+        } else if (hasOldPath) {
+            // For old paths, use the last point as destination
+            const path = ship.movementPath;
+            destinationPoint = path[path.length - 1];
+        }
+        
+        if (destinationPoint) {
+            const destScreenX = centerX + (destinationPoint.x - this.camera.x) * this.tileSize;
+            const destScreenY = centerY + (destinationPoint.y - this.camera.y) * this.tileSize;
             
-            // Draw ETA near destination (only for owned ships to avoid revealing enemy info)
-            if (isSelected || isOwned) {
-                // STAGE A FIX: Use server-provided ETA instead of recalculating
-                const eta = ship.movementETA !== undefined ? ship.movementETA : this.calculateETA(path, ship.meta.movementSpeed || 1);
-                const usingServerETA = ship.movementETA !== undefined;
-                
-                // Debug logging for ETA source (only once per render to avoid spam)
-                if (isSelected && !this._lastETADebug || this._lastETADebug !== `${ship.id}-${eta}`) {
-                    console.log(`📊 ETA Display: Ship ${ship.id} showing ${eta}T (${usingServerETA ? 'server-provided' : 'client-calculated'})`);
-                    this._lastETADebug = `${ship.id}-${eta}`;
+            if (isLingering) {
+                // Faded destination markers for lingering trails
+                if (isSelected) {
+                    ctx.fillStyle = '#fff59d'; // Faded yellow
+                } else if (isOwned) {
+                    ctx.fillStyle = '#c8e6c9'; // Faded green  
+                } else {
+                    ctx.fillStyle = '#ffcdd2'; // Faded red
+                }
+                ctx.globalAlpha = 0.3; // Extra fading for destination
+                ctx.beginPath();
+                ctx.arc(destScreenX, destScreenY, 4, 0, Math.PI * 2); // Smaller marker
+                ctx.fill();
+            } else {
+                // Normal bright destination markers for active trails
+                if (isSelected) {
+                    ctx.fillStyle = '#ffeb3b'; // Yellow for selected
+                } else if (isOwned) {
+                    ctx.fillStyle = '#8bc34a'; // Green for owned
+                } else {
+                    ctx.fillStyle = '#f44336'; // Red for enemy
                 }
                 
-                if (eta > 0) {
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = '12px Arial';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(`ETA: ${eta}T`, destScreenX, destScreenY - 15);
+                ctx.beginPath();
+                ctx.arc(destScreenX, destScreenY, isSelected ? 8 : 6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw ETA near destination (only for active trails and owned ships)
+                if (isSelected || isOwned) {
+                    // PHASE 3: Use server-provided ETA, fallback to path calculation if available
+                    let eta = ship.movementETA;
+                    let usingServerETA = ship.movementETA !== undefined;
+                    
+                    // If no server ETA and we have old path format, calculate it
+                    if (eta === undefined && hasOldPath) {
+                        const path = ship.movementPath;
+                        eta = this.calculateETA(path, ship.meta.movementSpeed || 1);
+                        usingServerETA = false;
+                    } else if (eta === undefined) {
+                        // For segments format, we don't calculate ETA (should come from server)
+                        eta = 0;
+                        usingServerETA = false;
+                    }
+                    
+                    // Debug logging for ETA source (only once per render to avoid spam)
+                    if (isSelected && !this._lastETADebug || this._lastETADebug !== `${ship.id}-${eta}`) {
+                        console.log(`📊 ETA Display: Ship ${ship.id} showing ${eta}T (${usingServerETA ? 'server-provided' : 'client-calculated'})`);
+                        this._lastETADebug = `${ship.id}-${eta}`;
+                    }
+                    
+                    if (eta > 0) {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = '12px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(`ETA: ${eta}T`, destScreenX, destScreenY - 15);
+                    }
                 }
             }
         }
