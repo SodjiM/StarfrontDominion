@@ -10,6 +10,7 @@ const initializeDatabase = async () => {
         const usersSchema = fs.readFileSync(path.join(__dirname, 'models/users.sql'), 'utf8');
         const gamesSchema = fs.readFileSync(path.join(__dirname, 'models/games.sql'), 'utf8');
         const gameworldSchema = fs.readFileSync(path.join(__dirname, 'models/gameworld.sql'), 'utf8');
+        const celestialSchema = fs.readFileSync(path.join(__dirname, 'models/celestial_objects.sql'), 'utf8');
         
         // Execute schemas sequentially using promises
         await new Promise((resolve, reject) => {
@@ -44,6 +45,20 @@ const initializeDatabase = async () => {
                     reject(err);
                 } else {
                     console.log('✅ Gameworld tables ready');
+                    resolve();
+                }
+            });
+        });
+
+        // Apply celestial objects schema extensions
+        await new Promise((resolve, reject) => {
+            db.exec(celestialSchema, (err) => {
+                if (err) {
+                    console.error('Error applying celestial objects schema:', err);
+                    console.error('Schema content:', celestialSchema.substring(0, 200) + '...');
+                    reject(err);
+                } else {
+                    console.log('✅ Celestial objects schema applied');
                     resolve();
                 }
             });
