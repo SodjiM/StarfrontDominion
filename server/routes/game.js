@@ -363,9 +363,9 @@ class GameWorldManager {
                         return reject(err);
                     }
                     
-                    // Prepare bulk insert statement
+                    // Prepare bulk insert statement (use INSERT OR REPLACE to handle duplicates)
                     const stmt = db.prepare(
-                        `INSERT INTO player_visibility 
+                        `INSERT OR REPLACE INTO player_visibility 
                          (game_id, user_id, sector_id, x, y, last_seen_turn, visibility_level) 
                          VALUES (?, ?, ?, ?, ?, ?, ?)`
                     );
@@ -458,7 +458,8 @@ class GameWorldManager {
                     
                     // Get visible objects with fog of war filtering, including movement and harvesting data
                     db.all(
-                        `SELECT so.*, pv.visibility_level, pv.last_seen_turn, 
+                        `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
+                                pv.visibility_level, pv.last_seen_turn, 
                                 mo.destination_x, mo.destination_y, mo.movement_path, 
                                 mo.eta_turns, mo.status as movement_status,
                                 mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
@@ -486,7 +487,7 @@ class GameWorldManager {
                          
                          UNION ALL
                          
-                         -- Get visible resource nodes
+                         -- Get visible resource nodes (match exact column order from main query)
                          SELECT rn.id, 'resource_node' as type, rn.x, rn.y, NULL as owner_id,
                                 JSON_OBJECT(
                                     'resourceType', rt.resource_name,
@@ -499,7 +500,7 @@ class GameWorldManager {
                                     'alwaysKnown', 1
                                 ) as meta,
                                 rn.sector_id, rt.category as celestial_type, rn.size as radius,
-                                rn.parent_object_id, pv2.visibility_level, pv2.last_seen_turn,
+                                rn.parent_object_id, 1 as visibility_level, NULL as last_seen_turn,
                                 NULL as destination_x, NULL as destination_y, NULL as movement_path,
                                 NULL as eta_turns, NULL as movement_status,
                                 NULL as warp_phase, NULL as warp_preparation_turns, 
@@ -508,15 +509,12 @@ class GameWorldManager {
                                 NULL as harvest_rate, NULL as total_harvested, NULL as harvesting_resource
                          FROM resource_nodes rn
                          JOIN resource_types rt ON rn.resource_type_id = rt.id
-                         LEFT JOIN player_visibility pv2 ON (
-                             pv2.game_id = ? AND pv2.user_id = ? AND pv2.sector_id = rn.sector_id 
-                             AND pv2.x = rn.x AND pv2.y = rn.y
-                         )
                          WHERE rn.sector_id = ? 
                          AND rn.resource_amount > 0 
                          AND rn.is_depleted = 0
-                         AND (pv2.visibility_level > 0 OR 1 = 1)`,
-                        [gameId, userId, sector.id, userId, gameId, userId, sector.id],
+                         -- Resource nodes are always visible when in range
+                         ORDER BY rn.id`,
+                        [gameId, userId, sector.id, userId, sector.id],
                         (err, objects) => {
                             if (err) return reject(err);
                             

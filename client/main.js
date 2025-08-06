@@ -345,6 +345,12 @@ UI.showAlert = function(message, title) {
     return Modal.alert(message, title);
 };
 
+UI.closeModal = function() {
+    if (Modal.activeModal) {
+        Modal.close(Modal.activeModal);
+    }
+};
+
 // Export for potential future use
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { Session, UI, Game, Events, apiRequest, Modal };

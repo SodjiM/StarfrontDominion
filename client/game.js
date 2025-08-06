@@ -156,6 +156,20 @@ class GameClient {
             const data = await response.json();
             
             if (response.ok) {
+                // Parse all meta fields from JSON strings to objects
+                if (data.objects) {
+                    data.objects.forEach(obj => {
+                        if (obj.meta && typeof obj.meta === 'string') {
+                            try {
+                                obj.meta = JSON.parse(obj.meta);
+                            } catch (e) {
+                                console.warn('Failed to parse meta for object:', obj.id, obj.meta);
+                                obj.meta = {};
+                            }
+                        }
+                    });
+                }
+                
                 this.gameState = data;
                 this.updateUI();
                 this.render();
