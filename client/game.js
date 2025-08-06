@@ -1673,11 +1673,14 @@ class GameClient {
         });
         
         // Draw resource nodes as small dots clustered by type
+        const resourceFieldLabels = new Map(); // Track field centers for labels
+        
         resourceNodes.forEach(obj => {
             const x = obj.x * scaleX;
             const y = obj.y * scaleY;
             const meta = obj.meta || {};
             const resourceType = meta.resourceType || 'unknown';
+            const parentId = obj.parent_object_id;
             
             // Choose color based on resource type
             let nodeColor;
@@ -1686,7 +1689,7 @@ class GameClient {
                     nodeColor = '#8D6E63'; // Brown for rocks
                     break;
                 case 'gas':
-                    nodeColor = '#4FC3F7'; // Light blue for gas
+                    nodeColor = '#9C27B0'; // Purple for gas
                     break;
                 case 'energy':
                     nodeColor = '#FFD54F'; // Yellow for energy
@@ -1702,6 +1705,49 @@ class GameClient {
             ctx.beginPath();
             ctx.arc(x, y, 1, 0, Math.PI * 2); // Small 1px dots
             ctx.fill();
+            
+            // Track field centers for labeling
+            if (parentId && (resourceType === 'rock' || resourceType === 'gas')) {
+                if (!resourceFieldLabels.has(parentId)) {
+                    resourceFieldLabels.set(parentId, {
+                        x: 0, y: 0, count: 0, type: resourceType, parentId: parentId
+                    });
+                }
+                const field = resourceFieldLabels.get(parentId);
+                field.x += x;
+                field.y += y;
+                field.count++;
+            }
+        });
+        
+        // Draw field labels for asteroid belts and nebulae
+        resourceFieldLabels.forEach((field, parentId) => {
+            const centerX = field.x / field.count;
+            const centerY = field.y / field.count;
+            
+            // Find the parent celestial object to get its name
+            const parentObject = celestialObjects.find(obj => obj.id === parentId);
+            if (parentObject) {
+                const parentMeta = parentObject.meta || {};
+                const celestialType = parentMeta.celestialType || parentObject.celestial_type;
+                
+                let fieldName = '';
+                if (field.type === 'rock' && celestialType === 'belt') {
+                    fieldName = parentMeta.name || 'Asteroid Belt';
+                } else if (field.type === 'gas' && celestialType === 'nebula') {
+                    fieldName = parentMeta.name || 'Nebula Field';
+                }
+                
+                if (fieldName) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                    ctx.font = '8px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                    ctx.shadowBlur = 1;
+                    ctx.fillText(fieldName, centerX, centerY + 15);
+                    ctx.shadowBlur = 0;
+                }
+            }
         });
         
         // Draw ships and stations on top
@@ -3328,7 +3374,7 @@ function openMapModal() {
                 <div>⭐ Stars  🌍 Planets  🌙 Moons  🚢 Ships  🏭 Starbases</div>
                 <div style="margin-top: 5px;">
                     <span style="color: #8D6E63;">●</span> Rocks  
-                    <span style="color: #4FC3F7;">●</span> Gas  
+                    <span style="color: #9C27B0;">●</span> Gas  
                     <span style="color: #FFD54F;">●</span> Energy  
                     <span style="color: #A1887F;">●</span> Salvage
                 </div>
@@ -3465,12 +3511,15 @@ function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
                 ctx.stroke();
             }
             
-            // Add labels for important objects
-            if (size > 6) {
+            // Add labels for important objects (always show for planets, stars if big enough)
+            if (celestialType === 'planet' || size > 8) {
                 ctx.fillStyle = '#ffffff';
-                ctx.font = '10px Arial';
+                ctx.font = celestialType === 'planet' ? '11px Arial' : '10px Arial';
                 ctx.textAlign = 'center';
-                ctx.fillText(meta.name || celestialType, x, y + size/2 + 12);
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                ctx.shadowBlur = 2;
+                ctx.fillText(meta.name || celestialType, x, y + size/2 + 14);
+                ctx.shadowBlur = 0; // Reset shadow
             }
         } else {
             // Small objects - squares
@@ -3479,11 +3528,14 @@ function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
     });
     
     // Draw resource nodes as larger dots than minimap
+    const resourceFieldLabelsStrategic = new Map(); // Track field centers for labels
+    
     resourceNodes.forEach(obj => {
         const x = obj.x * scaleX;
         const y = obj.y * scaleY;
         const meta = obj.meta || {};
         const resourceType = meta.resourceType || 'unknown';
+        const parentId = obj.parent_object_id;
         
         // Choose color based on resource type
         let nodeColor;
@@ -3492,7 +3544,7 @@ function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
                 nodeColor = '#8D6E63';
                 break;
             case 'gas':
-                nodeColor = '#4FC3F7';
+                nodeColor = '#9C27B0'; // Purple for gas
                 break;
             case 'energy':
                 nodeColor = '#FFD54F';
@@ -3508,6 +3560,49 @@ function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
         ctx.beginPath();
         ctx.arc(x, y, 2, 0, Math.PI * 2); // Larger 2px dots for full map
         ctx.fill();
+        
+        // Track field centers for labeling
+        if (parentId && (resourceType === 'rock' || resourceType === 'gas')) {
+            if (!resourceFieldLabelsStrategic.has(parentId)) {
+                resourceFieldLabelsStrategic.set(parentId, {
+                    x: 0, y: 0, count: 0, type: resourceType, parentId: parentId
+                });
+            }
+            const field = resourceFieldLabelsStrategic.get(parentId);
+            field.x += x;
+            field.y += y;
+            field.count++;
+        }
+    });
+    
+    // Draw field labels for asteroid belts and nebulae on strategic map
+    resourceFieldLabelsStrategic.forEach((field, parentId) => {
+        const centerX = field.x / field.count;
+        const centerY = field.y / field.count;
+        
+        // Find the parent celestial object to get its name
+        const parentObject = celestialObjects.find(obj => obj.id === parentId);
+        if (parentObject) {
+            const parentMeta = parentObject.meta || {};
+            const celestialType = parentMeta.celestialType || parentObject.celestial_type;
+            
+            let fieldName = '';
+            if (field.type === 'rock' && celestialType === 'belt') {
+                fieldName = parentMeta.name || 'Asteroid Belt';
+            } else if (field.type === 'gas' && celestialType === 'nebula') {
+                fieldName = parentMeta.name || 'Nebula Field';
+            }
+            
+            if (fieldName) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                ctx.shadowBlur = 2;
+                ctx.fillText(fieldName, centerX, centerY + 25);
+                ctx.shadowBlur = 0;
+            }
+        }
     });
     
     // Draw ships and stations on top

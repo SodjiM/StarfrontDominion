@@ -10,14 +10,14 @@ const CELESTIAL_OBJECT_TYPES = {
     star: {
         name: 'Star',
         category: 'stellar',
-        minRadius: 20,
-        maxRadius: 40,
-        defaultRadius: 30,
+        minRadius: 40,
+        maxRadius: 80,
+        defaultRadius: 60,
         minCount: 1,
         maxCount: 1,
         placementZone: 'center', // 2000-3000 tile range
         placementPriority: 100,
-        bufferDistance: 500,
+        bufferDistance: 1000,
         defaultMeta: {
             name: 'Primary Star',
             temperature: 5778,
@@ -33,9 +33,9 @@ const CELESTIAL_OBJECT_TYPES = {
     'binary-star': {
         name: 'Binary Star System',
         category: 'stellar',
-        minRadius: 15,
-        maxRadius: 30,
-        defaultRadius: 25,
+        minRadius: 30,
+        maxRadius: 60,
+        defaultRadius: 50,
         minCount: 2,
         maxCount: 2,
         placementZone: 'center',
@@ -57,14 +57,14 @@ const CELESTIAL_OBJECT_TYPES = {
     planet: {
         name: 'Planet',
         category: 'planetary',
-        minRadius: 10,
-        maxRadius: 25,
-        defaultRadius: 15,
+        minRadius: 20,
+        maxRadius: 50,
+        defaultRadius: 30,
         minCount: 4,
         maxCount: 8,
         placementZone: 'orbital', // Concentric rings around star
         placementPriority: 90,
-        bufferDistance: 150,
+        bufferDistance: 300,
         defaultMeta: {
             name: 'Planet',
             type: 'terrestrial',
@@ -82,14 +82,14 @@ const CELESTIAL_OBJECT_TYPES = {
     'gas-giant': {
         name: 'Gas Giant',
         category: 'planetary',
-        minRadius: 20,
-        maxRadius: 25,
-        defaultRadius: 23,
+        minRadius: 40,
+        maxRadius: 50,
+        defaultRadius: 46,
         minCount: 0,
         maxCount: 2,
         placementZone: 'outer-orbital',
         placementPriority: 85,
-        bufferDistance: 200,
+        bufferDistance: 400,
         defaultMeta: {
             name: 'Gas Giant',
             type: 'gas-giant',
@@ -107,14 +107,14 @@ const CELESTIAL_OBJECT_TYPES = {
     moon: {
         name: 'Moon',
         category: 'planetary',
-        minRadius: 3,
-        maxRadius: 8,
-        defaultRadius: 5,
+        minRadius: 6,
+        maxRadius: 16,
+        defaultRadius: 10,
         minCount: 0,
         maxCount: 3, // Per planet
         placementZone: 'orbital', // Around parent planet
         placementPriority: 70,
-        bufferDistance: 50,
+        bufferDistance: 100,
         defaultMeta: {
             name: 'Moon',
             type: 'rocky',
