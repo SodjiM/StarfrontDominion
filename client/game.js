@@ -1620,30 +1620,88 @@ class GameClient {
         const scaleX = canvas.width / 5000;
         const scaleY = canvas.height / 5000;
         
-        // Draw celestial objects first (larger, background)
+        // Separate objects by type for better rendering
         const celestialObjects = this.objects.filter(obj => this.isCelestialObject(obj));
-        const shipObjects = this.objects.filter(obj => !this.isCelestialObject(obj));
+        const resourceNodes = this.objects.filter(obj => obj.type === 'resource_node');
+        const shipObjects = this.objects.filter(obj => !this.isCelestialObject(obj) && obj.type !== 'resource_node');
         
-        // Draw celestial objects
+        // Draw celestial objects (but skip large field overlays for belts/nebulae)
         celestialObjects.forEach(obj => {
             const x = obj.x * scaleX;
             const y = obj.y * scaleY;
             const radius = obj.radius || 1;
-            const size = Math.max(1, Math.min(radius * scaleX * 2, canvas.width * 0.1)); // Scale but cap size
+            const meta = obj.meta || {};
+            const celestialType = meta.celestialType || obj.celestial_type;
+            
+            // Skip drawing large circles for belts and nebulae - we'll show resource nodes instead
+            if (celestialType === 'belt' || celestialType === 'nebula') {
+                return;
+            }
+            
+            // Calculate size based on object type and importance
+            let size;
+            if (celestialType === 'star') {
+                size = Math.max(4, Math.min(radius * scaleX * 0.8, canvas.width * 0.08)); // Stars are prominent
+            } else if (celestialType === 'planet') {
+                size = Math.max(3, Math.min(radius * scaleX * 1.2, canvas.width * 0.06)); // Planets are visible
+            } else if (celestialType === 'moon') {
+                size = Math.max(2, Math.min(radius * scaleX * 1.5, canvas.width * 0.04)); // Moons are small but visible
+            } else {
+                size = Math.max(1, Math.min(radius * scaleX * 2, canvas.width * 0.05)); // Other objects
+            }
             
             // Get celestial colors
             const colors = this.getCelestialColors(obj);
             ctx.fillStyle = colors.border;
             
-            if (radius > 10) {
-                // Large objects (stars, planets) - circles
+            if (celestialType === 'star' || celestialType === 'planet' || celestialType === 'moon') {
+                // Important objects - circles with better visibility
                 ctx.beginPath();
                 ctx.arc(x, y, size/2, 0, Math.PI * 2);
                 ctx.fill();
+                
+                // Add a subtle glow for stars and planets
+                if (celestialType === 'star' || celestialType === 'planet') {
+                    ctx.strokeStyle = colors.border;
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
             } else {
                 // Small objects - squares
                 ctx.fillRect(x - size/2, y - size/2, size, size);
             }
+        });
+        
+        // Draw resource nodes as small dots clustered by type
+        resourceNodes.forEach(obj => {
+            const x = obj.x * scaleX;
+            const y = obj.y * scaleY;
+            const meta = obj.meta || {};
+            const resourceType = meta.resourceType || 'unknown';
+            
+            // Choose color based on resource type
+            let nodeColor;
+            switch (resourceType) {
+                case 'rock':
+                    nodeColor = '#8D6E63'; // Brown for rocks
+                    break;
+                case 'gas':
+                    nodeColor = '#4FC3F7'; // Light blue for gas
+                    break;
+                case 'energy':
+                    nodeColor = '#FFD54F'; // Yellow for energy
+                    break;
+                case 'salvage':
+                    nodeColor = '#A1887F'; // Gray-brown for salvage
+                    break;
+                default:
+                    nodeColor = '#757575'; // Gray for unknown
+            }
+            
+            ctx.fillStyle = nodeColor;
+            ctx.beginPath();
+            ctx.arc(x, y, 1, 0, Math.PI * 2); // Small 1px dots
+            ctx.fill();
         });
         
         // Draw ships and stations on top
@@ -3242,5 +3300,306 @@ async function updateCargoStatus(shipId) {
         }
     } catch (error) {
         console.error('Error updating cargo status:', error);
+    }
+}
+
+// Map modal functions
+function openMapModal() {
+    if (!gameClient) return;
+    
+    const modalContent = document.createElement('div');
+    modalContent.innerHTML = `
+        <div class="map-tabs">
+            <button class="map-tab active" onclick="switchMapTab('solar-system')">
+                🌌 Solar System
+            </button>
+            <button class="map-tab" onclick="switchMapTab('galaxy')">
+                🌌 Galaxy
+            </button>
+        </div>
+        
+        <div id="solar-system-tab" class="map-tab-content">
+            <div style="margin-bottom: 15px;">
+                <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 ${gameClient.gameState?.sector?.name || 'Current Solar System'}</h3>
+                <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
+            </div>
+            <canvas id="fullMapCanvas" class="full-map-canvas"></canvas>
+            <div style="margin-top: 15px; font-size: 0.8em; color: #888;">
+                <div>⭐ Stars  🌍 Planets  🌙 Moons  🚢 Ships  🏭 Starbases</div>
+                <div style="margin-top: 5px;">
+                    <span style="color: #8D6E63;">●</span> Rocks  
+                    <span style="color: #4FC3F7;">●</span> Gas  
+                    <span style="color: #FFD54F;">●</span> Energy  
+                    <span style="color: #A1887F;">●</span> Salvage
+                </div>
+            </div>
+        </div>
+        
+        <div id="galaxy-tab" class="map-tab-content hidden">
+            <div style="margin-bottom: 15px;">
+                <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 Galaxy Overview</h3>
+                <p style="color: #ccc; margin: 0; font-size: 0.9em;">All known solar systems in the galaxy</p>
+            </div>
+            <div id="galaxySystemsList" class="galaxy-systems-list">
+                <div style="text-align: center; color: #888; padding: 40px;">
+                    Loading galaxy data...
+                </div>
+            </div>
+        </div>
+    `;
+    
+    UI.showModal({
+        title: '🗺️ Strategic Map',
+        content: modalContent,
+        actions: [
+            {
+                text: 'Close',
+                style: 'secondary',
+                action: () => true
+            }
+        ],
+        className: 'map-modal'
+    });
+    
+    // Initialize the solar system map after modal is shown
+    setTimeout(() => {
+        initializeFullMap();
+        loadGalaxyData();
+    }, 100);
+}
+
+function switchMapTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.map-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    // Update tab content
+    document.querySelectorAll('.map-tab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    document.getElementById(tabName + '-tab').classList.remove('hidden');
+    
+    // Refresh map if switching to solar system tab
+    if (tabName === 'solar-system') {
+        setTimeout(() => initializeFullMap(), 50);
+    }
+}
+
+function initializeFullMap() {
+    const canvas = document.getElementById('fullMapCanvas');
+    if (!canvas || !gameClient || !gameClient.objects) return;
+    
+    const ctx = canvas.getContext('2d');
+    const rect = canvas.getBoundingClientRect();
+    
+    // Set canvas size to match display size
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    
+    // Clear canvas
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw sector boundary
+    ctx.strokeStyle = 'rgba(100, 181, 246, 0.3)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+    
+    // Scale objects to full map
+    const scaleX = canvas.width / 5000;
+    const scaleY = canvas.height / 5000;
+    
+    // Use the same rendering logic as the minimap but larger
+    renderFullMapObjects(ctx, canvas, scaleX, scaleY);
+}
+
+function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
+    if (!gameClient || !gameClient.objects) return;
+    
+    // Separate objects by type
+    const celestialObjects = gameClient.objects.filter(obj => gameClient.isCelestialObject(obj));
+    const resourceNodes = gameClient.objects.filter(obj => obj.type === 'resource_node');
+    const shipObjects = gameClient.objects.filter(obj => !gameClient.isCelestialObject(obj) && obj.type !== 'resource_node');
+    
+    // Draw celestial objects (skip large field overlays for belts/nebulae)
+    celestialObjects.forEach(obj => {
+        const x = obj.x * scaleX;
+        const y = obj.y * scaleY;
+        const radius = obj.radius || 1;
+        const meta = obj.meta || {};
+        const celestialType = meta.celestialType || obj.celestial_type;
+        
+        // Skip drawing large circles for belts and nebulae
+        if (celestialType === 'belt' || celestialType === 'nebula') {
+            return;
+        }
+        
+        // Calculate size for full map (larger than minimap)
+        let size;
+        if (celestialType === 'star') {
+            size = Math.max(8, Math.min(radius * scaleX * 0.6, canvas.width * 0.06));
+        } else if (celestialType === 'planet') {
+            size = Math.max(6, Math.min(radius * scaleX * 1.0, canvas.width * 0.04));
+        } else if (celestialType === 'moon') {
+            size = Math.max(4, Math.min(radius * scaleX * 1.2, canvas.width * 0.03));
+        } else {
+            size = Math.max(3, Math.min(radius * scaleX * 1.5, canvas.width * 0.04));
+        }
+        
+        // Get celestial colors
+        const colors = gameClient.getCelestialColors(obj);
+        ctx.fillStyle = colors.border;
+        
+        if (celestialType === 'star' || celestialType === 'planet' || celestialType === 'moon') {
+            // Important objects - circles with better visibility
+            ctx.beginPath();
+            ctx.arc(x, y, size/2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Add glow effect for stars and planets
+            if (celestialType === 'star' || celestialType === 'planet') {
+                ctx.strokeStyle = colors.border;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            
+            // Add labels for important objects
+            if (size > 6) {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(meta.name || celestialType, x, y + size/2 + 12);
+            }
+        } else {
+            // Small objects - squares
+            ctx.fillRect(x - size/2, y - size/2, size, size);
+        }
+    });
+    
+    // Draw resource nodes as larger dots than minimap
+    resourceNodes.forEach(obj => {
+        const x = obj.x * scaleX;
+        const y = obj.y * scaleY;
+        const meta = obj.meta || {};
+        const resourceType = meta.resourceType || 'unknown';
+        
+        // Choose color based on resource type
+        let nodeColor;
+        switch (resourceType) {
+            case 'rock':
+                nodeColor = '#8D6E63';
+                break;
+            case 'gas':
+                nodeColor = '#4FC3F7';
+                break;
+            case 'energy':
+                nodeColor = '#FFD54F';
+                break;
+            case 'salvage':
+                nodeColor = '#A1887F';
+                break;
+            default:
+                nodeColor = '#757575';
+        }
+        
+        ctx.fillStyle = nodeColor;
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, Math.PI * 2); // Larger 2px dots for full map
+        ctx.fill();
+    });
+    
+    // Draw ships and stations on top
+    shipObjects.forEach(obj => {
+        const x = obj.x * scaleX;
+        const y = obj.y * scaleY;
+        const isOwned = obj.owner_id === gameClient.userId;
+        
+        // Ship/station size for full map
+        const size = obj.type === 'starbase' ? 8 : 6;
+        
+        if (obj.type === 'starbase') {
+            // Starbase - square
+            ctx.fillStyle = isOwned ? '#4CAF50' : '#F44336';
+            ctx.fillRect(x - size/2, y - size/2, size, size);
+        } else {
+            // Ship - triangle
+            ctx.fillStyle = isOwned ? '#2196F3' : '#FF9800';
+            ctx.beginPath();
+            ctx.moveTo(x, y - size/2);
+            ctx.lineTo(x - size/2, y + size/2);
+            ctx.lineTo(x + size/2, y + size/2);
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        // Add ship labels
+        if (isOwned && obj.meta && obj.meta.name) {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(obj.meta.name, x, y + size/2 + 12);
+        }
+    });
+}
+
+async function loadGalaxyData() {
+    try {
+        // For now, just show the current game's systems
+        // In the future, this could fetch data from multiple games/sectors
+        const galaxyList = document.getElementById('galaxySystemsList');
+        if (!galaxyList || !gameClient) return;
+        
+        // Mock galaxy data - in the future this would come from server
+        const currentSystem = {
+            name: gameClient.gameState?.sector?.name || 'Current System',
+            id: gameClient.gameId,
+            players: 1,
+            status: 'Active',
+            turn: gameClient.gameState?.turn?.number || 1,
+            celestialObjects: gameClient.objects ? gameClient.objects.filter(obj => gameClient.isCelestialObject(obj)).length : 0
+        };
+        
+        galaxyList.innerHTML = `
+            <div class="galaxy-system-card" onclick="selectGalaxySystem(${currentSystem.id})">
+                <div class="galaxy-system-name">${currentSystem.name}</div>
+                <div class="galaxy-system-info">
+                    <div>👥 ${currentSystem.players} Player${currentSystem.players !== 1 ? 's' : ''}</div>
+                    <div>⏰ Turn ${currentSystem.turn}</div>
+                    <div>🌌 ${currentSystem.celestialObjects} Celestial Objects</div>
+                    <div>📊 Status: <span style="color: #4CAF50;">${currentSystem.status}</span></div>
+                </div>
+            </div>
+            <div class="galaxy-system-card" style="opacity: 0.5; cursor: not-allowed;">
+                <div class="galaxy-system-name">Distant Systems</div>
+                <div class="galaxy-system-info">
+                    <div style="color: #888;">🚧 Coming Soon</div>
+                    <div style="color: #666; font-size: 0.8em;">Multi-system gameplay will be available in future updates</div>
+                </div>
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Error loading galaxy data:', error);
+        const galaxyList = document.getElementById('galaxySystemsList');
+        if (galaxyList) {
+            galaxyList.innerHTML = `
+                <div style="text-align: center; color: #f44336; padding: 40px;">
+                    ❌ Failed to load galaxy data
+                </div>
+            `;
+        }
+    }
+}
+
+function selectGalaxySystem(systemId) {
+    if (systemId === gameClient.gameId) {
+        // Switch to solar system tab for current system
+        switchMapTab('solar-system');
+        document.querySelector('.map-tab[onclick="switchMapTab(\'solar-system\')"]').click();
+    } else {
+        // Future: Navigate to different system
+        gameClient.addLogEntry('Multi-system navigation coming soon!', 'info');
     }
 } 

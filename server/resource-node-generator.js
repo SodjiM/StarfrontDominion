@@ -40,23 +40,23 @@ class ResourceNodeGenerator {
             'belt': [
                 {
                     resourceType: 'rock',
-                    minNodes: 15,
-                    maxNodes: 35,
+                    minNodes: 25,
+                    maxNodes: 45,
                     minAmount: 50,
                     maxAmount: 200,
                     sizeDistribution: [70, 25, 5], // % for size 1, 2, 3
-                    placementPattern: 'scattered_ring'
+                    placementPattern: 'dense_belt_ring'
                 }
             ],
             'nebula': [
                 {
                     resourceType: 'gas',
-                    minNodes: 8,
-                    maxNodes: 20,
+                    minNodes: 12,
+                    maxNodes: 25,
                     minAmount: 30,
                     maxAmount: 100,
                     sizeDistribution: [40, 40, 20],
-                    placementPattern: 'clustered'
+                    placementPattern: 'dense_clusters'
                 }
             ],
             'star': [
@@ -146,6 +146,33 @@ class ResourceNodeGenerator {
                     y: Math.round(centerY + Math.sin(angle) * distance)
                 };
                 
+            case 'dense_belt_ring':
+                // Dense placement closer to the belt boundary with gradient density
+                const beltAngle = rng.random() * 2 * Math.PI;
+                
+                // Create density gradient: 70% of nodes near edges (70-95% radius), 30% in middle (40-70% radius)
+                const densityRoll = rng.random();
+                let beltDistance;
+                if (densityRoll < 0.7) {
+                    // Dense outer ring - where most asteroids are
+                    beltDistance = radius * (0.70 + rng.random() * 0.25); // 70%-95% of radius
+                } else {
+                    // Sparse inner area
+                    beltDistance = radius * (0.40 + rng.random() * 0.30); // 40%-70% of radius
+                }
+                
+                // Add some random variation to make it feel natural
+                const variation = (rng.random() - 0.5) * radius * 0.1; // ±10% variation
+                beltDistance += variation;
+                
+                // Ensure we don't place too close to center (avoid ship warp collision)
+                beltDistance = Math.max(beltDistance, radius * 0.3);
+                
+                return {
+                    x: Math.round(centerX + Math.cos(beltAngle) * beltDistance),
+                    y: Math.round(centerY + Math.sin(beltAngle) * beltDistance)
+                };
+                
             case 'clustered':
                 // Create clusters of nodes
                 const clusterAngle = rng.random() * 2 * Math.PI;
@@ -153,6 +180,27 @@ class ResourceNodeGenerator {
                 return {
                     x: Math.round(centerX + Math.cos(clusterAngle) * clusterDistance),
                     y: Math.round(centerY + Math.sin(clusterAngle) * clusterDistance)
+                };
+                
+            case 'dense_clusters':
+                // Create tight clusters with 3-4 cluster centers
+                const numClusters = 3 + Math.floor(rng.random() * 2); // 3-4 clusters
+                const clusterIndex = Math.floor(rng.random() * numClusters);
+                
+                // Define cluster centers around the nebula
+                const clusterCenterAngle = (clusterIndex / numClusters) * 2 * Math.PI + (rng.random() - 0.5) * 0.8;
+                const clusterCenterDistance = radius * (0.3 + rng.random() * 0.4); // 30%-70% from center
+                
+                const clusterCenterX = centerX + Math.cos(clusterCenterAngle) * clusterCenterDistance;
+                const clusterCenterY = centerY + Math.sin(clusterCenterAngle) * clusterCenterDistance;
+                
+                // Place node near cluster center with tight spread
+                const nodeAngle = rng.random() * 2 * Math.PI;
+                const nodeDistance = rng.random() * radius * 0.15; // Tight cluster radius (15% of nebula)
+                
+                return {
+                    x: Math.round(clusterCenterX + Math.cos(nodeAngle) * nodeDistance),
+                    y: Math.round(clusterCenterY + Math.sin(nodeAngle) * nodeDistance)
                 };
                 
             case 'orbital_safe_zone':
