@@ -719,6 +719,7 @@ class GameClient {
     drawObjects(ctx, centerX, centerY) {
         // Separate objects by type for proper layering
         const celestialObjects = [];
+        const resourceNodes = [];
         const shipObjects = [];
         
         this.objects.forEach(obj => {
@@ -730,7 +731,9 @@ class GameClient {
             if (screenX >= -buffer && screenX <= this.canvas.width + buffer &&
                 screenY >= -buffer && screenY <= this.canvas.height + buffer) {
                 
-                if (this.isCelestialObject(obj)) {
+                if (obj.type === 'resource_node') {
+                    resourceNodes.push({ obj, screenX, screenY });
+                } else if (this.isCelestialObject(obj)) {
                     celestialObjects.push({ obj, screenX, screenY });
                 } else {
                     shipObjects.push({ obj, screenX, screenY });
@@ -743,6 +746,11 @@ class GameClient {
         
         // Draw celestial objects first (background layer)
         celestialObjects.forEach(({ obj, screenX, screenY }) => {
+            this.drawObject(ctx, obj, screenX, screenY);
+        });
+        
+        // Draw resource nodes (middle layer)
+        resourceNodes.forEach(({ obj, screenX, screenY }) => {
             this.drawObject(ctx, obj, screenX, screenY);
         });
         
@@ -790,8 +798,10 @@ class GameClient {
         ctx.save();
         ctx.globalAlpha = alpha;
         
-        // Draw celestial objects vs ships differently
-        if (isCelestial) {
+        // Draw different object types
+        if (obj.type === 'resource_node') {
+            this.drawResourceNode(ctx, obj, x, y, renderSize, colors);
+        } else if (isCelestial) {
             this.drawCelestialObject(ctx, obj, x, y, renderSize, colors, visibility);
         } else {
             this.drawShipObject(ctx, obj, x, y, renderSize, colors, visibility, isOwned);
@@ -931,6 +941,110 @@ class GameClient {
         }
         
 
+    }
+    
+    // Draw resource nodes (mineable resources)
+    drawResourceNode(ctx, obj, x, y, size, colors) {
+        const meta = obj.meta || {};
+        const resourceType = meta.resourceType || 'unknown';
+        const resourceAmount = meta.resourceAmount || 0;
+        const maxResource = meta.maxResource || 100;
+        const nodeSize = meta.size || 1;
+        const iconEmoji = meta.iconEmoji || '📦';
+        const colorHex = meta.colorHex || '#888888';
+        
+        // Calculate health percentage for visual feedback
+        const healthPercent = resourceAmount / maxResource;
+        const alpha = 0.3 + (healthPercent * 0.5); // 30% to 80% opacity based on remaining resources
+        
+        // Draw resource node based on type
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        
+        if (resourceType === 'rock') {
+            // Draw asteroid rock
+            ctx.fillStyle = colorHex;
+            ctx.strokeStyle = '#D4AF37'; // Gold outline
+            ctx.lineWidth = Math.max(1, size / 15);
+            
+            // Draw irregular rock shape
+            ctx.beginPath();
+            const sides = 6 + (nodeSize * 2);
+            for (let i = 0; i < sides; i++) {
+                const angle = (i / sides) * Math.PI * 2;
+                const radius = size * (0.4 + Math.sin(angle * 3) * 0.15);
+                const px = x + Math.cos(angle) * radius;
+                const py = y + Math.sin(angle) * radius;
+                
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            
+        } else if (resourceType === 'gas') {
+            // Draw gas cloud
+            const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
+            gradient.addColorStop(0, colorHex + '80'); // Semi-transparent center
+            gradient.addColorStop(0.7, colorHex + '40'); // More transparent edge
+            gradient.addColorStop(1, colorHex + '10'); // Very transparent outer edge
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+            
+        } else if (resourceType === 'energy') {
+            // Draw energy collection point
+            ctx.strokeStyle = colorHex;
+            ctx.lineWidth = Math.max(2, size / 8);
+            
+            // Draw pulsing energy rings
+            for (let ring = 0; ring < 3; ring++) {
+                ctx.globalAlpha = alpha * (1 - ring * 0.3);
+                ctx.beginPath();
+                ctx.arc(x, y, size * (0.3 + ring * 0.3), 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+        } else if (resourceType === 'salvage') {
+            // Draw salvage debris
+            ctx.fillStyle = colorHex;
+            ctx.strokeStyle = '#FF6347'; // Tomato red outline
+            ctx.lineWidth = Math.max(1, size / 12);
+            
+            // Draw angular debris shape
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.4, y - size * 0.2);
+            ctx.lineTo(x + size * 0.3, y - size * 0.4);
+            ctx.lineTo(x + size * 0.4, y + size * 0.1);
+            ctx.lineTo(x - size * 0.1, y + size * 0.4);
+            ctx.lineTo(x - size * 0.5, y + size * 0.2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+        
+        ctx.restore();
+        
+        // Draw resource amount indicator for nearby nodes
+        if (size > 10) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${Math.max(8, size / 4)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Draw background for text
+            const text = resourceAmount.toString();
+            const textWidth = ctx.measureText(text).width;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(x - textWidth/2 - 2, y + size * 0.6 - 6, textWidth + 4, 12);
+            
+            // Draw text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(text, x, y + size * 0.6);
+        }
     }
     
     // Draw ship/station objects

@@ -482,8 +482,41 @@ class GameWorldManager {
                              so.owner_id = ? OR 
                              pv.visibility_level > 0 OR
                              JSON_EXTRACT(so.meta, '$.alwaysKnown') = 1
-                         )`,
-                        [gameId, userId, sector.id, userId],
+                         )
+                         
+                         UNION ALL
+                         
+                         -- Get visible resource nodes
+                         SELECT rn.id, 'resource_node' as type, rn.x, rn.y, NULL as owner_id,
+                                JSON_OBJECT(
+                                    'resourceType', rt.resource_name,
+                                    'resourceAmount', rn.resource_amount,
+                                    'maxResource', rn.max_resource,
+                                    'size', rn.size,
+                                    'isDepleted', rn.is_depleted,
+                                    'iconEmoji', rt.icon_emoji,
+                                    'colorHex', rt.color_hex,
+                                    'alwaysKnown', 1
+                                ) as meta,
+                                rn.sector_id, rt.category as celestial_type, rn.size as radius,
+                                rn.parent_object_id, pv2.visibility_level, pv2.last_seen_turn,
+                                NULL as destination_x, NULL as destination_y, NULL as movement_path,
+                                NULL as eta_turns, NULL as movement_status,
+                                NULL as warp_phase, NULL as warp_preparation_turns, 
+                                NULL as warp_destination_x, NULL as warp_destination_y,
+                                NULL as harvesting_task_id, NULL as harvesting_status,
+                                NULL as harvest_rate, NULL as total_harvested, NULL as harvesting_resource
+                         FROM resource_nodes rn
+                         JOIN resource_types rt ON rn.resource_type_id = rt.id
+                         LEFT JOIN player_visibility pv2 ON (
+                             pv2.game_id = ? AND pv2.user_id = ? AND pv2.sector_id = rn.sector_id 
+                             AND pv2.x = rn.x AND pv2.y = rn.y
+                         )
+                         WHERE rn.sector_id = ? 
+                         AND rn.resource_amount > 0 
+                         AND rn.is_depleted = 0
+                         AND (pv2.visibility_level > 0 OR 1 = 1)`,
+                        [gameId, userId, sector.id, userId, gameId, userId, sector.id],
                         (err, objects) => {
                             if (err) return reject(err);
                             
