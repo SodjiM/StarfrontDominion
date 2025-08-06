@@ -444,8 +444,22 @@ function checkTurnResolution(gameId, turnNumber) {
 // - No real-time updates during resolution
 // - All changes happen server-side first
 // - Clients receive final results via 'turn-resolved' + loadGameState()
+// Global turn resolution locks to prevent concurrent resolution
+const turnResolutionLocks = new Set();
+
 // - This ensures consistent game state and eliminates timing bugs
 async function resolveTurn(gameId, turnNumber) {
+    const lockKey = `${gameId}-${turnNumber}`;
+    
+    // Check if this turn is already being resolved
+    if (turnResolutionLocks.has(lockKey)) {
+        console.log(`⏳ Turn ${turnNumber} for game ${gameId} is already being resolved, skipping duplicate`);
+        return;
+    }
+    
+    // Acquire lock
+    turnResolutionLocks.add(lockKey);
+    
     console.log(`🎬 Resolving turn ${turnNumber} for game ${gameId} (Atomic Resolution)`);
     
     // Notify all players that resolution has started
@@ -511,6 +525,9 @@ async function resolveTurn(gameId, turnNumber) {
             turnNumber,
             error: 'Turn resolution failed'
         });
+    } finally {
+        // Always release the lock
+        turnResolutionLocks.delete(lockKey);
     }
 }
 

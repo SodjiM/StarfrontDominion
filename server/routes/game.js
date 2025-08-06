@@ -349,66 +349,51 @@ class GameWorldManager {
             return resolve([]);
         }
         
-        // Use transaction for atomic batch operations
-        db.serialize(() => {
-            db.run('BEGIN TRANSACTION');
-            
-            // Clear old visibility data for this player
-            db.run(
-                'DELETE FROM player_visibility WHERE game_id = ? AND user_id = ? AND sector_id = ?',
-                [gameId, userId, sectorId],
-                (err) => {
-                    if (err) {
-                        db.run('ROLLBACK');
-                        return reject(err);
-                    }
-                    
-                    // Prepare bulk insert statement (use INSERT OR REPLACE to handle duplicates)
-                    const stmt = db.prepare(
-                        `INSERT OR REPLACE INTO player_visibility 
-                         (game_id, user_id, sector_id, x, y, last_seen_turn, visibility_level) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?)`
-                    );
-                    
-                    let insertCount = 0;
-                    let hasError = false;
-                    
-                    visibleObjects.forEach(({object, visibilityLevel}) => {
-                        stmt.run(
-                            [gameId, userId, sectorId, object.x, object.y, turnNumber, visibilityLevel],
-                            function(err) {
-                                if (err && !hasError) {
-                                    hasError = true;
-                                    stmt.finalize();
-                                    db.run('ROLLBACK');
-                                    return reject(err);
-                                }
-                                
-                                insertCount++;
-                                if (insertCount === visibleObjects.length && !hasError) {
-                                    stmt.finalize((err) => {
-                                        if (err) {
-                                            db.run('ROLLBACK');
-                                            return reject(err);
-                                        }
-                                        
-                                        db.run('COMMIT', (err) => {
-                                            if (err) {
-                                                db.run('ROLLBACK');
-                                                return reject(err);
-                                            }
-                                            
-                                            console.log(`👁️ Updated ${visibleObjects.length} object tiles for player ${userId} on turn ${turnNumber} (optimized)`);
-                                            resolve(visibleObjects.map(vo => vo.object));
-                                        });
-                                    });
-                                }
-                            }
-                        );
-                    });
+        // Clear old visibility data for this player first
+        db.run(
+            'DELETE FROM player_visibility WHERE game_id = ? AND user_id = ? AND sector_id = ?',
+            [gameId, userId, sectorId],
+            (err) => {
+                if (err) {
+                    return reject(err);
                 }
-            );
-        });
+                    
+                // Prepare bulk insert statement (use INSERT OR REPLACE to handle duplicates)
+                const stmt = db.prepare(
+                    `INSERT OR REPLACE INTO player_visibility 
+                     (game_id, user_id, sector_id, x, y, last_seen_turn, visibility_level) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`
+                );
+                
+                let insertCount = 0;
+                let hasError = false;
+                
+                visibleObjects.forEach(({object, visibilityLevel}) => {
+                    stmt.run(
+                        [gameId, userId, sectorId, object.x, object.y, turnNumber, visibilityLevel],
+                        function(err) {
+                            if (err && !hasError) {
+                                hasError = true;
+                                stmt.finalize();
+                                return reject(err);
+                            }
+                            
+                            insertCount++;
+                            if (insertCount === visibleObjects.length && !hasError) {
+                                stmt.finalize((err) => {
+                                    if (err) {
+                                        return reject(err);
+                                    }
+                                    
+                                    console.log(`👁️ Updated ${visibleObjects.length} object tiles for player ${userId} on turn ${turnNumber} (optimized)`);
+                                    resolve(visibleObjects.map(vo => vo.object));
+                                });
+                            }
+                        }
+                    );
+                });
+            }
+        );
     }
 
     // Legacy method kept for compatibility if needed
