@@ -8,6 +8,7 @@ const db = require('./db');
 const authRoutes = require('./routes/auth');
 const lobbyRoutes = require('./routes/lobby');
 const { router: gameRoutes, GameWorldManager } = require('./routes/game');
+const { HarvestingManager } = require('./harvesting-manager');
 
 const app = express();
 const server = createServer(app);
@@ -271,10 +272,103 @@ io.on('connection', (socket) => {
         });
     });
     
+    // Handle harvesting operations
+    socket.on('start-harvesting', async (data) => {
+        const { gameId, shipId, resourceNodeId } = data;
+        console.log(`⛏️ Start harvesting request: Ship ${shipId} → Node ${resourceNodeId} in game ${gameId}`);
+        
+        try {
+            // Get current turn
+            const currentTurn = await getCurrentTurnNumber(gameId);
+            
+            const result = await HarvestingManager.startHarvesting(shipId, resourceNodeId, currentTurn);
+            
+            if (result.success) {
+                socket.emit('harvesting-started', {
+                    shipId,
+                    resourceNodeId,
+                    harvestRate: result.harvestRate,
+                    resourceType: result.resourceType,
+                    message: `Started harvesting ${result.resourceType} at ${result.harvestRate}/turn`
+                });
+                
+                // Notify other players
+                socket.to(`game-${gameId}`).emit('ship-harvesting-started', {
+                    shipId,
+                    resourceType: result.resourceType,
+                    userId: socket.userId
+                });
+            } else {
+                socket.emit('harvesting-error', {
+                    shipId,
+                    error: result.error
+                });
+            }
+        } catch (error) {
+            console.error('Error starting harvesting:', error);
+            socket.emit('harvesting-error', {
+                shipId,
+                error: 'Server error starting harvesting operation'
+            });
+        }
+    });
+    
+    socket.on('stop-harvesting', async (data) => {
+        const { gameId, shipId } = data;
+        console.log(`🛑 Stop harvesting request: Ship ${shipId} in game ${gameId}`);
+        
+        try {
+            const result = await HarvestingManager.stopHarvesting(shipId);
+            
+            if (result.success) {
+                socket.emit('harvesting-stopped', {
+                    shipId,
+                    totalHarvested: result.totalHarvested,
+                    resourceType: result.resourceType,
+                    message: `Stopped harvesting. Total collected: ${result.totalHarvested} ${result.resourceType}`
+                });
+                
+                // Notify other players
+                socket.to(`game-${gameId}`).emit('ship-harvesting-stopped', {
+                    shipId,
+                    userId: socket.userId
+                });
+            } else {
+                socket.emit('harvesting-error', {
+                    shipId,
+                    error: result.error
+                });
+            }
+        } catch (error) {
+            console.error('Error stopping harvesting:', error);
+            socket.emit('harvesting-error', {
+                shipId,
+                error: 'Server error stopping harvesting operation'
+            });
+        }
+    });
+    
     socket.on('disconnect', () => {
         console.log(`👋 Player ${socket.userId} disconnected from game ${socket.gameId}`);
     });
 });
+
+// Helper function to get current turn number
+async function getCurrentTurnNumber(gameId) {
+    return new Promise((resolve, reject) => {
+        db.get(
+            'SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1',
+            [gameId],
+            (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(row ? row.turn_number : 1);
+                }
+            }
+        );
+    });
+}
 
 // Send current game status to a player
 function sendGameStatusUpdate(gameId, userId, socket) {
@@ -370,7 +464,10 @@ async function resolveTurn(gameId, turnNumber) {
         // 3. Clean up old completed movement orders (older than 2 turns)
         await cleanupOldMovementOrders(gameId, turnNumber);
         
-        // 4. TODO: Handle combat, resource generation, etc.
+        // 4. Process harvesting operations
+        await HarvestingManager.processHarvestingForTurn(gameId, turnNumber);
+        
+        // 5. TODO: Handle combat, etc.
         
         // Create next turn
         const nextTurn = turnNumber + 1;

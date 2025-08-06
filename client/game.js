@@ -107,6 +107,20 @@ class GameClient {
             }
         });
 
+        this.socket.on('harvesting-started', (data) => {
+            this.addLogEntry(data.message, 'success');
+            this.loadGameState(); // Refresh to show mining status
+        });
+
+        this.socket.on('harvesting-stopped', (data) => {
+            this.addLogEntry(data.message, 'info');
+            this.loadGameState(); // Refresh to update mining status
+        });
+
+        this.socket.on('harvesting-error', (data) => {
+            this.addLogEntry(`Mining error: ${data.error}`, 'error');
+        });
+
         // ✅ Atomic Turn Resolution Policy: No real-time movement updates
         // All movement results will be visible after 'turn-resolved' via loadGameState()
         // 
@@ -585,6 +599,24 @@ class GameClient {
                     <span>${meta.activeScanCost || 1} energy</span>
                 </div>
                 ` : ''}
+                
+                ${unit.type === 'ship' && meta.cargoCapacity ? `
+                <div class="stat-item">
+                    <span>📦 Cargo:</span>
+                    <span id="cargoStatus">Loading...</span>
+                </div>
+                ` : ''}
+                
+                ${unit.harvestingStatus ? `
+                <div class="stat-item">
+                    <span>⛏️ Mining:</span>
+                    <span style="color: ${unit.harvestingStatus === 'active' ? '#4CAF50' : '#FFA500'}">
+                        ${unit.harvestingStatus === 'active' ? 
+                          `${unit.harvestingResource} (${unit.harvestRate}/turn)` : 
+                          unit.harvestingStatus}
+                    </span>
+                </div>
+                ` : ''}
             </div>
             
             <div style="margin-top: 20px;">
@@ -594,6 +626,12 @@ class GameClient {
                     </button>
                     <button class="action-btn" onclick="setWarpMode()" ${this.turnLocked ? 'disabled' : ''}>
                         🌌 Warp
+                    </button>
+                    <button class="action-btn" id="mineBtn" onclick="toggleMining()" ${this.turnLocked ? 'disabled' : ''}>
+                        ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : '⛏️ Mine'}
+                    </button>
+                    <button class="action-btn" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
+                        📦 Cargo
                     </button>
                     <button class="action-btn" onclick="scanArea()" ${this.turnLocked || !meta.canActiveScan ? 'disabled' : ''}>
                         ${meta.canActiveScan ? '🔍 Active Scan' : '🔍 Scan Area (N/A)'}
@@ -610,6 +648,11 @@ class GameClient {
                 ` : ''}
             </div>
         `;
+        
+        // Update cargo status for ships
+        if (unit && unit.type === 'ship' && unit.meta && unit.meta.cargoCapacity) {
+            updateCargoStatus(unit.id);
+        }
     }
 
     // Render the game map
@@ -968,32 +1011,125 @@ class GameClient {
     }
     
     drawAsteroidBelt(ctx, x, y, size, colors) {
-        // Draw as a ring/arc with scattered asteroids
-        ctx.strokeStyle = colors.border;
-        ctx.lineWidth = Math.max(3, size * 0.01);
+        // Create a realistic asteroid field with varying densities and sizes
+        const centerDistance = Math.sqrt(Math.pow(this.camera.x - x, 2) + Math.pow(this.camera.y - y, 2));
+        const isNearby = centerDistance < size * 1.5; // Only show details when close
         
-        // Main belt ring
-        ctx.beginPath();
-        ctx.arc(x, y, size/2, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        // Scattered asteroids
-        if (size > this.tileSize) {
-            this.drawScatteredAsteroids(ctx, x, y, size, colors);
+        if (isNearby && this.tileSize > 8) {
+            // Detailed view - show individual asteroids
+            this.drawDetailedAsteroidField(ctx, x, y, size, colors);
+        } else {
+            // Distant view - show as a ring with some scattered points
+            ctx.strokeStyle = colors.border;
+            ctx.lineWidth = Math.max(2, size * 0.005);
+            
+            // Main belt outline
+            ctx.beginPath();
+            ctx.arc(x, y, size/2, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Some scattered points for distant view
+            if (size > this.tileSize) {
+                this.drawDistantAsteroids(ctx, x, y, size, colors);
+            }
         }
     }
     
     drawNebula(ctx, x, y, size, colors) {
-        // Irregular cloud shape
+        const centerDistance = Math.sqrt(Math.pow(this.camera.x - x, 2) + Math.pow(this.camera.y - y, 2));
+        const isNearby = centerDistance < size * 1.2;
+        
+        if (isNearby && this.tileSize > 6) {
+            // Detailed nebula with particle-like effects
+            this.drawDetailedNebula(ctx, x, y, size, colors);
+        } else {
+            // Distant nebula - simple cloud shapes
+            this.drawDistantNebula(ctx, x, y, size, colors);
+        }
+    }
+    
+    drawDetailedNebula(ctx, x, y, size, colors) {
+        // Use object ID for consistent nebula structure
+        const objId = this.objects.find(obj => obj.x === x && obj.y === y)?.id || 0;
+        const seed = objId * 54321;
+        
+        // Multiple layers of nebula gas
+        const layers = [
+            { radius: size * 0.6, alpha: 0.15, particles: 30 },
+            { radius: size * 0.45, alpha: 0.25, particles: 20 },
+            { radius: size * 0.3, alpha: 0.35, particles: 15 },
+        ];
+        
+        layers.forEach((layer, layerIndex) => {
+            // Extract RGB from colors.background
+            const colorMatch = colors.background.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+            const r = colorMatch ? colorMatch[1] : '138';
+            const g = colorMatch ? colorMatch[2] : '43';
+            const b = colorMatch ? colorMatch[3] : '226';
+            
+            // Create gradient for this layer
+            const gradient = ctx.createRadialGradient(x, y, 0, x, y, layer.radius);
+            gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${layer.alpha})`);
+            gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${layer.alpha * 0.6})`);
+            gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(x, y, layer.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Add particle-like details
+            if (this.tileSize > 10) {
+                ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${layer.alpha * 1.5})`;
+                for (let i = 0; i < layer.particles; i++) {
+                    const particleSeed = seed + layerIndex * 100 + i;
+                    const angle = ((particleSeed % 628) / 100);
+                    const distance = ((particleSeed * 7) % 1000) / 1000 * layer.radius;
+                    const particleX = x + Math.cos(angle) * distance;
+                    const particleY = y + Math.sin(angle) * distance;
+                    const particleSize = 0.5 + ((particleSeed % 20) / 20) * 2;
+                    
+                    ctx.beginPath();
+                    ctx.arc(particleX, particleY, particleSize, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        });
+        
+        // Add some brighter "star formation" regions
+        if (this.tileSize > 12) {
+            const brightSpots = 3 + (seed % 4);
+            for (let i = 0; i < brightSpots; i++) {
+                const spotSeed = seed + i * 777;
+                const angle = ((spotSeed % 628) / 100);
+                const distance = ((spotSeed * 3) % 1000) / 1000 * size * 0.4;
+                const spotX = x + Math.cos(angle) * distance;
+                const spotY = y + Math.sin(angle) * distance;
+                const spotSize = 3 + ((spotSeed % 50) / 50) * 8;
+                
+                const brightGradient = ctx.createRadialGradient(spotX, spotY, 0, spotX, spotY, spotSize);
+                brightGradient.addColorStop(0, `rgba(255, 255, 255, 0.3)`);
+                brightGradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, 0.4)`);
+                brightGradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                
+                ctx.fillStyle = brightGradient;
+                ctx.beginPath();
+                ctx.arc(spotX, spotY, spotSize, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    }
+    
+    drawDistantNebula(ctx, x, y, size, colors) {
+        // Simple overlapping circles for distant view
         ctx.fillStyle = colors.background;
         
-        // Draw multiple overlapping circles for cloud effect
-        const numClouds = Math.max(3, Math.floor(size / this.tileSize));
+        const numClouds = Math.max(3, Math.floor(size / this.tileSize / 2));
         for (let i = 0; i < numClouds; i++) {
             const angle = (i / numClouds) * Math.PI * 2;
-            const offsetX = Math.cos(angle) * size * 0.3;
-            const offsetY = Math.sin(angle) * size * 0.3;
-            const cloudSize = size * (0.4 + Math.random() * 0.3);
+            const offsetX = Math.cos(angle) * size * 0.25;
+            const offsetY = Math.sin(angle) * size * 0.25;
+            const cloudSize = size * (0.3 + Math.random() * 0.4);
             
             ctx.beginPath();
             ctx.arc(x + offsetX, y + offsetY, cloudSize/2, 0, Math.PI * 2);
@@ -1181,19 +1317,138 @@ class GameClient {
         }
     }
     
-    drawScatteredAsteroids(ctx, x, y, size, colors) {
+    // Draw detailed asteroid field when zoomed in
+    drawDetailedAsteroidField(ctx, x, y, size, colors) {
+        // Use object ID as seed for consistent asteroid positions
+        const objId = this.objects.find(obj => obj.x === x && obj.y === y)?.id || 0;
+        const seed = objId * 12345; // Simple seed
+        
+        // Calculate how many asteroids to show based on zoom and size
+        const baseCount = Math.floor(size / 30); // Base density
+        const zoomFactor = Math.min(2, this.tileSize / 20); // More detail when zoomed in
+        const numAsteroids = Math.max(20, Math.floor(baseCount * zoomFactor));
+        
+        // Create multiple density zones within the belt
+        const zones = [
+            { radius: size * 0.3, density: 0.8, minSize: 2, maxSize: 8 }, // Inner dense zone
+            { radius: size * 0.5, density: 1.0, minSize: 3, maxSize: 12 }, // Main belt
+            { radius: size * 0.7, density: 0.6, minSize: 1, maxSize: 6 }, // Outer sparse zone
+        ];
+        
+        zones.forEach((zone, zoneIndex) => {
+            const zoneAsteroids = Math.floor(numAsteroids * zone.density / zones.length);
+            
+            for (let i = 0; i < zoneAsteroids; i++) {
+                // Use seeded random for consistent positions
+                const randSeed = (seed + zoneIndex * 1000 + i) % 9999;
+                const angle = (randSeed % 628) / 100; // 0 to 2π
+                const distanceRand = ((randSeed * 7) % 1000) / 1000; // 0 to 1
+                
+                // Distance within the zone
+                const minRadius = zoneIndex === 0 ? 0 : zones[zoneIndex - 1].radius;
+                const distance = minRadius + distanceRand * (zone.radius - minRadius);
+                
+                const asteroidX = x + Math.cos(angle) * distance;
+                const asteroidY = y + Math.sin(angle) * distance;
+                
+                // Varying asteroid sizes
+                const sizeRand = ((randSeed * 13) % 1000) / 1000;
+                const asteroidSize = zone.minSize + sizeRand * (zone.maxSize - zone.minSize);
+                
+                // Different asteroid types based on size
+                if (asteroidSize > 8) {
+                    this.drawLargeAsteroid(ctx, asteroidX, asteroidY, asteroidSize, colors, randSeed);
+                } else if (asteroidSize > 4) {
+                    this.drawMediumAsteroid(ctx, asteroidX, asteroidY, asteroidSize, colors, randSeed);
+                } else {
+                    this.drawSmallAsteroid(ctx, asteroidX, asteroidY, asteroidSize, colors);
+                }
+            }
+        });
+    }
+    
+    // Draw different asteroid types
+    drawLargeAsteroid(ctx, x, y, size, colors, seed) {
+        ctx.fillStyle = colors.border;
+        ctx.strokeStyle = colors.text;
+        ctx.lineWidth = 1;
+        
+        // Irregular shape
+        const sides = 6 + (seed % 4);
+        ctx.beginPath();
+        for (let i = 0; i < sides; i++) {
+            const angle = (i / sides) * Math.PI * 2;
+            const radiusVariation = 0.7 + ((seed * (i + 1)) % 100) / 300; // 0.7 to 1.0
+            const radius = size * radiusVariation;
+            const px = x + Math.cos(angle) * radius;
+            const py = y + Math.sin(angle) * radius;
+            
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Add some surface details
+        if (this.tileSize > 15) {
+            ctx.fillStyle = colors.text;
+            const craters = 2 + (seed % 3);
+            for (let i = 0; i < craters; i++) {
+                const angle = ((seed * (i + 5)) % 628) / 100;
+                const distance = size * 0.3;
+                const craterX = x + Math.cos(angle) * distance;
+                const craterY = y + Math.sin(angle) * distance;
+                const craterSize = size * 0.15;
+                
+                ctx.beginPath();
+                ctx.arc(craterX, craterY, craterSize, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    }
+    
+    drawMediumAsteroid(ctx, x, y, size, colors, seed) {
         ctx.fillStyle = colors.border;
         
-        const numAsteroids = Math.max(5, Math.floor(size / this.tileSize / 2));
-        for (let i = 0; i < numAsteroids; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const distance = size * 0.4 + Math.random() * size * 0.2;
-            const asteroidX = x + Math.cos(angle) * distance;
-            const asteroidY = y + Math.sin(angle) * distance;
-            const asteroidSize = 1 + Math.random() * 3;
+        // Slightly irregular circle
+        const sides = 5 + (seed % 3);
+        ctx.beginPath();
+        for (let i = 0; i < sides; i++) {
+            const angle = (i / sides) * Math.PI * 2;
+            const radiusVariation = 0.8 + ((seed * (i + 2)) % 100) / 500; // 0.8 to 1.0
+            const radius = size * radiusVariation;
+            const px = x + Math.cos(angle) * radius;
+            const py = y + Math.sin(angle) * radius;
+            
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+    }
+    
+    drawSmallAsteroid(ctx, x, y, size, colors) {
+        ctx.fillStyle = colors.border;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    
+    // Draw distant view of asteroids (when zoomed out)
+    drawDistantAsteroids(ctx, x, y, size, colors) {
+        ctx.fillStyle = colors.border;
+        
+        const numPoints = Math.max(8, Math.floor(size / this.tileSize / 3));
+        for (let i = 0; i < numPoints; i++) {
+            const angle = (i / numPoints) * Math.PI * 2 + Math.random() * 0.5;
+            const distance = size * 0.35 + Math.random() * size * 0.3;
+            const pointX = x + Math.cos(angle) * distance;
+            const pointY = y + Math.sin(angle) * distance;
+            const pointSize = 0.5 + Math.random() * 1.5;
             
             ctx.beginPath();
-            ctx.arc(asteroidX, asteroidY, asteroidSize, 0, Math.PI * 2);
+            ctx.arc(pointX, pointY, pointSize, 0, Math.PI * 2);
             ctx.fill();
         }
     }
@@ -1413,7 +1668,13 @@ class GameClient {
         console.log(`Right-clicked world position: (${worldX}, ${worldY}) - checking for move/attack command`);
         
         // Check if right-clicking on an object (account for object radius)
+        // Exclude large celestial objects from right-click targeting to allow movement within them
         const clickedObject = this.objects.find(obj => {
+            // Skip large celestial objects for right-click targeting
+            if (this.isCelestialObject(obj) && obj.radius > 50) {
+                return false; // Allow movement through/within large celestial objects
+            }
+            
             const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
             const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8); // Use object radius for hit detection
             return distance <= hitRadius;
@@ -2646,5 +2907,212 @@ function upgradeBase() {
     if (gameClient) {
         gameClient.addLogEntry('Base upgrades not yet implemented', 'warning');
         // TODO: Implement base upgrades
+    }
+}
+
+// Mining and cargo management functions
+async function toggleMining() {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No ship selected', 'warning');
+        return;
+    }
+    
+    const ship = gameClient.selectedUnit;
+    
+    if (ship.harvestingStatus === 'active') {
+        // Stop mining
+        gameClient.socket.emit('stop-harvesting', {
+            gameId: gameClient.gameId,
+            shipId: ship.id
+        });
+    } else {
+        // Start mining - show resource selection
+        await showResourceSelection(ship.id);
+    }
+}
+
+async function showResourceSelection(shipId) {
+    try {
+        const response = await fetch(`/game/resource-nodes/${gameClient.gameId}/${shipId}?userId=${gameClient.userId}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            gameClient.addLogEntry(data.error || 'Failed to get resource nodes', 'error');
+            return;
+        }
+        
+        if (data.resourceNodes.length === 0) {
+            gameClient.addLogEntry('No mineable resources nearby. Move closer to asteroid rocks, gas clouds, or other resources.', 'warning');
+            return;
+        }
+        
+        // Create resource selection modal
+        const resourceList = document.createElement('div');
+        resourceList.className = 'resource-selection-list';
+        
+        const header = document.createElement('div');
+        header.innerHTML = `
+            <h3>⛏️ Select Resource to Mine</h3>
+            <p>Choose which resource node to harvest:</p>
+        `;
+        resourceList.appendChild(header);
+        
+        data.resourceNodes.forEach(node => {
+            const resourceOption = document.createElement('div');
+            resourceOption.className = 'resource-option';
+            
+            resourceOption.innerHTML = `
+                <div class="resource-info">
+                    <div class="resource-name">
+                        ${node.icon_emoji} ${node.resource_name}
+                    </div>
+                    <div class="resource-details">
+                        <span class="resource-amount">${node.resource_amount} available</span>
+                        <span class="resource-distance">${node.distance} tile${node.distance !== 1 ? 's' : ''} away</span>
+                    </div>
+                </div>
+                <div class="resource-action">
+                    <button class="mine-select-btn">Mine</button>
+                </div>
+            `;
+            
+            const mineBtn = resourceOption.querySelector('.mine-select-btn');
+            mineBtn.addEventListener('click', () => {
+                startMining(shipId, node.id, node.resource_name);
+                UI.closeModal();
+            });
+            
+            resourceList.appendChild(resourceOption);
+        });
+        
+        UI.showModal({
+            title: '⛏️ Mining Target Selection',
+            content: resourceList,
+            actions: [
+                {
+                    text: 'Cancel',
+                    style: 'secondary',
+                    action: () => true
+                }
+            ],
+            className: 'resource-selection-modal'
+        });
+        
+    } catch (error) {
+        console.error('Error getting resource nodes:', error);
+        gameClient.addLogEntry('Failed to get nearby resources', 'error');
+    }
+}
+
+function startMining(shipId, resourceNodeId, resourceName) {
+    gameClient.socket.emit('start-harvesting', {
+        gameId: gameClient.gameId,
+        shipId: shipId,
+        resourceNodeId: resourceNodeId
+    });
+    
+    gameClient.addLogEntry(`Starting to mine ${resourceName}...`, 'info');
+}
+
+async function showCargo() {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No ship selected', 'warning');
+        return;
+    }
+    
+    const shipId = gameClient.selectedUnit.id;
+    
+    try {
+        const response = await fetch(`/game/cargo/${shipId}?userId=${gameClient.userId}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            gameClient.addLogEntry(data.error || 'Failed to get cargo data', 'error');
+            return;
+        }
+        
+        const cargo = data.cargo;
+        
+        // Create cargo display modal
+        const cargoDisplay = document.createElement('div');
+        cargoDisplay.className = 'cargo-display';
+        
+        const header = document.createElement('div');
+        header.innerHTML = `
+            <h3>📦 Ship Cargo</h3>
+            <div class="cargo-summary">
+                <div class="capacity-bar">
+                    <div class="capacity-fill" style="width: ${(cargo.spaceUsed / cargo.capacity) * 100}%"></div>
+                    <span class="capacity-text">${cargo.spaceUsed}/${cargo.capacity} units</span>
+                </div>
+            </div>
+        `;
+        cargoDisplay.appendChild(header);
+        
+        if (cargo.items.length === 0) {
+            const emptyMessage = document.createElement('div');
+            emptyMessage.className = 'cargo-empty';
+            emptyMessage.innerHTML = '<p>🚫 Cargo hold is empty</p>';
+            cargoDisplay.appendChild(emptyMessage);
+        } else {
+            cargo.items.forEach(item => {
+                const cargoItem = document.createElement('div');
+                cargoItem.className = 'cargo-item';
+                
+                cargoItem.innerHTML = `
+                    <div class="cargo-item-info">
+                        <span class="cargo-icon" style="color: ${item.color_hex}">${item.icon_emoji}</span>
+                        <div class="cargo-details">
+                            <div class="cargo-name">${item.resource_name}</div>
+                            <div class="cargo-stats">
+                                ${item.quantity} units (${item.quantity * item.base_size} space)
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cargo-value">
+                        Value: ${item.quantity * (item.base_value || 1)}
+                    </div>
+                `;
+                
+                cargoDisplay.appendChild(cargoItem);
+            });
+        }
+        
+        UI.showModal({
+            title: '📦 Ship Cargo',
+            content: cargoDisplay,
+            actions: [
+                {
+                    text: 'Close',
+                    style: 'primary',
+                    action: () => true
+                }
+            ],
+            className: 'cargo-modal'
+        });
+        
+    } catch (error) {
+        console.error('Error getting cargo:', error);
+        gameClient.addLogEntry('Failed to get cargo information', 'error');
+    }
+}
+
+// Update cargo status in unit panel
+async function updateCargoStatus(shipId) {
+    try {
+        const response = await fetch(`/game/cargo/${shipId}?userId=${gameClient.userId}`);
+        const data = await response.json();
+        
+        if (response.ok) {
+            const cargoElement = document.getElementById('cargoStatus');
+            if (cargoElement) {
+                const cargo = data.cargo;
+                const percentFull = Math.round((cargo.spaceUsed / cargo.capacity) * 100);
+                cargoElement.innerHTML = `${cargo.spaceUsed}/${cargo.capacity} (${percentFull}%)`;
+                cargoElement.style.color = percentFull >= 90 ? '#FF5722' : percentFull >= 70 ? '#FF9800' : '#4CAF50';
+            }
+        }
+    } catch (error) {
+        console.error('Error updating cargo status:', error);
     }
 } 

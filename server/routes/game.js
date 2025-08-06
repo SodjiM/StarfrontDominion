@@ -1,6 +1,8 @@
 const express = require('express');
 const db = require('../db');
 const { SystemGenerator } = require('../system-generator');
+const { CargoManager } = require('../cargo-manager');
+const { HarvestingManager } = require('../harvesting-manager');
 const router = express.Router();
 
 // Game initialization and management
@@ -163,7 +165,9 @@ class GameWorldManager {
                             hp: 50,
                             maxHp: 50,
                             scanRange: 8,
-                            movementSpeed: 4
+                            movementSpeed: 4,
+                            cargoCapacity: 10,
+                            harvestRate: 1.0
                         });
                         
                         db.run(
@@ -452,12 +456,14 @@ class GameWorldManager {
                     if (err) return reject(err);
                     if (!sector) return reject(new Error('Sector not found for player'));
                     
-                    // Get visible objects with fog of war filtering, including movement data
+                    // Get visible objects with fog of war filtering, including movement and harvesting data
                     db.all(
                         `SELECT so.*, pv.visibility_level, pv.last_seen_turn, 
                                 mo.destination_x, mo.destination_y, mo.movement_path, 
                                 mo.eta_turns, mo.status as movement_status,
-                                mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y
+                                mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
+                                ht.id as harvesting_task_id, ht.status as harvesting_status, 
+                                ht.harvest_rate, ht.total_harvested, rt.resource_name as harvesting_resource
                          FROM sector_objects so
                          LEFT JOIN player_visibility pv ON (
                              pv.game_id = ? AND pv.user_id = ? AND pv.sector_id = so.sector_id 
@@ -466,6 +472,11 @@ class GameWorldManager {
                          LEFT JOIN movement_orders mo ON (
                              so.id = mo.object_id AND mo.status IN ('active', 'blocked', 'completed', 'warp_preparing')
                          )
+                         LEFT JOIN harvesting_tasks ht ON (
+                             so.id = ht.ship_id AND ht.status IN ('active', 'paused')
+                         )
+                         LEFT JOIN resource_nodes rn ON ht.resource_node_id = rn.id
+                         LEFT JOIN resource_types rt ON rn.resource_type_id = rt.id
                          WHERE so.sector_id = ? 
                          AND (
                              so.owner_id = ? OR 
@@ -545,11 +556,29 @@ class GameWorldManager {
                                                             }
                                                         }
                                                         
+                                                        // Parse harvesting data if available
+                                                        let harvestingData = null;
+                                                        if (obj.harvesting_task_id) {
+                                                            harvestingData = {
+                                                                harvestingTaskId: obj.harvesting_task_id,
+                                                                harvestingStatus: obj.harvesting_status,
+                                                                harvestRate: obj.harvest_rate,
+                                                                totalHarvested: obj.total_harvested,
+                                                                harvestingResource: obj.harvesting_resource
+                                                            };
+                                                            
+                                                            // Debug: Log harvesting data being sent to client
+                                                            if (isOwned) {
+                                                                console.log(`⛏️ Sending HARVESTING data to client: Ship ${obj.id} (${meta.name || obj.type}) Status: ${obj.harvesting_status}, Resource: ${obj.harvesting_resource}`);
+                                                            }
+                                                        }
+                                                        
                                                         return {
                                                             ...obj,
                                                             meta,
                                                             ...movementData, // Spread movement data directly into object
                                                             ...warpData, // Spread warp data directly into object
+                                                            ...harvestingData, // Spread harvesting data directly into object
                                                             sectorInfo: {
                                                                 name: sector.name,
                                                                 archetype: sector.archetype,
@@ -1035,6 +1064,68 @@ router.get('/:gameId/movement-history/:userId', async (req, res) => {
             details: error.message 
         });
     }
+});
+
+// Get resource nodes near a ship
+router.get('/resource-nodes/:gameId/:shipId', (req, res) => {
+    const { gameId, shipId } = req.params;
+    const { userId } = req.query;
+    
+    // Verify ship ownership
+    db.get(
+        `SELECT so.* FROM sector_objects so
+         JOIN sectors s ON so.sector_id = s.id
+         WHERE so.id = ? AND so.owner_id = ? AND s.game_id = ?`,
+        [shipId, userId, gameId],
+        (err, ship) => {
+            if (err) {
+                console.error('Error verifying ship ownership:', err);
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!ship) {
+                return res.status(404).json({ error: 'Ship not found or not owned by player' });
+            }
+            
+            // Get nearby resource nodes
+            HarvestingManager.getNearbyResourceNodes(shipId)
+                .then(nodes => {
+                    res.json({ resourceNodes: nodes });
+                })
+                .catch(error => {
+                    console.error('Error getting resource nodes:', error);
+                    res.status(500).json({ error: 'Failed to get resource nodes' });
+                });
+        }
+    );
+});
+
+// Get ship cargo
+router.get('/cargo/:shipId', (req, res) => {
+    const { shipId } = req.params;
+    const { userId } = req.query;
+    
+    // Verify ship ownership
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ?', [shipId, userId], (err, ship) => {
+        if (err) {
+            console.error('Error verifying ship ownership:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!ship) {
+            return res.status(404).json({ error: 'Ship not found or not owned by player' });
+        }
+        
+        // Get cargo data
+        CargoManager.getShipCargo(shipId)
+            .then(cargo => {
+                res.json({ cargo });
+            })
+            .catch(error => {
+                console.error('Error getting ship cargo:', error);
+                res.status(500).json({ error: 'Failed to get ship cargo' });
+            });
+    });
 });
 
 module.exports = { router, GameWorldManager }; 

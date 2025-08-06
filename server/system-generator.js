@@ -2,6 +2,7 @@
 // Procedural generation engine for creating balanced solar systems
 
 const { CelestialObjectManager, CELESTIAL_OBJECT_TYPES, PLACEMENT_ZONES, ARCHETYPE_MODIFIERS } = require('./celestial-objects');
+const { ResourceNodeGenerator } = require('./resource-node-generator');
 const db = require('./db');
 
 /**
@@ -61,6 +62,9 @@ class SystemGenerator {
             
             console.log(`📊 Phase 5: Generating anomalies...`);
             await this.generateAnomalies(context);
+            
+            console.log(`📊 Phase 6: Generating resource nodes...`);
+            await ResourceNodeGenerator.generateNodesForSector(sectorId, seed);
             
             // Mark generation as complete
             await this.updateSectorGenerationInfo(sectorId, seed, true);

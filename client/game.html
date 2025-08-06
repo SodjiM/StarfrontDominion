@@ -680,6 +680,157 @@
         .warp-select-btn:active {
             transform: scale(0.95);
         }
+
+        /* Mining and cargo UI styles */
+        .resource-selection-modal .modal-content {
+            max-width: 500px;
+            max-height: 60vh;
+        }
+
+        .resource-selection-list {
+            max-height: 350px;
+            overflow-y: auto;
+        }
+
+        .resource-option {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            margin: 8px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .resource-option:hover {
+            background: rgba(139, 69, 19, 0.1);
+            border-color: #8B4513;
+        }
+
+        .resource-name {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #ffffff;
+            margin-bottom: 4px;
+        }
+
+        .resource-details {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85em;
+        }
+
+        .resource-amount {
+            color: #4CAF50;
+            font-weight: 500;
+        }
+
+        .resource-distance {
+            color: #cccccc;
+        }
+
+        .mine-select-btn {
+            background: linear-gradient(45deg, #8B4513, #A0522D);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+
+        .mine-select-btn:hover {
+            background: linear-gradient(45deg, #A0522D, #CD853F);
+            transform: scale(1.05);
+        }
+
+        /* Cargo display styles */
+        .cargo-modal .modal-content {
+            max-width: 450px;
+            max-height: 70vh;
+        }
+
+        .cargo-display {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .cargo-summary {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(76, 175, 80, 0.1);
+            border-radius: 5px;
+        }
+
+        .capacity-bar {
+            position: relative;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .capacity-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #FFC107, #FF5722);
+            transition: width 0.3s ease;
+        }
+
+        .capacity-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ffffff;
+            font-weight: bold;
+            font-size: 0.85em;
+        }
+
+        .cargo-empty {
+            text-align: center;
+            padding: 30px;
+            color: #999999;
+        }
+
+        .cargo-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            margin: 8px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+        }
+
+        .cargo-item-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .cargo-icon {
+            font-size: 1.5em;
+        }
+
+        .cargo-name {
+            font-weight: bold;
+            color: #ffffff;
+            margin-bottom: 2px;
+        }
+
+        .cargo-stats {
+            font-size: 0.85em;
+            color: #cccccc;
+        }
+
+        .cargo-value {
+            font-size: 0.9em;
+            color: #FFC107;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>

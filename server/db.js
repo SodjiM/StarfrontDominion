@@ -11,6 +11,7 @@ const initializeDatabase = async () => {
         const gamesSchema = fs.readFileSync(path.join(__dirname, 'models/games.sql'), 'utf8');
         const gameworldSchema = fs.readFileSync(path.join(__dirname, 'models/gameworld.sql'), 'utf8');
         const celestialSchema = fs.readFileSync(path.join(__dirname, 'models/celestial_objects.sql'), 'utf8');
+        const resourceSchema = fs.readFileSync(path.join(__dirname, 'models/resource_system.sql'), 'utf8');
         
         // Execute schemas sequentially using promises
         await new Promise((resolve, reject) => {
@@ -96,7 +97,17 @@ const initializeDatabase = async () => {
                                             reject(err);
                                         } else {
                                             console.log('✅ Celestial objects schema applied');
-                                            resolve();
+                                            
+                                            // Apply resource system schema
+                                            db.exec(resourceSchema, (err) => {
+                                                if (err) {
+                                                    console.error('Error applying resource system schema:', err);
+                                                    reject(err);
+                                                } else {
+                                                    console.log('✅ Resource system schema applied');
+                                                    resolve();
+                                                }
+                                            });
                                         }
                                     });
                                 });
