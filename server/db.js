@@ -50,17 +50,60 @@ const initializeDatabase = async () => {
             });
         });
 
-        // Apply celestial objects schema extensions
+        // Apply celestial objects schema extensions with proper migration handling
         await new Promise((resolve, reject) => {
-            db.exec(celestialSchema, (err) => {
-                if (err) {
-                    console.error('Error applying celestial objects schema:', err);
-                    console.error('Schema content:', celestialSchema.substring(0, 200) + '...');
-                    reject(err);
-                } else {
-                    console.log('✅ Celestial objects schema applied');
-                    resolve();
-                }
+            console.log('🔧 Applying celestial objects schema migrations...');
+            
+            // Add columns individually with error handling
+            const addColumn = (tableName, columnDef, callback) => {
+                db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnDef}`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.error(`Error adding column ${columnDef}:`, err);
+                        return callback(err);
+                    }
+                    if (err && err.message.includes('duplicate column')) {
+                        console.log(`👍 Column ${columnDef.split(' ')[0]} already exists, skipping`);
+                    } else {
+                        console.log(`✅ Added column ${columnDef.split(' ')[0]}`);
+                    }
+                    callback(null);
+                });
+            };
+            
+            // Add celestial object columns sequentially
+            addColumn('sector_objects', 'radius INTEGER DEFAULT 1', (err1) => {
+                if (err1) return reject(err1);
+                
+                addColumn('sector_objects', 'celestial_type TEXT DEFAULT NULL', (err2) => {
+                    if (err2) return reject(err2);
+                    
+                    addColumn('sector_objects', 'parent_object_id INTEGER DEFAULT NULL', (err3) => {
+                        if (err3) return reject(err3);
+                        
+                        addColumn('sectors', 'generation_seed INTEGER DEFAULT NULL', (err4) => {
+                            if (err4) return reject(err4);
+                            
+                            addColumn('sectors', 'generation_completed BOOLEAN DEFAULT FALSE', (err5) => {
+                                if (err5) return reject(err5);
+                                
+                                addColumn('sectors', 'celestial_objects_count INTEGER DEFAULT 0', (err6) => {
+                                    if (err6) return reject(err6);
+                                    
+                                    // Now apply the rest of the schema
+                                    db.exec(celestialSchema, (err) => {
+                                        if (err) {
+                                            console.error('Error applying celestial objects schema:', err);
+                                            reject(err);
+                                        } else {
+                                            console.log('✅ Celestial objects schema applied');
+                                            resolve();
+                                        }
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
             });
         });
 
@@ -140,7 +183,38 @@ const initializeDatabase = async () => {
                 if (err && !err.message.includes('duplicate column')) {
                     console.error('Migration error (blocked_by):', err);
                 }
-                resolve();
+                
+                // Add warp-specific columns
+                db.run(`ALTER TABLE movement_orders ADD COLUMN warp_target_id INTEGER`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.error('Migration error (warp_target_id):', err);
+                    }
+                });
+                
+                db.run(`ALTER TABLE movement_orders ADD COLUMN warp_phase TEXT`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.error('Migration error (warp_phase):', err);
+                    }
+                });
+                
+                db.run(`ALTER TABLE movement_orders ADD COLUMN warp_preparation_turns INTEGER DEFAULT 0`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.error('Migration error (warp_preparation_turns):', err);
+                    }
+                });
+                
+                db.run(`ALTER TABLE movement_orders ADD COLUMN warp_destination_x INTEGER`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.error('Migration error (warp_destination_x):', err);
+                    }
+                });
+                
+                db.run(`ALTER TABLE movement_orders ADD COLUMN warp_destination_y INTEGER`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.error('Migration error (warp_destination_y):', err);
+                    }
+                    resolve();
+                });
             });
         });
         

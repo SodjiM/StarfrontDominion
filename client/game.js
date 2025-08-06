@@ -21,6 +21,8 @@ class GameClient {
         this.clientLingeringTrails = []; // FIX 2: Store client-side lingering trails from redirections
         this.previousMovementStatuses = new Map(); // FIX: Track previous movement statuses to detect completions
         this.movementHistoryCache = new Map(); // PHASE 2: Cache movement history by ship ID
+        this.warpMode = false; // Track if we're in warp target selection mode
+        this.warpTargets = []; // Available warp targets (celestial objects)
     }
 
     // Initialize the game
@@ -92,6 +94,17 @@ class GameClient {
         this.socket.on('turn-resolved', (data) => {
             this.addLogEntry(`Turn ${data.turnNumber} resolved! Starting turn ${data.nextTurn}`, 'success');
             this.loadGameState(); // Refresh game state
+        });
+
+        this.socket.on('warp-confirmed', (data) => {
+            this.addLogEntry(`Warp order confirmed: ${data.message}`, 'success');
+            this.loadGameState(); // Refresh to show warp preparation
+        });
+
+        this.socket.on('ship-warp-ordered', (data) => {
+            if (data.userId !== this.userId) {
+                this.addLogEntry(`${data.shipName} is preparing to warp to ${data.targetName}`, 'info');
+            }
         });
 
         // ✅ Atomic Turn Resolution Policy: No real-time movement updates
@@ -378,15 +391,31 @@ class GameClient {
         }
     }
 
-    // Get icon for unit type
+    // Get icon for unit type (including celestial objects)
     getUnitIcon(type) {
+        const celestialType = type.celestial_type || type;
+        
         const icons = {
+            // Ships and stations
             'ship': '🚢',
             'starbase': '🏭',
+            
+            // Celestial objects
+            'star': '⭐',
+            'planet': '🪐',
+            'moon': '🌙',
+            'belt': '🪨',
+            'nebula': '☁️',
+            'wormhole': '🌀',
+            'jump-gate': '🚪',
+            'derelict': '🛸',
+            'graviton-sink': '🕳️',
+            
+            // Legacy/fallback
             'asteroid': '🪨',
             'anomaly': '❓'
         };
-        return icons[type] || '⚪';
+        return icons[celestialType] || icons[type] || '⚪';
     }
 
     // Format archetype for display
@@ -563,6 +592,9 @@ class GameClient {
                     <button class="action-btn" onclick="setMoveMode()" ${this.turnLocked ? 'disabled' : ''}>
                         🎯 Set Destination
                     </button>
+                    <button class="action-btn" onclick="setWarpMode()" ${this.turnLocked ? 'disabled' : ''}>
+                        🌌 Warp
+                    </button>
                     <button class="action-btn" onclick="scanArea()" ${this.turnLocked || !meta.canActiveScan ? 'disabled' : ''}>
                         ${meta.canActiveScan ? '🔍 Active Scan' : '🔍 Scan Area (N/A)'}
                     </button>
@@ -640,62 +672,237 @@ class GameClient {
         }
     }
 
-    // Draw objects on the map
+    // Draw objects on the map with proper layering
     drawObjects(ctx, centerX, centerY) {
+        // Separate objects by type for proper layering
+        const celestialObjects = [];
+        const shipObjects = [];
+        
         this.objects.forEach(obj => {
             const screenX = centerX + (obj.x - this.camera.x) * this.tileSize;
             const screenY = centerY + (obj.y - this.camera.y) * this.tileSize;
             
-            // Only draw if on screen
-            if (screenX >= -this.tileSize && screenX <= this.canvas.width + this.tileSize &&
-                screenY >= -this.tileSize && screenY <= this.canvas.height + this.tileSize) {
+            // Only process if on screen (with larger buffer for big celestial objects)
+            const buffer = (obj.radius || 1) * this.tileSize + 100; // Extra buffer for large objects
+            if (screenX >= -buffer && screenX <= this.canvas.width + buffer &&
+                screenY >= -buffer && screenY <= this.canvas.height + buffer) {
                 
-                this.drawObject(ctx, obj, screenX, screenY);
+                if (this.isCelestialObject(obj)) {
+                    celestialObjects.push({ obj, screenX, screenY });
+                } else {
+                    shipObjects.push({ obj, screenX, screenY });
+                }
             }
+        });
+        
+        // Sort celestial objects by size (largest first, so they render behind smaller ones)
+        celestialObjects.sort((a, b) => (b.obj.radius || 1) - (a.obj.radius || 1));
+        
+        // Draw celestial objects first (background layer)
+        celestialObjects.forEach(({ obj, screenX, screenY }) => {
+            this.drawObject(ctx, obj, screenX, screenY);
+        });
+        
+        // Draw ship objects on top (foreground layer)
+        shipObjects.forEach(({ obj, screenX, screenY }) => {
+            this.drawObject(ctx, obj, screenX, screenY);
         });
     }
 
-    // Draw a single object
+    // Draw a single object with proper celestial scaling
     drawObject(ctx, obj, x, y) {
-        const size = this.tileSize * 0.8;
         const isOwned = obj.owner_id === this.userId;
         const visibility = obj.visibilityStatus || { visible: isOwned, dimmed: false };
+        const isCelestial = this.isCelestialObject(obj);
+        const isShip = obj.type === 'ship' || obj.type === 'starbase';
+        
+        // Calculate actual size based on object radius or default
+        let objectRadius = obj.radius || 1;
+        let renderSize;
+        
+        if (isCelestial) {
+            // Celestial objects: scale with their actual radius but cap at reasonable screen size
+            renderSize = Math.min(objectRadius * this.tileSize, this.tileSize * 50); // Cap at 50 tiles screen size
+            
+            // Minimum size for visibility
+            if (renderSize < this.tileSize * 0.5) {
+                renderSize = this.tileSize * 0.5;
+            }
+        } else {
+            // Ships and stations: use standard sizing
+            renderSize = this.tileSize * 0.8;
+        }
         
         // Determine visual state based on visibility
         let alpha = 1.0;
-        let borderColor = '#666';
-        let backgroundColor = 'rgba(255, 255, 255, 0.1)';
+        let colors = this.getObjectColors(obj, isOwned, visibility, isCelestial);
         
-        if (isOwned) {
-            borderColor = '#4caf50';
-            backgroundColor = 'rgba(76, 175, 80, 0.3)';
-        } else if (visibility.dimmed) {
-            // AlwaysKnown celestial objects that haven't been scanned
-            alpha = 0.4;
-            borderColor = '#64b5f6';
-            backgroundColor = 'rgba(100, 181, 246, 0.1)';
-        } else if (visibility.visible) {
-            // Scanned objects
-            alpha = 0.8;
-            borderColor = '#ff9800';
-            backgroundColor = 'rgba(255, 152, 0, 0.1)';
+        if (visibility.dimmed) {
+            alpha = isCelestial ? 0.6 : 0.4; // Celestials slightly more visible when dimmed
+        } else if (visibility.visible && !isOwned) {
+            alpha = 0.9;
         }
         
         // Save context for alpha
         ctx.save();
         ctx.globalAlpha = alpha;
         
+        // Draw celestial objects vs ships differently
+        if (isCelestial) {
+            this.drawCelestialObject(ctx, obj, x, y, renderSize, colors, visibility);
+        } else {
+            this.drawShipObject(ctx, obj, x, y, renderSize, colors, visibility, isOwned);
+        }
+        
+        // Restore context
+        ctx.restore();
+    }
+    
+    // Check if object is a celestial body
+    isCelestialObject(obj) {
+        const celestialTypes = ['star', 'planet', 'moon', 'belt', 'nebula', 'wormhole', 'jump-gate', 'derelict', 'graviton-sink'];
+        return celestialTypes.includes(obj.celestial_type || obj.type);
+    }
+    
+    // Get colors for different object types
+    getObjectColors(obj, isOwned, visibility, isCelestial) {
+        if (isOwned && !isCelestial) {
+            return {
+                border: '#4caf50',
+                background: 'rgba(76, 175, 80, 0.3)',
+                text: '#ffffff'
+            };
+        }
+        
+        if (isCelestial) {
+            return this.getCelestialColors(obj);
+        }
+        
+        if (visibility.dimmed) {
+            return {
+                border: '#64b5f6',
+                background: 'rgba(100, 181, 246, 0.1)',
+                text: '#64b5f6'
+            };
+        }
+        
+        if (visibility.visible) {
+            return {
+                border: '#ff9800',
+                background: 'rgba(255, 152, 0, 0.1)',
+                text: '#ffffff'
+            };
+        }
+        
+        return {
+            border: '#666',
+            background: 'rgba(255, 255, 255, 0.1)',
+            text: '#ffffff'
+        };
+    }
+    
+    // Get celestial-specific colors
+    getCelestialColors(obj) {
+        const type = obj.celestial_type || obj.type;
+        
+        switch (type) {
+            case 'star':
+                return {
+                    border: '#FFD700',
+                    background: 'radial-gradient(circle, rgba(255,215,0,0.8) 0%, rgba(255,140,0,0.4) 50%, rgba(255,69,0,0.2) 100%)',
+                    text: '#FFD700',
+                    glow: '#FFD700'
+                };
+            case 'planet':
+                const planetType = obj.meta?.type || 'terrestrial';
+                if (planetType === 'resource-rich') {
+                    return { border: '#8BC34A', background: 'rgba(139, 195, 74, 0.6)', text: '#8BC34A' };
+                } else if (planetType === 'gas-giant') {
+                    return { border: '#9C27B0', background: 'rgba(156, 39, 176, 0.6)', text: '#9C27B0' };
+                }
+                return { border: '#795548', background: 'rgba(121, 85, 72, 0.6)', text: '#795548' };
+            case 'moon':
+                return { border: '#BDBDBD', background: 'rgba(189, 189, 189, 0.5)', text: '#BDBDBD' };
+            case 'belt':
+                return { border: '#FF5722', background: 'rgba(255, 87, 34, 0.3)', text: '#FF5722' };
+            case 'nebula':
+                return { border: '#E91E63', background: 'rgba(233, 30, 99, 0.4)', text: '#E91E63' };
+            case 'wormhole':
+            case 'jump-gate':
+                return { border: '#9C27B0', background: 'rgba(156, 39, 176, 0.7)', text: '#9C27B0', glow: '#9C27B0' };
+            case 'derelict':
+                return { border: '#607D8B', background: 'rgba(96, 125, 139, 0.5)', text: '#607D8B' };
+            case 'graviton-sink':
+                return { border: '#000000', background: 'rgba(0, 0, 0, 0.9)', text: '#FF0000', glow: '#FF0000' };
+            default:
+                return { border: '#64b5f6', background: 'rgba(100, 181, 246, 0.3)', text: '#64b5f6' };
+        }
+    }
+    
+    // Draw celestial objects with special effects
+    drawCelestialObject(ctx, obj, x, y, size, colors, visibility) {
+        const type = obj.celestial_type || obj.type;
+        
+        // Draw glow effect for certain objects
+        if (colors.glow && size > this.tileSize) {
+            ctx.shadowColor = colors.glow;
+            ctx.shadowBlur = Math.min(size * 0.3, 20);
+        }
+        
+        // Draw main body
+        if (type === 'star') {
+            this.drawStar(ctx, x, y, size, colors);
+        } else if (type === 'planet' || type === 'moon') {
+            this.drawPlanet(ctx, x, y, size, colors, obj.meta);
+        } else if (type === 'belt') {
+            this.drawAsteroidBelt(ctx, x, y, size, colors);
+        } else if (type === 'nebula') {
+            this.drawNebula(ctx, x, y, size, colors);
+        } else if (type === 'wormhole' || type === 'jump-gate') {
+            this.drawWormhole(ctx, x, y, size, colors);
+        } else if (type === 'graviton-sink') {
+            this.drawGravitonSink(ctx, x, y, size, colors);
+        } else {
+            this.drawGenericCelestial(ctx, x, y, size, colors);
+        }
+        
+        // Reset shadow
+        ctx.shadowBlur = 0;
+        
+        // Draw name for large celestial objects or when zoomed in
+        if ((size > this.tileSize * 3 || this.tileSize > 20) && obj.meta?.name) {
+            ctx.fillStyle = colors.text;
+            ctx.font = `bold ${Math.max(12, this.tileSize * 0.4)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(obj.meta.name, x, y + size/2 + 5);
+        }
+        
+        // Draw fog of war indicator for dimmed objects
+        if (visibility.dimmed && size > this.tileSize) {
+            ctx.fillStyle = 'rgba(100, 181, 246, 0.7)';
+            ctx.font = `${Math.max(16, this.tileSize * 0.5)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('?', x, y);
+        }
+        
+
+    }
+    
+    // Draw ship/station objects
+    drawShipObject(ctx, obj, x, y, size, colors, visibility, isOwned) {
         // Draw object background
-        ctx.fillStyle = backgroundColor;
+        ctx.fillStyle = colors.background;
         ctx.fillRect(x - size/2, y - size/2, size, size);
         
         // Draw object border
-        ctx.strokeStyle = borderColor;
+        ctx.strokeStyle = colors.border;
         ctx.lineWidth = visibility.dimmed ? 1 : 2;
         ctx.strokeRect(x - size/2, y - size/2, size, size);
         
         // Draw object icon/text
-        ctx.fillStyle = visibility.dimmed ? '#64b5f6' : '#ffffff';
+        ctx.fillStyle = colors.text;
         ctx.font = `${this.tileSize * 0.6}px Arial`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -705,19 +912,290 @@ class GameClient {
         
         // Draw object name if zoomed in enough (only for owned or fully visible objects)
         if (this.tileSize > 15 && (isOwned || (visibility.visible && !visibility.dimmed))) {
+            ctx.fillStyle = colors.text;
             ctx.font = `${this.tileSize * 0.3}px Arial`;
-            ctx.fillText(obj.meta.name || obj.type, x, y + size/2 + 10);
+            ctx.textBaseline = 'top';
+            ctx.fillText(obj.meta.name || obj.type, x, y + size/2 + 2);
         }
         
-        // Draw fog of war indicator for dimmed objects
-        if (visibility.dimmed && this.tileSize > 12) {
-            ctx.fillStyle = 'rgba(100, 181, 246, 0.6)';
-            ctx.font = `${this.tileSize * 0.2}px Arial`;
-            ctx.fillText('?', x + size/4, y - size/4);
+        // Draw warp preparation effect if ship is preparing for warp
+        if (obj.warpPhase && (obj.warpPhase === 'preparing' || obj.warpPhase === 'ready')) {
+            this.drawWarpPreparationEffect(ctx, obj, x, y, size);
+        }
+    }
+    
+    // Specialized drawing functions for different celestial types
+    drawStar(ctx, x, y, size, colors) {
+        // Create radial gradient for star
+        const gradient = ctx.createRadialGradient(x, y, 0, x, y, size/2);
+        gradient.addColorStop(0, 'rgba(255,215,0,0.9)');
+        gradient.addColorStop(0.5, 'rgba(255,140,0,0.6)');
+        gradient.addColorStop(1, 'rgba(255,69,0,0.3)');
+        
+        // Main star body
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(x, y, size/2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Star border
+        ctx.strokeStyle = colors.border;
+        ctx.lineWidth = Math.max(2, size * 0.02);
+        ctx.stroke();
+        
+        // Add sparkle effects for larger stars
+        if (size > this.tileSize * 2) {
+            this.drawStarSparkles(ctx, x, y, size);
+        }
+    }
+    
+    drawPlanet(ctx, x, y, size, colors, meta) {
+        // Main planet body
+        ctx.fillStyle = colors.background;
+        ctx.beginPath();
+        ctx.arc(x, y, size/2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Planet border
+        ctx.strokeStyle = colors.border;
+        ctx.lineWidth = Math.max(1, size * 0.015);
+        ctx.stroke();
+        
+        // Add surface features for larger planets
+        if (size > this.tileSize * 1.5) {
+            this.drawPlanetFeatures(ctx, x, y, size, colors, meta);
+        }
+    }
+    
+    drawAsteroidBelt(ctx, x, y, size, colors) {
+        // Draw as a ring/arc with scattered asteroids
+        ctx.strokeStyle = colors.border;
+        ctx.lineWidth = Math.max(3, size * 0.01);
+        
+        // Main belt ring
+        ctx.beginPath();
+        ctx.arc(x, y, size/2, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Scattered asteroids
+        if (size > this.tileSize) {
+            this.drawScatteredAsteroids(ctx, x, y, size, colors);
+        }
+    }
+    
+    drawNebula(ctx, x, y, size, colors) {
+        // Irregular cloud shape
+        ctx.fillStyle = colors.background;
+        
+        // Draw multiple overlapping circles for cloud effect
+        const numClouds = Math.max(3, Math.floor(size / this.tileSize));
+        for (let i = 0; i < numClouds; i++) {
+            const angle = (i / numClouds) * Math.PI * 2;
+            const offsetX = Math.cos(angle) * size * 0.3;
+            const offsetY = Math.sin(angle) * size * 0.3;
+            const cloudSize = size * (0.4 + Math.random() * 0.3);
+            
+            ctx.beginPath();
+            ctx.arc(x + offsetX, y + offsetY, cloudSize/2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    drawWormhole(ctx, x, y, size, colors) {
+        // Swirling portal effect
+        ctx.strokeStyle = colors.border;
+        ctx.lineWidth = Math.max(2, size * 0.03);
+        
+        // Multiple rings
+        for (let i = 0; i < 3; i++) {
+            ctx.beginPath();
+            ctx.arc(x, y, size/2 - i * size * 0.1, 0, Math.PI * 2);
+            ctx.stroke();
         }
         
-        // Restore context
-        ctx.restore();
+        // Inner glow
+        if (colors.glow) {
+            ctx.fillStyle = colors.glow + '33'; // Add transparency
+            ctx.beginPath();
+            ctx.arc(x, y, size/4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    drawGravitonSink(ctx, x, y, size, colors) {
+        // Black hole with accretion disk
+        ctx.fillStyle = colors.background;
+        ctx.beginPath();
+        ctx.arc(x, y, size/2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Accretion disk
+        ctx.strokeStyle = colors.glow || '#FF0000';
+        ctx.lineWidth = Math.max(2, size * 0.02);
+        
+        for (let i = 1; i <= 3; i++) {
+            ctx.beginPath();
+            ctx.arc(x, y, size/2 + i * size * 0.1, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
+    
+    drawGenericCelestial(ctx, x, y, size, colors) {
+        // Generic celestial object
+        ctx.fillStyle = colors.background;
+        ctx.strokeStyle = colors.border;
+        ctx.lineWidth = Math.max(1, size * 0.02);
+        
+        ctx.beginPath();
+        ctx.arc(x, y, size/2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
+    
+    // Helper functions for visual effects
+    drawStarSparkles(ctx, x, y, size) {
+        ctx.fillStyle = '#FFFFFF';
+        const numSparkles = 8;
+        for (let i = 0; i < numSparkles; i++) {
+            const angle = (i / numSparkles) * Math.PI * 2;
+            const distance = size * 0.6;
+            const sparkleX = x + Math.cos(angle) * distance;
+            const sparkleY = y + Math.sin(angle) * distance;
+            
+            ctx.beginPath();
+            ctx.arc(sparkleX, sparkleY, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    drawPlanetFeatures(ctx, x, y, size, colors, meta) {
+        // Simple surface patterns
+        ctx.fillStyle = colors.border + '44'; // Semi-transparent
+        
+        // Add some surface spots/continents
+        const numFeatures = 3;
+        for (let i = 0; i < numFeatures; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * size * 0.3;
+            const featureX = x + Math.cos(angle) * distance;
+            const featureY = y + Math.sin(angle) * distance;
+            const featureSize = size * 0.1 * (0.5 + Math.random() * 0.5);
+            
+            ctx.beginPath();
+            ctx.arc(featureX, featureY, featureSize, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    // Draw warp target highlight
+    drawWarpTargetHighlight(ctx, x, y, size) {
+        const time = Date.now() / 1000;
+        const pulse = 0.5 + 0.5 * Math.sin(time * 4); // Faster pulse for warp mode
+        
+        // Outer glow ring
+        ctx.strokeStyle = `rgba(138, 43, 226, ${pulse * 0.8})`; // Purple glow
+        ctx.lineWidth = Math.max(3, size * 0.02);
+        ctx.setLineDash([10, 5]);
+        
+        ctx.beginPath();
+        ctx.arc(x, y, size/2 + 15, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Inner target ring
+        ctx.strokeStyle = `rgba(255, 255, 255, ${pulse})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 3]);
+        
+        ctx.beginPath();
+        ctx.arc(x, y, size/2 + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        ctx.setLineDash([]); // Reset line dash
+        
+        // Warp icon
+        if (size > this.tileSize) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
+            ctx.font = `${Math.max(12, this.tileSize * 0.3)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🌌', x, y - size/2 - 20);
+        }
+    }
+    
+    // Draw warp preparation effect on ship
+    drawWarpPreparationEffect(ctx, ship, x, y, size) {
+        const time = Date.now() / 1000;
+        const phase = ship.warpPhase;
+        const preparationTurns = ship.warpPreparationTurns || 0;
+        
+        if (phase === 'preparing') {
+            // Charging effect - intensifies over time
+            const intensity = Math.min(1.0, preparationTurns / 2);
+            const pulse = 0.3 + 0.7 * Math.sin(time * 6) * intensity;
+            
+            // Blue energy rings
+            ctx.strokeStyle = `rgba(0, 191, 255, ${pulse})`;
+            ctx.lineWidth = 3;
+            
+            for (let i = 0; i < 3; i++) {
+                const ringSize = size/2 + 10 + (i * 8) + (Math.sin(time * 3 + i) * 5);
+                ctx.beginPath();
+                ctx.arc(x, y, ringSize, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+            // Central glow
+            ctx.shadowColor = '#00BFFF';
+            ctx.shadowBlur = 20 * intensity;
+            ctx.fillStyle = `rgba(0, 191, 255, ${pulse * 0.3})`;
+            ctx.beginPath();
+            ctx.arc(x, y, size/2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            
+            // Progress indicator
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(`Charging ${preparationTurns}/2`, x, y + size/2 + 5);
+            
+        } else if (phase === 'ready') {
+            // Ready to warp - steady bright glow
+            ctx.shadowColor = '#FFFFFF';
+            ctx.shadowBlur = 25;
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 4;
+            
+            ctx.beginPath();
+            ctx.arc(x, y, size/2 + 12, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            // Ready indicator
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('WARP READY', x, y + size/2 + 5);
+        }
+    }
+    
+    drawScatteredAsteroids(ctx, x, y, size, colors) {
+        ctx.fillStyle = colors.border;
+        
+        const numAsteroids = Math.max(5, Math.floor(size / this.tileSize / 2));
+        for (let i = 0; i < numAsteroids; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = size * 0.4 + Math.random() * size * 0.2;
+            const asteroidX = x + Math.cos(angle) * distance;
+            const asteroidY = y + Math.sin(angle) * distance;
+            const asteroidSize = 1 + Math.random() * 3;
+            
+            ctx.beginPath();
+            ctx.arc(asteroidX, asteroidY, asteroidSize, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 
     // Draw selection highlight
@@ -759,12 +1237,39 @@ class GameClient {
         const scaleX = canvas.width / 5000;
         const scaleY = canvas.height / 5000;
         
-        this.objects.forEach(obj => {
+        // Draw celestial objects first (larger, background)
+        const celestialObjects = this.objects.filter(obj => this.isCelestialObject(obj));
+        const shipObjects = this.objects.filter(obj => !this.isCelestialObject(obj));
+        
+        // Draw celestial objects
+        celestialObjects.forEach(obj => {
+            const x = obj.x * scaleX;
+            const y = obj.y * scaleY;
+            const radius = obj.radius || 1;
+            const size = Math.max(1, Math.min(radius * scaleX * 2, canvas.width * 0.1)); // Scale but cap size
+            
+            // Get celestial colors
+            const colors = this.getCelestialColors(obj);
+            ctx.fillStyle = colors.border;
+            
+            if (radius > 10) {
+                // Large objects (stars, planets) - circles
+                ctx.beginPath();
+                ctx.arc(x, y, size/2, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // Small objects - squares
+                ctx.fillRect(x - size/2, y - size/2, size, size);
+            }
+        });
+        
+        // Draw ships and stations on top
+        shipObjects.forEach(obj => {
             const x = obj.x * scaleX;
             const y = obj.y * scaleY;
             const size = Math.max(2, 4 * scaleX);
             
-            ctx.fillStyle = obj.owner_id === this.userId ? '#4caf50' : '#666';
+            ctx.fillStyle = obj.owner_id === this.userId ? '#4caf50' : '#ff5722';
             ctx.fillRect(x - size/2, y - size/2, size, size);
         });
         
@@ -827,10 +1332,12 @@ class GameClient {
         const worldX = Math.round(this.camera.x + (x - centerX) / this.tileSize);
         const worldY = Math.round(this.camera.y + (y - centerY) / this.tileSize);
         
-        // Check what's under the cursor
-        const hoveredObject = this.objects.find(obj => 
-            Math.abs(obj.x - worldX) <= 0.5 && Math.abs(obj.y - worldY) <= 0.5
-        );
+        // Check what's under the cursor (account for object radius)
+        const hoveredObject = this.objects.find(obj => {
+            const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
+            const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8); // Use object radius for hit detection
+            return distance <= hitRadius;
+        });
         
         if (hoveredObject) {
             if (hoveredObject.owner_id === this.userId) {
@@ -859,10 +1366,12 @@ class GameClient {
         
         console.log(`Left-clicked world position: (${worldX}, ${worldY})`);
         
-        // Check if clicking on an object
-        const clickedObject = this.objects.find(obj => 
-            Math.abs(obj.x - worldX) <= 0.5 && Math.abs(obj.y - worldY) <= 0.5
-        );
+        // Check if clicking on an object (account for object radius)
+        const clickedObject = this.objects.find(obj => {
+            const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
+            const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8); // Use object radius for hit detection
+            return distance <= hitRadius;
+        });
         
         if (clickedObject && clickedObject.owner_id === this.userId) {
             // Select owned unit
@@ -903,10 +1412,12 @@ class GameClient {
         
         console.log(`Right-clicked world position: (${worldX}, ${worldY}) - checking for move/attack command`);
         
-        // Check if right-clicking on an object
-        const clickedObject = this.objects.find(obj => 
-            Math.abs(obj.x - worldX) <= 0.5 && Math.abs(obj.y - worldY) <= 0.5
-        );
+        // Check if right-clicking on an object (account for object radius)
+        const clickedObject = this.objects.find(obj => {
+            const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
+            const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8); // Use object radius for hit detection
+            return distance <= hitRadius;
+        });
         
         if (clickedObject) {
             if (clickedObject.owner_id === this.userId) {
@@ -1448,6 +1959,254 @@ class GameClient {
         ctx.restore();
     }
 
+
+    
+    // Show warp confirmation dialog
+    showWarpConfirmation(target) {
+        const distance = Math.sqrt(
+            Math.pow(this.selectedUnit.x - target.x, 2) + 
+            Math.pow(this.selectedUnit.y - target.y, 2)
+        );
+        
+        const modalContent = document.createElement('div');
+        modalContent.innerHTML = `
+            <div class="warp-confirmation">
+                <h3>🌌 Warp Jump Confirmation</h3>
+                <div class="warp-info">
+                    <p><strong>Ship:</strong> ${this.selectedUnit.meta.name}</p>
+                    <p><strong>Destination:</strong> ${target.meta.name || target.type}</p>
+                    <p><strong>Distance:</strong> ${Math.round(distance)} tiles</p>
+                    <p><strong>Preparation Time:</strong> 2 turns</p>
+                    <p><strong>Jump Time:</strong> Instant</p>
+                </div>
+                <div class="warp-warning">
+                    ⚠️ Warp preparation cannot be interrupted once started
+                </div>
+            </div>
+        `;
+        
+        UI.showModal({
+            title: '🌌 Warp Jump',
+            content: modalContent,
+            actions: [
+                {
+                    text: 'Cancel',
+                    style: 'secondary',
+                    action: () => true // Close modal
+                },
+                {
+                    text: 'Engage Warp Drive',
+                    style: 'primary',
+                    action: () => this.executeWarpOrder(target)
+                }
+            ]
+        });
+    }
+    
+    // Execute warp order
+    executeWarpOrder(target) {
+        console.log(`🌌 Initiating warp from (${this.selectedUnit.x},${this.selectedUnit.y}) to ${target.meta.name} at (${target.x},${target.y})`);
+        
+        // Send warp order to server
+        this.socket.emit('warp-ship', {
+            gameId: this.gameId,
+            shipId: this.selectedUnit.id,
+            targetId: target.id,
+            targetX: target.x,
+            targetY: target.y,
+            shipName: this.selectedUnit.meta.name,
+            targetName: target.meta.name
+        });
+        
+        this.addLogEntry(`${this.selectedUnit.meta.name} engaging warp drive. Target: ${target.meta.name}`, 'success');
+        return true; // Close modal
+    }
+    
+    // Enter warp target selection mode - show popup menu
+    enterWarpMode() {
+        this.showWarpTargetSelection();
+    }
+    
+    // Show warp target selection popup
+    showWarpTargetSelection() {
+        const ship = this.selectedUnit;
+        if (!ship) return;
+        
+        // Get all possible warp targets
+        const warpTargets = this.getWarpTargets(ship);
+        
+        if (warpTargets.length === 0) {
+            this.addLogEntry('No warp targets available in this sector', 'warning');
+            return;
+        }
+        
+        // Create target selection content
+        const targetList = document.createElement('div');
+        targetList.className = 'warp-target-list';
+        
+        // Add header
+        const header = document.createElement('div');
+        header.className = 'warp-target-header';
+        header.innerHTML = `
+            <h3>🌌 Select Warp Destination</h3>
+            <p>Choose where ${ship.meta.name} should warp to:</p>
+        `;
+        targetList.appendChild(header);
+        
+        // Add target options
+        warpTargets.forEach(target => {
+            const targetOption = document.createElement('div');
+            targetOption.className = 'warp-target-option';
+            
+            const distance = Math.sqrt(
+                Math.pow(ship.x - target.x, 2) + 
+                Math.pow(ship.y - target.y, 2)
+            );
+            
+            const targetIcon = this.getWarpTargetIcon(target);
+            const targetType = this.getWarpTargetType(target);
+            
+            targetOption.innerHTML = `
+                <div class="warp-target-info">
+                    <div class="warp-target-name">
+                        ${targetIcon} ${target.meta.name || target.type}
+                    </div>
+                    <div class="warp-target-details">
+                        <span class="warp-target-type">${targetType}</span>
+                        <span class="warp-target-distance">${Math.round(distance)} tiles away</span>
+                    </div>
+                </div>
+                <div class="warp-target-action">
+                    <button class="warp-select-btn">Select</button>
+                </div>
+            `;
+            
+            // Add click handler
+            const selectBtn = targetOption.querySelector('.warp-select-btn');
+            selectBtn.addEventListener('click', () => {
+                this.showWarpConfirmation(target);
+            });
+            
+            targetList.appendChild(targetOption);
+        });
+        
+        // Show modal with target list
+        UI.showModal({
+            title: '🌌 Warp Target Selection',
+            content: targetList,
+            actions: [
+                {
+                    text: 'Cancel',
+                    style: 'secondary',
+                    action: () => {
+                        this.addLogEntry('Warp target selection cancelled', 'info');
+                        return true; // Close modal
+                    }
+                }
+            ],
+            className: 'warp-target-modal'
+        });
+    }
+    
+    // Get all available warp targets for a ship
+    getWarpTargets(ship) {
+        const targets = [];
+        
+        // Add celestial objects
+        const celestialObjects = this.objects.filter(obj => this.isCelestialObject(obj));
+        targets.push(...celestialObjects);
+        
+        // Add player-owned structures (starbases, stations, etc.)
+        const playerStructures = this.objects.filter(obj => 
+            obj.owner_id === this.userId && 
+            (obj.type === 'starbase' || obj.type === 'station') && 
+            obj.id !== ship.id // Don't include the ship itself
+        );
+        targets.push(...playerStructures);
+        
+        // Add warp beacons (future feature)
+        const warpBeacons = this.objects.filter(obj => 
+            obj.type === 'warp_beacon' && 
+            (obj.owner_id === this.userId || obj.meta?.accessibility === 'neutral')
+        );
+        targets.push(...warpBeacons);
+        
+        // Sort by distance
+        targets.sort((a, b) => {
+            const distA = Math.sqrt(Math.pow(ship.x - a.x, 2) + Math.pow(ship.y - a.y, 2));
+            const distB = Math.sqrt(Math.pow(ship.x - b.x, 2) + Math.pow(ship.y - b.y, 2));
+            return distA - distB;
+        });
+        
+        return targets;
+    }
+    
+    // Get icon for warp target type
+    getWarpTargetIcon(target) {
+        if (target.celestial_type) {
+            // Celestial objects
+            switch (target.celestial_type) {
+                case 'star': return '⭐';
+                case 'planet': return '🪐';
+                case 'moon': return '🌙';
+                case 'belt': return '☄️';
+                case 'nebula': return '🌌';
+                case 'wormhole': return '🕳️';
+                case 'derelict': return '🛸';
+                default: return '🌟';
+            }
+        } else {
+            // Player structures
+            switch (target.type) {
+                case 'starbase': return '🏭';
+                case 'station': return '🛰️';
+                case 'warp_beacon': return '📡';
+                default: return '🏗️';
+            }
+        }
+    }
+    
+    // Get readable type name for warp target
+    getWarpTargetType(target) {
+        if (target.celestial_type) {
+            // Celestial objects
+            switch (target.celestial_type) {
+                case 'star': return 'Star System';
+                case 'planet': return 'Planet';
+                case 'moon': return 'Moon';
+                case 'belt': return 'Asteroid Belt';
+                case 'nebula': return 'Nebula';
+                case 'wormhole': return 'Wormhole';
+                case 'derelict': return 'Derelict';
+                default: return 'Celestial Object';
+            }
+        } else {
+            // Player structures
+            if (target.owner_id === this.userId) {
+                switch (target.type) {
+                    case 'starbase': return 'Your Starbase';
+                    case 'station': return 'Your Station';
+                    case 'warp_beacon': return 'Your Warp Beacon';
+                    default: return 'Your Structure';
+                }
+            } else if (target.type === 'warp_beacon' && target.meta?.accessibility === 'neutral') {
+                return 'Neutral Warp Beacon';
+            } else {
+                return 'Allied Structure';
+            }
+        }
+    }
+    
+    // Exit warp target selection mode
+    exitWarpMode() {
+        this.warpMode = false;
+        this.warpTargets = [];
+        this.canvas.style.cursor = 'default';
+        
+        // Re-render to remove warp highlights
+        this.render();
+    }
+
     // Add entry to activity log
     addLogEntry(message, type = 'info') {
         const logContainer = document.getElementById('activityLog');
@@ -1765,6 +2524,47 @@ function setMoveMode() {
         
         // Temporarily highlight the selected ship
         gameClient.render();
+    } else if (gameClient) {
+        gameClient.addLogEntry('Select a ship first', 'warning');
+    }
+}
+
+function setWarpMode() {
+    if (gameClient && gameClient.selectedUnit && gameClient.selectedUnit.type === 'ship') {
+        // Check if ship is already warping
+        if (gameClient.selectedUnit.warpPhase) {
+            gameClient.addLogEntry(`${gameClient.selectedUnit.meta.name} is already preparing for warp`, 'warning');
+            return;
+        }
+        
+        // Check if ship is moving (more robust validation)
+        const unit = gameClient.selectedUnit;
+        
+        // Only consider ship as moving if movement status is explicitly 'active'
+        // Ignore stale movementActive flags if status is not active
+        const hasActiveMovement = unit.movementStatus === 'active';
+        
+        // Debug logging to help diagnose the issue
+        console.log('🌌 Warp validation check:', {
+            shipName: unit.meta.name,
+            movementStatus: unit.movementStatus,
+            movementActive: unit.movementActive,
+            hasActiveMovement: hasActiveMovement,
+            hasMovementPath: unit.movementPath && unit.movementPath.length > 0
+        });
+        
+        if (hasActiveMovement) {
+            gameClient.addLogEntry(`Cannot warp while ship is moving. Movement status: ${unit.movementStatus}`, 'warning');
+            return;
+        }
+        
+        // Clear any stale movementActive flag if status is not active
+        if (unit.movementActive && unit.movementStatus !== 'active') {
+            console.log('🧹 Clearing stale movementActive flag');
+            unit.movementActive = false;
+        }
+        
+        gameClient.enterWarpMode();
     } else if (gameClient) {
         gameClient.addLogEntry('Select a ship first', 'warning');
     }

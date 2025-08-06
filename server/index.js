@@ -180,6 +180,97 @@ io.on('connection', (socket) => {
         });
     });
     
+    // Handle warp orders - Store warp preparation in database
+    socket.on('warp-ship', (data) => {
+        const { gameId, shipId, targetId, targetX, targetY, shipName, targetName } = data;
+        console.log(`🌌 Ship ${shipId} (${shipName}) warp order: to ${targetName} at (${targetX}, ${targetY}) in game ${gameId}`);
+        
+        // Validate ship exists and is owned by player
+        db.get('SELECT x, y, meta FROM sector_objects WHERE id = ?', [shipId], (err, ship) => {
+            if (err || !ship) {
+                console.error('Error finding ship for warp:', err);
+                socket.emit('error', { message: 'Ship not found' });
+                return;
+            }
+            
+            // Validate target exists
+            db.get('SELECT x, y, meta, celestial_type FROM sector_objects WHERE id = ?', [targetId], (err, target) => {
+                if (err || !target) {
+                    console.error('Error finding warp target:', err);
+                    socket.emit('error', { message: 'Warp target not found' });
+                    return;
+                }
+                
+                // Cancel any existing movement/warp orders for this ship
+                db.run(
+                    'DELETE FROM movement_orders WHERE object_id = ? AND status IN ("active", "blocked")',
+                    [shipId],
+                    function(err) {
+                        if (err) {
+                            console.error('Error canceling old orders for warp:', err);
+                            socket.emit('error', { message: 'Failed to cancel previous orders' });
+                            return;
+                        }
+                        
+                        if (this.changes > 0) {
+                            console.log(`🗑️ Canceled ${this.changes} existing orders for warp ship ${shipId}`);
+                        }
+                        
+                        // Store warp order with preparation phase
+                        const orderTimestamp = new Date().toISOString();
+                        db.run(
+                            `INSERT INTO movement_orders 
+                             (object_id, warp_target_id, warp_destination_x, warp_destination_y, 
+                              warp_phase, warp_preparation_turns, status, created_at) 
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                            [
+                                shipId,
+                                targetId,
+                                targetX,
+                                targetY,
+                                'preparing',
+                                0,
+                                'warp_preparing',
+                                orderTimestamp
+                            ],
+                            (err) => {
+                                if (err) {
+                                    console.error('Error storing warp order:', err);
+                                    socket.emit('error', { message: 'Failed to store warp order' });
+                                } else {
+                                    console.log(`🌌 Warp order stored: ${shipName} → ${targetName}, preparation phase started`);
+                                    
+                                    // Confirm warp order received
+                                    socket.emit('warp-confirmed', {
+                                        shipId,
+                                        targetId,
+                                        targetName,
+                                        targetX,
+                                        targetY,
+                                        phase: 'preparing',
+                                        preparationTurns: 0,
+                                        message: `Warp drive engaging. Preparation: 0/2 turns`
+                                    });
+                                    
+                                    // Notify other players about the warp preparation
+                                    socket.to(`game-${gameId}`).emit('ship-warp-ordered', {
+                                        shipId,
+                                        shipName,
+                                        targetName,
+                                        targetX,
+                                        targetY,
+                                        phase: 'preparing',
+                                        userId: socket.userId
+                                    });
+                                }
+                            }
+                        );
+                    }
+                );
+            });
+        });
+    });
+    
     socket.on('disconnect', () => {
         console.log(`👋 Player ${socket.userId} disconnected from game ${socket.gameId}`);
     });
@@ -329,17 +420,17 @@ async function resolveTurn(gameId, turnNumber) {
 // Process all movement orders for a turn with collision detection
 async function processMovementOrders(gameId, turnNumber) {
     return new Promise((resolve, reject) => {
-        // Get all active movement orders for this game (only the most recent per ship)
+        // Get all active movement AND warp orders for this game (only the most recent per ship)
         db.all(
             `SELECT mo.*, so.x as current_x, so.y as current_y, so.sector_id, so.meta 
              FROM movement_orders mo 
              JOIN sector_objects so ON mo.object_id = so.id 
              JOIN sectors s ON so.sector_id = s.id 
-             WHERE s.game_id = ? AND mo.status = 'active'
+             WHERE s.game_id = ? AND mo.status IN ('active', 'warp_preparing')
              AND mo.created_at = (
                  SELECT MAX(mo2.created_at) 
                  FROM movement_orders mo2 
-                 WHERE mo2.object_id = mo.object_id AND mo2.status = 'active'
+                 WHERE mo2.object_id = mo.object_id AND mo2.status IN ('active', 'warp_preparing')
              )`,
             [gameId],
             async (err, orders) => {
@@ -390,9 +481,14 @@ async function processMovementOrders(gameId, turnNumber) {
     });
 }
 
-// Process a single ship's movement with collision detection
+// Process a single ship's movement or warp with collision detection
 async function processSingleMovement(order, turnNumber, gameId) {
     return new Promise((resolve, reject) => {
+        // Handle warp orders separately
+        if (order.status === 'warp_preparing') {
+            return processWarpOrder(order, turnNumber, gameId, resolve, reject);
+        }
+        
         const movementPath = JSON.parse(order.movement_path || '[]');
         const currentStep = order.current_step || 0;
         const movementSpeed = order.movement_speed || 1;
@@ -532,6 +628,86 @@ async function processSingleMovement(order, turnNumber, gameId) {
             }
         );
     });
+}
+
+// Process warp order (preparation and execution)
+function processWarpOrder(order, turnNumber, gameId, resolve, reject) {
+    const preparationTurns = order.warp_preparation_turns || 0;
+    const warpPhase = order.warp_phase || 'preparing';
+    const meta = JSON.parse(order.meta || '{}');
+    
+    console.log(`🌌 Processing warp order for ship ${order.object_id}: phase=${warpPhase}, prep=${preparationTurns}/2`);
+    
+    if (warpPhase === 'preparing') {
+        const newPreparationTurns = preparationTurns + 1;
+        
+        if (newPreparationTurns >= 2) {
+            // Preparation complete - execute warp jump
+            console.log(`🚀 Warp preparation complete for ship ${order.object_id}, executing jump!`);
+            
+            // Move ship to destination instantly
+            db.run(
+                'UPDATE sector_objects SET x = ?, y = ? WHERE id = ?',
+                [order.warp_destination_x, order.warp_destination_y, order.object_id],
+                function(err) {
+                    if (err) {
+                        console.error('Error executing warp jump:', err);
+                        return reject(err);
+                    }
+                    
+                    console.log(`✨ Ship ${order.object_id} warped to (${order.warp_destination_x}, ${order.warp_destination_y})`);
+                    
+                    // Delete the warp order (completed)
+                    db.run(
+                        'DELETE FROM movement_orders WHERE id = ?',
+                        [order.id],
+                        (err) => {
+                            if (err) {
+                                console.error('Error cleaning up warp order:', err);
+                            }
+                            
+                            resolve({
+                                objectId: order.object_id,
+                                status: 'warp_completed',
+                                newX: order.warp_destination_x,
+                                newY: order.warp_destination_y,
+                                message: `Warp jump completed to (${order.warp_destination_x}, ${order.warp_destination_y})`
+                            });
+                        }
+                    );
+                }
+            );
+        } else {
+            // Continue preparation - increment turn counter
+            db.run(
+                'UPDATE movement_orders SET warp_preparation_turns = ? WHERE id = ?',
+                [newPreparationTurns, order.id],
+                (err) => {
+                    if (err) {
+                        console.error('Error updating warp preparation:', err);
+                        return reject(err);
+                    }
+                    
+                    console.log(`⚡ Ship ${order.object_id} warp preparation: ${newPreparationTurns}/2 turns`);
+                    
+                    resolve({
+                        objectId: order.object_id,
+                        status: 'warp_preparing',
+                        preparationTurns: newPreparationTurns,
+                        message: `Warp drive charging: ${newPreparationTurns}/2 turns`
+                    });
+                }
+            );
+        }
+    } else {
+        // Shouldn't happen, but handle gracefully
+        console.warn(`⚠️ Unknown warp phase: ${warpPhase} for ship ${order.object_id}`);
+        resolve({
+            objectId: order.object_id,
+            status: 'warp_error',
+            message: 'Unknown warp phase'
+        });
+    }
 }
 
 // STAGE 3 OPTIMIZATION: Parallel processing for all players visibility updates

@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { SystemGenerator } = require('../system-generator');
 const router = express.Router();
 
 // Game initialization and management
@@ -62,8 +63,8 @@ class GameWorldManager {
                 const sectorId = this.lastID;
                 console.log(`📍 Created sector ${sectorId} for ${player.username}`);
                 
-                // Create starting objects for this player
-                GameWorldManager.createStartingObjects(gameId, player, sectorId, () => {
+                // Generate celestial objects and create starting objects for this player
+                GameWorldManager.generateSectorAndStartingObjects(gameId, player, sectorId, () => {
                     // Process next player
                     GameWorldManager.createPlayerSectors(gameId, players, index + 1, resolve, reject);
                 }, reject);
@@ -71,50 +72,115 @@ class GameWorldManager {
         );
     }
     
+    // Generate celestial objects and create starting objects for a player
+    static async generateSectorAndStartingObjects(gameId, player, sectorId, onComplete, onError) {
+        try {
+            console.log(`🌌 Generating celestial objects for ${player.username}'s sector ${sectorId}`);
+            
+            // Get sector info to determine archetype
+            const sector = await new Promise((resolve, reject) => {
+                db.get('SELECT archetype FROM sectors WHERE id = ?', [sectorId], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+            
+            const archetype = sector?.archetype || null;
+            console.log(`🎯 Using archetype: ${archetype || 'standard'} for sector ${sectorId}`);
+            
+            // Generate the complete solar system
+            const generationResult = await SystemGenerator.generateSystem(sectorId, archetype);
+            console.log(`✅ System generation complete:`, generationResult);
+            
+            // Now create starting objects in a suitable location
+            this.createStartingObjects(gameId, player, sectorId, onComplete, onError);
+            
+        } catch (error) {
+            console.error(`❌ Failed to generate sector ${sectorId}:`, error);
+            onError(error);
+        }
+    }
+    
     // Create starting objects for a player
     static createStartingObjects(gameId, player, sectorId, onComplete, onError) {
-        // Create starting starbase at center (2500, 2500)
-        const starbaseMeta = JSON.stringify({
-            name: `${player.username} Prime Station`,
-            hp: 100,
-            maxHp: 100,
-            scanRange: 15,
-            pilots: 5
-        });
-        
-        db.run(
-            'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
-            [sectorId, 'starbase', 2500, 2500, player.user_id, starbaseMeta],
-            function(err) {
+        // Find a suitable planet for spawning near
+        db.get(
+            `SELECT x, y, meta FROM sector_objects 
+             WHERE sector_id = ? AND celestial_type = 'planet' 
+             ORDER BY RANDOM() LIMIT 1`,
+            [sectorId],
+            (err, planet) => {
                 if (err) {
-                    console.error('Error creating starbase:', err);
+                    console.error('Error finding spawn planet:', err);
                     return onError(err);
                 }
                 
-                console.log(`🏭 Created starbase for ${player.username}`);
+                let spawnX, spawnY;
                 
-                // Create starting ship adjacent to starbase
-                const shipMeta = JSON.stringify({
-                    name: `${player.username} Explorer`,
-                    hp: 50,
-                    maxHp: 50,
-                    scanRange: 8,
-                    movementSpeed: 4
+                if (planet) {
+                    // Spawn near the planet (200-400 tiles away)
+                    const planetMeta = JSON.parse(planet.meta || '{}');
+                    const distance = 200 + Math.floor(Math.random() * 200); // 200-400 tiles
+                    const angle = Math.random() * 2 * Math.PI;
+                    spawnX = Math.round(planet.x + Math.cos(angle) * distance);
+                    spawnY = Math.round(planet.y + Math.sin(angle) * distance);
+                    
+                    // Ensure spawn is within sector bounds
+                    spawnX = Math.max(100, Math.min(4900, spawnX));
+                    spawnY = Math.max(100, Math.min(4900, spawnY));
+                    
+                    console.log(`🌍 Spawning ${player.username} near planet "${planetMeta.name}" at (${spawnX}, ${spawnY})`);
+                } else {
+                    // Fallback to safe zone if no planets found (shouldn't happen with our generator)
+                    spawnX = 1000 + Math.floor(Math.random() * 3000);
+                    spawnY = 1000 + Math.floor(Math.random() * 3000);
+                    console.warn(`⚠️ No planets found for ${player.username}, using fallback spawn at (${spawnX}, ${spawnY})`);
+                }
+                
+                // Create starting starbase at calculated position
+                const starbaseMeta = JSON.stringify({
+                    name: `${player.username} Prime Station`,
+                    hp: 100,
+                    maxHp: 100,
+                    scanRange: 15,
+                    pilots: 5
                 });
                 
                 db.run(
                     'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
-                    [sectorId, 'ship', 2501, 2500, player.user_id, shipMeta],
+                    [sectorId, 'starbase', spawnX, spawnY, player.user_id, starbaseMeta],
                     function(err) {
                         if (err) {
-                            console.error('Error creating ship:', err);
+                            console.error('Error creating starbase:', err);
                             return onError(err);
                         }
                         
-                        console.log(`🚢 Created ship for ${player.username}`);
+                        console.log(`🏭 Created starbase for ${player.username} at (${spawnX}, ${spawnY})`);
                         
-                        // Initialize visibility around starting position
-                        GameWorldManager.initializeVisibility(gameId, player.user_id, sectorId, 2500, 2500, onComplete, onError);
+                        // Create starting ship adjacent to starbase
+                        const shipMeta = JSON.stringify({
+                            name: `${player.username} Explorer`,
+                            hp: 50,
+                            maxHp: 50,
+                            scanRange: 8,
+                            movementSpeed: 4
+                        });
+                        
+                        db.run(
+                            'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
+                            [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta],
+                            function(err) {
+                                if (err) {
+                                    console.error('Error creating ship:', err);
+                                    return onError(err);
+                                }
+                                
+                                console.log(`🚢 Created ship for ${player.username} at (${spawnX + 1}, ${spawnY})`);
+                                
+                                // Initialize visibility around starting position
+                                GameWorldManager.initializeVisibility(gameId, player.user_id, sectorId, spawnX, spawnY, onComplete, onError);
+                            }
+                        );
                     }
                 );
             }
@@ -390,14 +456,15 @@ class GameWorldManager {
                     db.all(
                         `SELECT so.*, pv.visibility_level, pv.last_seen_turn, 
                                 mo.destination_x, mo.destination_y, mo.movement_path, 
-                                mo.eta_turns, mo.status as movement_status
+                                mo.eta_turns, mo.status as movement_status,
+                                mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y
                          FROM sector_objects so
                          LEFT JOIN player_visibility pv ON (
                              pv.game_id = ? AND pv.user_id = ? AND pv.sector_id = so.sector_id 
                              AND pv.x = so.x AND pv.y = so.y
                          )
                          LEFT JOIN movement_orders mo ON (
-                             so.id = mo.object_id AND mo.status IN ('active', 'blocked', 'completed')
+                             so.id = mo.object_id AND mo.status IN ('active', 'blocked', 'completed', 'warp_preparing')
                          )
                          WHERE so.sector_id = ? 
                          AND (
@@ -462,10 +529,27 @@ class GameWorldManager {
                                                             }
                                                         }
                                                         
+                                                        // Parse warp data if available
+                                                        let warpData = null;
+                                                        if (obj.warp_phase) {
+                                                            warpData = {
+                                                                warpPhase: obj.warp_phase,
+                                                                warpPreparationTurns: obj.warp_preparation_turns || 0,
+                                                                warpDestination: obj.warp_destination_x && obj.warp_destination_y ? 
+                                                                    { x: obj.warp_destination_x, y: obj.warp_destination_y } : null
+                                                            };
+                                                            
+                                                            // Debug: Log warp data being sent to client
+                                                            if (isOwned) {
+                                                                console.log(`🌌 Sending WARP data to client: Ship ${obj.id} (${meta.name || obj.type}) Phase: ${obj.warp_phase}, Prep: ${obj.warp_preparation_turns}/2`);
+                                                            }
+                                                        }
+                                                        
                                                         return {
                                                             ...obj,
                                                             meta,
                                                             ...movementData, // Spread movement data directly into object
+                                                            ...warpData, // Spread warp data directly into object
                                                             sectorInfo: {
                                                                 name: sector.name,
                                                                 archetype: sector.archetype,

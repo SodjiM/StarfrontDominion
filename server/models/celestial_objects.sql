@@ -1,15 +1,8 @@
 -- Celestial Objects System - Phase 1 Extensions
 -- Extends the existing gameworld schema to support procedural generation
 
--- Add celestial object support columns to existing sector_objects table
-ALTER TABLE sector_objects ADD COLUMN radius INTEGER DEFAULT 1;
-ALTER TABLE sector_objects ADD COLUMN celestial_type TEXT DEFAULT NULL; -- 'star', 'planet', 'moon', 'belt', 'nebula', 'wormhole', 'derelict'
-ALTER TABLE sector_objects ADD COLUMN parent_object_id INTEGER DEFAULT NULL; -- For moons orbiting planets, stations in orbit, etc.
-
--- Add procedural generation tracking to sectors
-ALTER TABLE sectors ADD COLUMN generation_seed INTEGER DEFAULT NULL;
-ALTER TABLE sectors ADD COLUMN generation_completed BOOLEAN DEFAULT FALSE;
-ALTER TABLE sectors ADD COLUMN celestial_objects_count INTEGER DEFAULT 0; -- Cache for performance
+-- Note: Column additions are handled in JavaScript code for proper migration support
+-- This file only contains table creations and indexes that can be safely re-run
 
 -- Create index for celestial object queries (parent-child relationships)
 CREATE INDEX IF NOT EXISTS idx_sector_objects_parent ON sector_objects(parent_object_id);
