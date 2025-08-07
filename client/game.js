@@ -175,7 +175,12 @@ class GameClient {
     // Load game state from server
     async loadGameState() {
         try {
-            const response = await fetch(`/game/${this.gameId}/state/${this.userId}`);
+            // If a unit is selected, pin state to its sector to avoid snapping to home sector
+            let url = `/game/${this.gameId}/state/${this.userId}`;
+            if (this.selectedUnit && this.selectedUnit.sectorInfo?.id) {
+                url = `/game/${this.gameId}/state/${this.userId}/sector/${this.selectedUnit.sectorInfo.id}`;
+            }
+            const response = await fetch(url);
             const data = await response.json();
             
             if (response.ok) {
@@ -3307,7 +3312,7 @@ class GameClient {
             console.log('Setup success response:', data);
 
             this.addLogEntry('System setup completed successfully!', 'success');
-            // Reload game state to reflect setup completion
+            // Reload game state to reflect setup completion (pins to selected unit sector if any)
             await this.loadGameState();
             return true; // Allow modal to close
 

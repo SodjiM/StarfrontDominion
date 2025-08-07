@@ -140,18 +140,19 @@ class GameWorldManager {
                 }
                 
                 // Create starting starbase at calculated position
-                const starbaseMeta = JSON.stringify({
+                const starbaseMetaObj = {
                     name: `${player.username} Prime Station`,
                     hp: 100,
                     maxHp: 100,
                     scanRange: 30,
                     pilots: 5,
                     cargoCapacity: 50 // Starbases have larger cargo capacity than ships
-                });
+                };
+                const starbaseMeta = JSON.stringify(starbaseMetaObj);
                 
                 db.run(
-                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
-                    [sectorId, 'starbase', spawnX, spawnY, player.user_id, starbaseMeta],
+                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sectorId, 'starbase', spawnX, spawnY, player.user_id, starbaseMeta, starbaseMetaObj.scanRange, 0],
                     function(err) {
                         if (err) {
                             console.error('Error creating starbase:', err);
@@ -176,7 +177,7 @@ class GameWorldManager {
                             });
                         
                         // Create starting ship adjacent to starbase
-                        const shipMeta = JSON.stringify({
+                        const shipMetaObj = {
                             name: `${player.username} Explorer`,
                             hp: 50,
                             maxHp: 50,
@@ -187,11 +188,12 @@ class GameWorldManager {
                             canMine: true,
                             canActiveScan: true,
                             shipType: 'explorer'
-                        });
+                        };
+                        const shipMeta = JSON.stringify(shipMetaObj);
                         
                         db.run(
-                            'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
-                            [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta],
+                            'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                            [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, shipMetaObj.canActiveScan ? 1 : 0],
                             function(err) {
                                 if (err) {
                                     console.error('Error creating ship:', err);
@@ -847,6 +849,31 @@ router.get('/:gameId/state/:userId', async (req, res) => {
     }
 });
 
+// Sector-specific state to keep view pinned to a sector (e.g., selected unit's sector)
+router.get('/:gameId/state/:userId/sector/:sectorId', async (req, res) => {
+    const { gameId, userId, sectorId } = req.params;
+    try {
+        // Verify user is in the game
+        const membership = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM game_players WHERE game_id = ? AND user_id = ?',
+                [gameId, userId],
+                (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
+                }
+            );
+        });
+        if (!membership) return res.status(403).json({ error: 'Not authorized to view this game' });
+
+        const gameState = await GameWorldManager.getPlayerGameState(gameId, parseInt(userId), parseInt(sectorId));
+        res.json(gameState);
+    } catch (error) {
+        console.error('❌ Get sector state error:', error);
+        res.status(500).json({ error: 'Failed to get sector state', details: error.message });
+    }
+});
+
 // Get visible map data for player around a specific position - ASYNCHRONOUS FRIENDLY
 router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
     const { gameId, userId, sectorId, x, y } = req.params;
@@ -1376,7 +1403,7 @@ router.post('/build-ship', (req, res) => {
                 
                 // Create ship adjacent to station
                 const shipName = `${shipTemplate.name} ${Math.floor(Math.random() * 1000)}`;
-                const shipMeta = JSON.stringify({
+                const shipMetaObj = {
                     name: shipName,
                     hp: shipTemplate.hp,
                     maxHp: shipTemplate.maxHp,
@@ -1387,15 +1414,16 @@ router.post('/build-ship', (req, res) => {
                     canMine: shipTemplate.canMine,
                     canActiveScan: shipTemplate.canActiveScan,
                     shipType: shipType
-                });
+                };
+                const shipMeta = JSON.stringify(shipMetaObj);
                 
                 // Find adjacent position
                 const spawnX = station.x + (Math.random() < 0.5 ? -1 : 1);
                 const spawnY = station.y + (Math.random() < 0.5 ? -1 : 1);
                 
                 db.run(
-                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
-                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta],
+                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, shipMetaObj.canActiveScan ? 1 : 0],
                     function(shipErr) {
                         if (shipErr) {
                             console.error('Error creating ship:', shipErr);
