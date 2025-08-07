@@ -677,6 +677,11 @@ class GameClient {
                     <button class="action-btn" onclick="setWarpMode()" ${this.turnLocked ? 'disabled' : ''}>
                         🌌 Warp
                     </button>
+                    ${this.isAdjacentToInterstellarGate(unit) ? `
+                        <button class="action-btn" onclick="showInterstellarTravelOptions()" ${this.turnLocked ? 'disabled' : ''}>
+                            🌀 Interstellar Travel
+                        </button>
+                    ` : ''}
                     <button class="action-btn" id="mineBtn" onclick="toggleMining()" ${this.turnLocked || !meta.canMine ? 'disabled' : ''}>
                         ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (meta.canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}
                     </button>
@@ -709,6 +714,13 @@ class GameClient {
                 ${unit.type === 'warp-beacon' ? `
                     <div class="structure-info">
                         <p>🌌 Warp destination available to all players</p>
+                    </div>
+                ` : ''}
+                
+                ${unit.type === 'interstellar-gate' ? `
+                    <div class="structure-info">
+                        <p>🌀 Gateway to ${unit.meta?.destinationSectorName || 'Unknown Sector'}</p>
+                        <p style="color: #888; font-size: 0.9em;">Available to all players</p>
                     </div>
                 ` : ''}
             </div>
@@ -1893,6 +1905,34 @@ class GameClient {
         }
     }
 
+    // Check if a ship is adjacent to an interstellar gate
+    isAdjacentToInterstellarGate(ship) {
+        if (!ship || !this.objects) return false;
+        
+        const adjacentGates = this.objects.filter(obj => {
+            if (obj.type !== 'interstellar-gate') return false;
+            
+            const dx = Math.abs(obj.x - ship.x);
+            const dy = Math.abs(obj.y - ship.y);
+            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+        });
+        
+        return adjacentGates.length > 0;
+    }
+
+    // Get adjacent interstellar gates
+    getAdjacentInterstellarGates(ship) {
+        if (!ship || !this.objects) return [];
+        
+        return this.objects.filter(obj => {
+            if (obj.type !== 'interstellar-gate') return false;
+            
+            const dx = Math.abs(obj.x - ship.x);
+            const dy = Math.abs(obj.y - ship.y);
+            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+        });
+    }
+
     // Handle mouse wheel for zooming
     handleCanvasWheel(e) {
         e.preventDefault(); // Prevent page scroll
@@ -2746,6 +2786,7 @@ class GameClient {
                 case 'station': return '🛰️';
                 case 'warp-beacon': return '🌌';
                 case 'storage-structure': return '📦';
+                case 'interstellar-gate': return '🌀';
                 default: return '🏗️';
             }
         }
@@ -2773,10 +2814,13 @@ class GameClient {
                     case 'station': return 'Your Station';
                     case 'warp-beacon': return 'Your Warp Beacon';
                     case 'storage-structure': return 'Your Storage';
+                    case 'interstellar-gate': return 'Your Interstellar Gate';
                     default: return 'Your Structure';
                 }
             } else if (target.type === 'warp-beacon' && target.meta?.publicAccess === true) {
                 return 'Public Warp Beacon';
+            } else if (target.type === 'interstellar-gate' && target.meta?.publicAccess === true) {
+                return `Gate to ${target.meta?.destinationSectorName || 'Unknown Sector'}`;
             } else {
                 return 'Allied Structure';
             }
@@ -3378,6 +3422,26 @@ async function showBuildModal() {
                                 </button>
                             </div>
                         </div>
+                        
+                        <div class="build-option ${rockQuantity >= 2 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">🌀 Interstellar Gate</div>
+                                <div class="build-description">Gateway between solar systems</div>
+                                <div class="build-stats">
+                                    • Connects to other sectors<br>
+                                    • Accessible to all players<br>
+                                    • Creates paired gates
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 2 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 2 ? '' : 'disabled'}" 
+                                        onclick="buildStructure('interstellar-gate', 2)" 
+                                        ${rockQuantity >= 2 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3498,6 +3562,12 @@ async function deployStructure(structureType, shipId) {
         return;
     }
 
+    // Special handling for interstellar gates - require sector selection
+    if (structureType === 'interstellar-gate') {
+        showSectorSelectionModal(shipId);
+        return;
+    }
+
     try {
         const response = await fetch('/game/deploy-structure', {
             method: 'POST',
@@ -3525,6 +3595,203 @@ async function deployStructure(structureType, shipId) {
     } catch (error) {
         console.error('Error deploying structure:', error);
         gameClient.addLogEntry('Failed to deploy structure', 'error');
+    }
+}
+
+// Show sector selection modal for interstellar gate deployment
+async function showSectorSelectionModal(shipId) {
+    try {
+        // Fetch all available sectors
+        const response = await fetch(`/game/sectors?gameId=${gameClient.gameId}&userId=${gameClient.userId}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            gameClient.addLogEntry(data.error || 'Failed to get sector list', 'error');
+            return;
+        }
+
+        const sectors = data.sectors;
+        const currentSectorId = gameClient.gameState.sector.id;
+        
+        // Filter out current sector
+        const availableSectors = sectors.filter(sector => sector.id !== currentSectorId);
+        
+        if (availableSectors.length === 0) {
+            gameClient.addLogEntry('No other sectors available for gate connection', 'warning');
+            return;
+        }
+
+        // Create sector selection modal
+        const sectorModal = document.createElement('div');
+        sectorModal.className = 'sector-selection-modal';
+        sectorModal.innerHTML = `
+            <div class="sector-selection-header">
+                <h3>🌀 Select Destination Sector</h3>
+                <p>Choose which solar system to connect to:</p>
+            </div>
+            
+            <div class="sector-list">
+                ${availableSectors.map(sector => `
+                    <div class="sector-option" onclick="deployInterstellarGate(${shipId}, ${sector.id}, '${sector.name}')">
+                        <div class="sector-info">
+                            <div class="sector-name">🌌 ${sector.name}</div>
+                            <div class="sector-details">
+                                Owner: ${sector.owner_name || 'Unknown'}<br>
+                                Type: ${sector.archetype || 'Standard'}
+                            </div>
+                        </div>
+                        <div class="sector-action">
+                            <button class="select-sector-btn">Connect</button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        UI.showModal({
+            title: '🌀 Interstellar Gate Deployment',
+            content: sectorModal,
+            actions: [
+                {
+                    text: 'Cancel',
+                    style: 'secondary',
+                    action: () => true
+                }
+            ],
+            className: 'sector-selection-modal-container'
+        });
+
+    } catch (error) {
+        console.error('Error showing sector selection:', error);
+        gameClient.addLogEntry('Failed to show sector selection', 'error');
+    }
+}
+
+// Deploy interstellar gate with selected destination sector
+async function deployInterstellarGate(shipId, destinationSectorId, destinationSectorName) {
+    try {
+        const response = await fetch('/game/deploy-interstellar-gate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                shipId: shipId,
+                destinationSectorId: destinationSectorId,
+                userId: gameClient.userId
+            })
+        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            gameClient.addLogEntry(`Interstellar Gate deployed! Connected to ${destinationSectorName}`, 'success');
+            UI.closeModal();
+            // Refresh game state to show new structure
+            gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
+        } else {
+            gameClient.addLogEntry(data.error || 'Failed to deploy interstellar gate', 'error');
+        }
+
+    } catch (error) {
+        console.error('Error deploying interstellar gate:', error);
+        gameClient.addLogEntry('Failed to deploy interstellar gate', 'error');
+    }
+}
+
+// Show interstellar travel options
+function showInterstellarTravelOptions() {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No ship selected', 'warning');
+        return;
+    }
+
+    const ship = gameClient.selectedUnit;
+    const adjacentGates = gameClient.getAdjacentInterstellarGates(ship);
+    
+    if (adjacentGates.length === 0) {
+        gameClient.addLogEntry('No interstellar gates adjacent to ship', 'warning');
+        return;
+    }
+
+    // Create travel options modal
+    const travelModal = document.createElement('div');
+    travelModal.className = 'interstellar-travel-modal';
+    travelModal.innerHTML = `
+        <div class="travel-header">
+            <h3>🌀 Interstellar Travel</h3>
+            <p>Select a gate to travel through:</p>
+        </div>
+        
+        <div class="gate-list">
+            ${adjacentGates.map(gate => {
+                const gateMeta = gate.meta || {};
+                return `
+                    <div class="gate-option" onclick="travelThroughGate(${gate.id}, '${gateMeta.destinationSectorName || 'Unknown Sector'}')">
+                        <div class="gate-info">
+                            <div class="gate-name">🌀 ${gateMeta.name || 'Interstellar Gate'}</div>
+                            <div class="gate-destination">
+                                Destination: ${gateMeta.destinationSectorName || 'Unknown Sector'}
+                            </div>
+                        </div>
+                        <div class="gate-action">
+                            <button class="travel-btn">Travel</button>
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+
+    UI.showModal({
+        title: '🌀 Interstellar Travel',
+        content: travelModal,
+        actions: [
+            {
+                text: 'Cancel',
+                style: 'secondary',
+                action: () => true
+            }
+        ],
+        className: 'interstellar-travel-modal-container'
+    });
+}
+
+// Travel through an interstellar gate
+async function travelThroughGate(gateId, destinationName) {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No ship selected', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/game/interstellar-travel', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                shipId: gameClient.selectedUnit.id,
+                gateId: gateId,
+                userId: gameClient.userId
+            })
+        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            gameClient.addLogEntry(`${gameClient.selectedUnit.meta.name} traveled to ${destinationName}!`, 'success');
+            UI.closeModal();
+            
+            // The ship has moved to a different sector, so we need to refresh the entire game state
+            gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
+        } else {
+            gameClient.addLogEntry(data.error || 'Failed to travel through gate', 'error');
+        }
+
+    } catch (error) {
+        console.error('Error traveling through gate:', error);
+        gameClient.addLogEntry('Failed to travel through gate', 'error');
     }
 }
 

@@ -1250,6 +1250,14 @@ const STRUCTURE_TYPES = {
         description: 'Deployable warp destination',
         deployable: true,
         publicAccess: true
+    },
+    'interstellar-gate': {
+        name: 'Interstellar Gate',
+        emoji: '🌀',
+        description: 'Gateway between solar systems',
+        deployable: true,
+        publicAccess: true,
+        requiresSectorSelection: true
     }
 };
 
@@ -1519,6 +1527,230 @@ router.post('/deploy-structure', (req, res) => {
                 console.error('Error removing structure from cargo:', error);
                 res.status(500).json({ error: 'Failed to remove structure from cargo' });
             });
+    });
+});
+
+// Get all sectors in a game
+router.get('/sectors', (req, res) => {
+    const { gameId, userId } = req.query;
+    
+    if (!gameId || !userId) {
+        return res.status(400).json({ error: 'Game ID and User ID required' });
+    }
+    
+    db.all(`
+        SELECT s.*, u.username as owner_name 
+        FROM sectors s 
+        LEFT JOIN users u ON s.owner_id = u.id 
+        WHERE s.game_id = ?
+        ORDER BY s.name
+    `, [gameId], (err, sectors) => {
+        if (err) {
+            console.error('Error fetching sectors:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        res.json({ sectors: sectors });
+    });
+});
+
+// Deploy interstellar gate with destination sector
+router.post('/deploy-interstellar-gate', (req, res) => {
+    const { shipId, destinationSectorId, userId } = req.body;
+    
+    // Verify ship ownership
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
+        [shipId, userId, 'ship'], (err, ship) => {
+        if (err) {
+            console.error('Error finding ship:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!ship) {
+            return res.status(404).json({ error: 'Ship not found or not owned by player' });
+        }
+        
+        // Verify destination sector exists
+        db.get('SELECT * FROM sectors WHERE id = ?', [destinationSectorId], (sectorErr, destinationSector) => {
+            if (sectorErr) {
+                console.error('Error finding destination sector:', sectorErr);
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!destinationSector) {
+                return res.status(404).json({ error: 'Destination sector not found' });
+            }
+            
+            // Check if ship has the interstellar gate in cargo and remove it
+            CargoManager.removeResourceFromCargo(shipId, 'interstellar-gate', 1, true) // Use legacy table for ships
+                .then(result => {
+                    if (!result.success) {
+                        return res.status(400).json({ error: result.error || 'Interstellar gate not found in ship cargo' });
+                    }
+                    
+                    // Generate unique gate pair ID
+                    const gatePairId = `gate_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                    
+                    // Create gate in current sector (origin)
+                    const originGateX = ship.x + (Math.random() < 0.5 ? -1 : 1);
+                    const originGateY = ship.y + (Math.random() < 0.5 ? -1 : 1);
+                    
+                    const originGateMeta = JSON.stringify({
+                        name: `Interstellar Gate to ${destinationSector.name}`,
+                        structureType: 'interstellar-gate',
+                        hp: 200,
+                        maxHp: 200,
+                        publicAccess: true,
+                        gatePairId: gatePairId,
+                        destinationSectorId: destinationSectorId,
+                        destinationSectorName: destinationSector.name,
+                        isOriginGate: true
+                    });
+                    
+                    db.run(
+                        'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
+                        [ship.sector_id, 'interstellar-gate', originGateX, originGateY, userId, originGateMeta],
+                        function(originErr) {
+                            if (originErr) {
+                                console.error('Error creating origin gate:', originErr);
+                                return res.status(500).json({ error: 'Failed to create origin gate' });
+                            }
+                            
+                            const originGateId = this.lastID;
+                            
+                            // Create gate in destination sector
+                            // Find a safe spawn location in destination sector (near center)
+                            const destGateX = 2500 + Math.floor(Math.random() * 100) - 50; // Near center with some randomness
+                            const destGateY = 2500 + Math.floor(Math.random() * 100) - 50;
+                            
+                            const destGateMeta = JSON.stringify({
+                                name: `Interstellar Gate to ${ship.sector_id === destinationSector.id ? 'Origin' : 'Sector ' + ship.sector_id}`,
+                                structureType: 'interstellar-gate',
+                                hp: 200,
+                                maxHp: 200,
+                                publicAccess: true,
+                                gatePairId: gatePairId,
+                                destinationSectorId: ship.sector_id,
+                                destinationSectorName: 'Origin Sector', // Will be updated with proper name
+                                isOriginGate: false
+                            });
+                            
+                            db.run(
+                                'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
+                                [destinationSectorId, 'interstellar-gate', destGateX, destGateY, userId, destGateMeta],
+                                function(destErr) {
+                                    if (destErr) {
+                                        console.error('Error creating destination gate:', destErr);
+                                        return res.status(500).json({ error: 'Failed to create destination gate' });
+                                    }
+                                    
+                                    const destGateId = this.lastID;
+                                    console.log(`🌀 Created interstellar gate pair (${gatePairId}): Origin ${originGateId} in sector ${ship.sector_id}, Destination ${destGateId} in sector ${destinationSectorId}`);
+                                    
+                                    res.json({ 
+                                        success: true, 
+                                        structureName: 'Interstellar Gate',
+                                        originGateId: originGateId,
+                                        destGateId: destGateId,
+                                        gatePairId: gatePairId
+                                    });
+                                }
+                            );
+                        }
+                    );
+                })
+                .catch(error => {
+                    console.error('Error removing gate from cargo:', error);
+                    res.status(500).json({ error: 'Failed to remove gate from cargo' });
+                });
+        });
+    });
+});
+
+// Interstellar travel through gates
+router.post('/interstellar-travel', (req, res) => {
+    const { shipId, gateId, userId } = req.body;
+    
+    // Verify ship ownership
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
+        [shipId, userId, 'ship'], (err, ship) => {
+        if (err) {
+            console.error('Error finding ship:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!ship) {
+            return res.status(404).json({ error: 'Ship not found or not owned by player' });
+        }
+        
+        // Verify gate exists and get its destination
+        db.get('SELECT * FROM sector_objects WHERE id = ? AND type = ?', 
+            [gateId, 'interstellar-gate'], (gateErr, gate) => {
+            if (gateErr) {
+                console.error('Error finding gate:', gateErr);
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!gate) {
+                return res.status(404).json({ error: 'Interstellar gate not found' });
+            }
+            
+            const gateMeta = JSON.parse(gate.meta || '{}');
+            const destinationSectorId = gateMeta.destinationSectorId;
+            
+            if (!destinationSectorId) {
+                return res.status(400).json({ error: 'Gate has no valid destination' });
+            }
+            
+            // Check if ship is adjacent to gate
+            const dx = Math.abs(ship.x - gate.x);
+            const dy = Math.abs(ship.y - gate.y);
+            if (dx > 1 || dy > 1) {
+                return res.status(400).json({ error: 'Ship must be adjacent to the gate to travel' });
+            }
+            
+            // Find the paired gate in the destination sector
+            db.get(`
+                SELECT * FROM sector_objects 
+                WHERE sector_id = ? AND type = 'interstellar-gate' 
+                AND JSON_EXTRACT(meta, '$.gatePairId') = ?
+            `, [destinationSectorId, gateMeta.gatePairId], (pairErr, pairedGate) => {
+                if (pairErr) {
+                    console.error('Error finding paired gate:', pairErr);
+                    return res.status(500).json({ error: 'Database error' });
+                }
+                
+                if (!pairedGate) {
+                    return res.status(404).json({ error: 'Destination gate not found' });
+                }
+                
+                // Move ship to destination sector, adjacent to the paired gate
+                const newX = pairedGate.x + (Math.random() < 0.5 ? -1 : 1);
+                const newY = pairedGate.y + (Math.random() < 0.5 ? -1 : 1);
+                
+                db.run(
+                    'UPDATE sector_objects SET sector_id = ?, x = ?, y = ? WHERE id = ?',
+                    [destinationSectorId, newX, newY, shipId],
+                    function(updateErr) {
+                        if (updateErr) {
+                            console.error('Error moving ship through gate:', updateErr);
+                            return res.status(500).json({ error: 'Failed to move ship through gate' });
+                        }
+                        
+                        const shipMeta = JSON.parse(ship.meta || '{}');
+                        console.log(`🌀 Ship ${shipId} (${shipMeta.name}) traveled through gate ${gateId} from sector ${ship.sector_id} to sector ${destinationSectorId}`);
+                        
+                        res.json({ 
+                            success: true, 
+                            message: 'Ship successfully traveled through interstellar gate',
+                            newSectorId: destinationSectorId,
+                            newX: newX,
+                            newY: newY
+                        });
+                    }
+                );
+            });
+        });
     });
 });
 
