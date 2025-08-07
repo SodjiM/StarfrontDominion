@@ -179,62 +179,127 @@ router.delete('/game/:gameId', (req, res) => {
                         (err) => {
                             if (err) console.error('Error deleting visibility memory:', err);
                             
-                            // 3. Delete sector objects
+                            // 3. Delete harvesting tasks
                             db.run(
-                                `DELETE FROM sector_objects WHERE sector_id IN (
-                                    SELECT id FROM sectors WHERE game_id = ?
+                                `DELETE FROM harvesting_tasks WHERE ship_id IN (
+                                    SELECT so.id FROM sector_objects so 
+                                    JOIN sectors s ON so.sector_id = s.id 
+                                    WHERE s.game_id = ?
                                 )`,
                                 [gameId],
                                 (err) => {
-                                    if (err) console.error('Error deleting sector objects:', err);
+                                    if (err) console.error('Error deleting harvesting tasks:', err);
                                     
-                                    // 4. Delete sectors
+                                    // 4. Delete movement history
                                     db.run(
-                                        'DELETE FROM sectors WHERE game_id = ?',
+                                        `DELETE FROM movement_history WHERE object_id IN (
+                                            SELECT so.id FROM sector_objects so 
+                                            JOIN sectors s ON so.sector_id = s.id 
+                                            WHERE s.game_id = ?
+                                        )`,
                                         [gameId],
                                         (err) => {
-                                            if (err) console.error('Error deleting sectors:', err);
+                                            if (err) console.error('Error deleting movement history:', err);
                                             
-                                            // 5. Delete turn locks
+                                            // 5. Delete cargo (object and ship)
                                             db.run(
-                                                'DELETE FROM turn_locks WHERE game_id = ?',
+                                                `DELETE FROM object_cargo WHERE object_id IN (
+                                                    SELECT so.id FROM sector_objects so 
+                                                    JOIN sectors s ON so.sector_id = s.id 
+                                                    WHERE s.game_id = ?
+                                                )`,
                                                 [gameId],
                                                 (err) => {
-                                                    if (err) console.error('Error deleting turn locks:', err);
-                                                    
-                                                    // 6. Delete turns
+                                                    if (err) console.error('Error deleting object cargo:', err);
                                                     db.run(
-                                                        'DELETE FROM turns WHERE game_id = ?',
+                                                        `DELETE FROM ship_cargo WHERE ship_id IN (
+                                                            SELECT so.id FROM sector_objects so 
+                                                            JOIN sectors s ON so.sector_id = s.id 
+                                                            WHERE s.game_id = ?
+                                                        )`,
                                                         [gameId],
                                                         (err) => {
-                                                            if (err) console.error('Error deleting turns:', err);
+                                                            if (err) console.error('Error deleting ship cargo:', err);
                                                             
-                                                            // 7. Delete game players
+                                                            // 6. Delete resource nodes
                                                             db.run(
-                                                                'DELETE FROM game_players WHERE game_id = ?',
-                                                                [gameId],
+                                                                `DELETE FROM resource_nodes WHERE sector_id IN (
+                                                                    SELECT id FROM sectors WHERE game_id = ?
+                                                                ) OR parent_object_id IN (
+                                                                    SELECT so.id FROM sector_objects so 
+                                                                    JOIN sectors s ON so.sector_id = s.id 
+                                                                    WHERE s.game_id = ?
+                                                                )`,
+                                                                [gameId, gameId],
                                                                 (err) => {
-                                                                    if (err) console.error('Error deleting game players:', err);
+                                                                    if (err) console.error('Error deleting resource nodes:', err);
                                                                     
-                                                                    // 8. Finally delete the game itself
+                                                                    // 7. Delete sector objects
                                                                     db.run(
-                                                                        'DELETE FROM games WHERE id = ?',
+                                                                        `DELETE FROM sector_objects WHERE sector_id IN (
+                                                                            SELECT id FROM sectors WHERE game_id = ?
+                                                                        )`,
                                                                         [gameId],
-                                                                        function(err) {
-                                                                            if (err) {
-                                                                                console.error('Error deleting game:', err);
-                                                                                return res.status(500).json({ error: 'Failed to delete game' });
-                                                                            }
+                                                                        (err) => {
+                                                                            if (err) console.error('Error deleting sector objects:', err);
                                                                             
-                                                                            if (this.changes === 0) {
-                                                                                return res.status(404).json({ error: 'Game not found' });
-                                                                            }
-                                                                            
-                                                                            console.log(`✅ Game ${gameId} (${game.name}) deleted successfully by user ${userId}`);
-                                                                            res.json({ 
-                                                                                success: true, 
-                                                                                message: `Game "${game.name}" deleted successfully` 
-                                                                            });
+                                                                            // 8. Delete turn locks (before sectors if FKs reference game)
+                                                                            db.run(
+                                                                                'DELETE FROM turn_locks WHERE game_id = ?',
+                                                                                [gameId],
+                                                                                (err) => {
+                                                                                    if (err) console.error('Error deleting turn locks:', err);
+                                                                                    
+                                                                                    // 9. Delete turns
+                                                                                    db.run(
+                                                                                        'DELETE FROM turns WHERE game_id = ?',
+                                                                                        [gameId],
+                                                                                        (err) => {
+                                                                                            if (err) console.error('Error deleting turns:', err);
+                                                                                            
+                                                                                            // 10. Delete sectors
+                                                                                            db.run(
+                                                                                                'DELETE FROM sectors WHERE game_id = ?',
+                                                                                                [gameId],
+                                                                                                (err) => {
+                                                                                                    if (err) console.error('Error deleting sectors:', err);
+                                                                                                    
+                                                                                                    // 11. Delete game players
+                                                                                                    db.run(
+                                                                                                        'DELETE FROM game_players WHERE game_id = ?',
+                                                                                                        [gameId],
+                                                                                                        (err) => {
+                                                                                                            if (err) console.error('Error deleting game players:', err);
+                                                                                                            
+                                                                                                            // 12. Finally delete the game itself
+                                                                                                            db.run(
+                                                                                                                'DELETE FROM games WHERE id = ?',
+                                                                                                                [gameId],
+                                                                                                                function(err) {
+                                                                                                                    if (err) {
+                                                                                                                        console.error('Error deleting game:', err);
+                                                                                                                        return res.status(500).json({ error: 'Failed to delete game' });
+                                                                                                                    }
+                                                                                                                    
+                                                                                                                    if (this.changes === 0) {
+                                                                                                                        return res.status(404).json({ error: 'Game not found' });
+                                                                                                                    }
+                                                                                                                    
+                                                                                                                    console.log(`✅ Game ${gameId} (${game.name}) deleted successfully by user ${userId}`);
+                                                                                                                    res.json({ 
+                                                                                                                        success: true, 
+                                                                                                                        message: `Game "${game.name}" deleted successfully` 
+                                                                                                                    });
+                                                                                                                }
+                                                                                                            );
+                                                                                                        }
+                                                                                                    );
+                                                                                                }
+                                                                                            );
+                                                                                        }
+                                                                                    );
+                                                                                }
+                                                                            );
                                                                         }
                                                                     );
                                                                 }
