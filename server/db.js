@@ -7,6 +7,12 @@ const db = new sqlite3.Database('./database.sqlite');
 // Initialize tables sequentially to avoid issues
 const initializeDatabase = async () => {
     try {
+        // Apply core PRAGMAs for performance and durability
+        db.serialize(() => {
+            db.run('PRAGMA foreign_keys = ON');
+            db.run('PRAGMA journal_mode = WAL');
+            db.run('PRAGMA synchronous = NORMAL');
+        });
         const usersSchema = fs.readFileSync(path.join(__dirname, 'models/users.sql'), 'utf8');
         const gamesSchema = fs.readFileSync(path.join(__dirname, 'models/games.sql'), 'utf8');
         const gameworldSchema = fs.readFileSync(path.join(__dirname, 'models/gameworld.sql'), 'utf8');
@@ -98,7 +104,7 @@ const initializeDatabase = async () => {
                                         } else {
                                             console.log('✅ Celestial objects schema applied');
                                             
-                                            // Apply resource system schema
+                                            // Apply resource system schema (protect against FK issues on upsert)
                                             db.exec(resourceSchema, (err) => {
                                                 if (err) {
                                                     console.error('Error applying resource system schema:', err);
@@ -161,6 +167,27 @@ const initializeDatabase = async () => {
                     );
                 }
             );
+        });
+
+        // Additional helpful indexes and column migrations
+        await new Promise((resolve) => {
+            // Composite index for turn locks
+            db.run('CREATE INDEX IF NOT EXISTS idx_turn_locks_composite ON turn_locks(game_id, turn_number, user_id)', () => {});
+            // Resource nodes fast lookup per sector
+            db.run('CREATE INDEX IF NOT EXISTS idx_resource_nodes_sector ON resource_nodes(sector_id)', () => {});
+            // Movement history lookup
+            db.run('CREATE INDEX IF NOT EXISTS idx_movement_history_game_turn ON movement_history(game_id, turn_number)', () => {});
+            db.run('CREATE INDEX IF NOT EXISTS idx_movement_history_object ON movement_history(object_id)', () => {});
+            // Hot fields on sector_objects to reduce JSON parsing (best-effort, ignore if exist)
+            const addHotColumn = (def) => db.run(`ALTER TABLE sector_objects ADD COLUMN ${def}`, (err) => {
+                if (err && !String(err.message).includes('duplicate column')) {
+                    console.warn('Hot column migration warning:', err.message);
+                }
+            });
+            addHotColumn('scan_range INTEGER');
+            addHotColumn('movement_speed INTEGER');
+            addHotColumn('can_active_scan INTEGER');
+            resolve();
         });
 
         // Insert sample games

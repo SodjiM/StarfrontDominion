@@ -277,89 +277,78 @@ class GameWorldManager {
     // Calculate combined vision from all player units
     static async calculatePlayerVision(gameId, userId, turnNumber) {
         return new Promise((resolve, reject) => {
-            // Get player's sector
-            db.get(
-                'SELECT id FROM sectors WHERE game_id = ? AND owner_id = ?',
-                [gameId, userId],
-                (err, sector) => {
-                    if (err || !sector) return reject(new Error('Sector not found'));
-                    
-                    // Get all player's units with scan capabilities
-                    db.all(
-                        'SELECT * FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND type IN ("ship", "starbase")',
-                        [sector.id, userId],
-                        (err, units) => {
-                            if (err) return reject(err);
-                            
-                            if (units.length === 0) {
-                                return resolve([]);
-                            }
-                            
-                            // STAGE 1 OPTIMIZATION: Object-based visibility calculation
-                            // Instead of checking every tile, find objects within vision range of our units
-                            const visibleObjects = new Map(); // objectId -> {object, visibilityLevel}
-                            let unitsProcessed = 0;
-                            
-                            const processUnit = (unit) => {
-                                const meta = JSON.parse(unit.meta || '{}');
-                                const scanRange = meta.scanRange || 5;
-                                const detailedRange = meta.detailedScanRange || 2;
-                                
-                                // Query for objects within this unit's vision range
-                                db.all(
-                                    `SELECT * FROM sector_objects 
-                                     WHERE sector_id = ? 
-                                     AND x BETWEEN ? AND ?
-                                     AND y BETWEEN ? AND ?`,
-                                    [
-                                        sector.id,
-                                        unit.x - scanRange, unit.x + scanRange,
-                                        unit.y - scanRange, unit.y + scanRange
-                                    ],
-                                    (err, objectsInRange) => {
-                                        if (err) return reject(err);
-                                        
-                                        // Filter by actual distance and determine visibility level
-                                        objectsInRange.forEach(obj => {
-                                            const distance = Math.sqrt(
-                                                Math.pow(obj.x - unit.x, 2) + Math.pow(obj.y - unit.y, 2)
-                                            );
-                                            
-                                            if (distance <= scanRange) {
-                                                const visibilityLevel = distance <= detailedRange ? 2 : 1;
-                                                const existing = visibleObjects.get(obj.id);
-                                                
-                                                // Keep highest visibility level if object seen by multiple units
-                                                if (!existing || existing.visibilityLevel < visibilityLevel) {
-                                                    visibleObjects.set(obj.id, {
-                                                        object: obj,
-                                                        visibilityLevel: visibilityLevel
-                                                    });
-                                                }
+            db.all(
+                'SELECT id, sector_id, x, y, meta FROM sector_objects WHERE owner_id = ? AND type IN ("ship", "starbase")',
+                [userId],
+                (err, units) => {
+                    if (err) return reject(err);
+                    if (!units || units.length === 0) return resolve([]);
+
+                    // Group by sector to batch queries
+                    const sectorIdToUnits = new Map();
+                    for (const u of units) {
+                        if (!sectorIdToUnits.has(u.sector_id)) sectorIdToUnits.set(u.sector_id, []);
+                        sectorIdToUnits.get(u.sector_id).push(u);
+                    }
+
+                    const visibleObjects = new Map(); // objectId -> {object, visibilityLevel}
+                    let sectorsProcessed = 0;
+
+                    for (const [sectorId, sectorUnits] of sectorIdToUnits.entries()) {
+                        // Compute bounding box for this sector's units
+                        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                        const sensors = sectorUnits.map(u => {
+                            const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
+                            const scanRange = meta.scanRange || 5;
+                            const detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
+                            minX = Math.min(minX, u.x - scanRange);
+                            maxX = Math.max(maxX, u.x + scanRange);
+                            minY = Math.min(minY, u.y - scanRange);
+                            maxY = Math.max(maxY, u.y + scanRange);
+                            return { x: u.x, y: u.y, scanRange, detailedRange };
+                        });
+
+                        db.all(
+                            'SELECT * FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?',
+                            [sectorId, minX, maxX, minY, maxY],
+                            (e2, objectsInBox) => {
+                                if (e2) return reject(e2);
+                                for (const obj of objectsInBox) {
+                                    for (const s of sensors) {
+                                        const dx = obj.x - s.x;
+                                        const dy = obj.y - s.y;
+                                        const dist = Math.sqrt(dx * dx + dy * dy);
+                                        if (dist <= s.scanRange) {
+                                            const lvl = dist <= s.detailedRange ? 2 : 1;
+                                            const existing = visibleObjects.get(obj.id);
+                                            if (!existing || existing.visibilityLevel < lvl) {
+                                                visibleObjects.set(obj.id, { object: obj, visibilityLevel: lvl });
                                             }
-                                        });
-                                        
-                                        unitsProcessed++;
-                                            if (unitsProcessed === units.length) {
-                                                // All units processed, now update visibility memory per object
-                                                this.updateObjectVisibilityMemory(
-                                                    gameId,
-                                                    userId,
-                                                    sector.id,
-                                                    Array.from(visibleObjects.values()),
-                                                    turnNumber,
-                                                    () => resolve(Array.from(visibleObjects.values()).map(v => v.object)),
-                                                    reject
-                                                );
-                                            }
+                                        }
                                     }
-                                );
-                            };
-                            
-                            // Process all units
-                            units.forEach(processUnit);
-                        }
-                    );
+                                }
+                                sectorsProcessed++;
+                                if (sectorsProcessed === sectorIdToUnits.size) {
+                                    // Persist memory per sector
+                                    const bySector = new Map();
+                                    for (const v of visibleObjects.values()) {
+                                        const sid = v.object.sector_id;
+                                        if (!bySector.has(sid)) bySector.set(sid, []);
+                                        bySector.get(sid).push(v);
+                                    }
+                                    let done = 0; const total = bySector.size;
+                                    if (total === 0) return resolve([]);
+                                    for (const [sid, list] of bySector.entries()) {
+                                        GameWorldManager.updateObjectVisibilityMemory(
+                                            gameId, userId, sid, list, turnNumber,
+                                            () => { if (++done === total) resolve(list.map(v => v.object)); },
+                                            reject
+                                        );
+                                    }
+                                }
+                            }
+                        );
+                    }
                 }
             );
         });
@@ -438,45 +427,48 @@ class GameWorldManager {
         return new Promise((resolve, reject) => {
             // Get all player's vision sources (ships, starbases, sensor-tower if present)
             db.all(
-                'SELECT * FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND type IN ("ship", "starbase", "sensor-tower")',
+                'SELECT id, x, y, meta FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND type IN ("ship", "starbase", "sensor-tower")',
                 [sectorId, userId],
                 (err, units) => {
                     if (err) return reject(err);
                     if (!units || units.length === 0) return resolve(new Map());
-                    const visible = new Map(); // objectId -> { level }
-                    let processed = 0;
-                    units.forEach(unit => {
-                        const meta = JSON.parse(unit.meta || '{}');
+
+                    // Compute a single bounding box covering all units' scan ranges
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    const sensors = units.map(u => {
+                        const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
                         const scanRange = meta.scanRange || 5;
                         const detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
-                        db.all(
-                            `SELECT * FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?`,
-                            [
-                                sectorId,
-                                unit.x - scanRange, unit.x + scanRange,
-                                unit.y - scanRange, unit.y + scanRange
-                            ],
-                            (e2, objectsInRange) => {
-                                if (e2) return reject(e2);
-                                objectsInRange.forEach(obj => {
-                                    const dx = obj.x - unit.x;
-                                    const dy = obj.y - unit.y;
+                        minX = Math.min(minX, u.x - scanRange);
+                        maxX = Math.max(maxX, u.x + scanRange);
+                        minY = Math.min(minY, u.y - scanRange);
+                        maxY = Math.max(maxY, u.y + scanRange);
+                        return { x: u.x, y: u.y, scanRange, detailedRange };
+                    });
+
+                    db.all(
+                        `SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?`,
+                        [sectorId, minX, maxX, minY, maxY],
+                        (e2, objectsInBox) => {
+                            if (e2) return reject(e2);
+                            const visible = new Map();
+                            for (const obj of objectsInBox) {
+                                for (const s of sensors) {
+                                    const dx = obj.x - s.x;
+                                    const dy = obj.y - s.y;
                                     const dist = Math.sqrt(dx * dx + dy * dy);
-                                    if (dist <= scanRange) {
-                                        const level = dist <= detailedRange ? 2 : 1;
+                                    if (dist <= s.scanRange) {
+                                        const level = dist <= s.detailedRange ? 2 : 1;
                                         const existing = visible.get(obj.id);
                                         if (!existing || existing.level < level) {
                                             visible.set(obj.id, { level });
                                         }
                                     }
-                                });
-                                processed++;
-                                if (processed === units.length) {
-                                    resolve(visible);
                                 }
                             }
-                        );
-                    });
+                            resolve(visible);
+                        }
+                    );
                 }
             );
         });
@@ -856,65 +848,39 @@ router.get('/:gameId/state/:userId', async (req, res) => {
 });
 
 // Get visible map data for player around a specific position - ASYNCHRONOUS FRIENDLY
-router.get('/:gameId/map/:userId/:x/:y', (req, res) => {
-    const { gameId, userId, x, y } = req.params;
+router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
+    const { gameId, userId, sectorId, x, y } = req.params;
     const centerX = parseInt(x);
     const centerY = parseInt(y);
     const viewRange = parseInt(req.query.range) || 15;
+    const sector = parseInt(sectorId);
     
-    // Get player's sector
-    db.get(
-        'SELECT id FROM sectors WHERE game_id = ? AND owner_id = ?',
-        [gameId, userId],
-        (err, sector) => {
-            if (err || !sector) {
-                return res.status(404).json({ error: 'Sector not found' });
-            }
-            
-            // Get visible objects within range
+    // Compute stateless visibility for this user in the requested sector and window
+    GameWorldManager.computeCurrentVisibility(gameId, parseInt(userId), sector)
+        .then(visibleMap => {
             db.all(
-                `SELECT so.*, pv.visibility_level 
-                 FROM sector_objects so
-                 LEFT JOIN player_visibility pv ON (
-                     pv.game_id = ? AND pv.user_id = ? AND pv.sector_id = so.sector_id 
-                     AND pv.x = so.x AND pv.y = so.y
-                 )
-                 WHERE so.sector_id = ? 
-                 AND so.x BETWEEN ? AND ? 
-                 AND so.y BETWEEN ? AND ?
-                 AND (pv.visibility_level > 0 OR so.owner_id = ?)`,
+                `SELECT id, type, x, y, owner_id, meta FROM sector_objects
+                 WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?`,
                 [
-                    gameId, userId, sector.id,
+                    sector,
                     centerX - viewRange, centerX + viewRange,
-                    centerY - viewRange, centerY + viewRange,
-                    userId
+                    centerY - viewRange, centerY + viewRange
                 ],
                 (err, objects) => {
-                    if (err) {
-                        return res.status(500).json({ error: 'Failed to get map data' });
-                    }
-                    
-                    // Parse meta JSON and format response
-                    const mapData = objects.map(obj => ({
-                        id: obj.id,
-                        type: obj.type,
-                        x: obj.x,
-                        y: obj.y,
-                        owner_id: obj.owner_id,
-                        meta: JSON.parse(obj.meta || '{}'),
-                        visible: obj.visibility_level > 0 || obj.owner_id == userId
-                    }));
-                    
-                    res.json({
-                        centerX,
-                        centerY,
-                        viewRange,
-                        objects: mapData
+                    if (err) return res.status(500).json({ error: 'Failed to get map data' });
+                    const mapData = objects.map(o => {
+                        let meta;
+                        if (typeof o.meta === 'string') { try { meta = JSON.parse(o.meta || '{}'); } catch { meta = {}; } }
+                        else meta = o.meta || {};
+                        const v = visibleMap.get(o.id);
+                        const visible = (v && v.level > 0) || o.owner_id == userId || meta.alwaysKnown === true;
+                        return { id: o.id, type: o.type, x: o.x, y: o.y, owner_id: o.owner_id, meta, visible };
                     });
+                    res.json({ centerX, centerY, viewRange, objects: mapData });
                 }
             );
-        }
-    );
+        })
+        .catch(() => res.status(500).json({ error: 'Failed to compute visibility' }));
 });
 
 // Player setup route

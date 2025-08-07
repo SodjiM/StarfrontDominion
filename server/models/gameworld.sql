@@ -51,21 +51,7 @@ CREATE TABLE IF NOT EXISTS turn_locks (
     UNIQUE(game_id, user_id, turn_number)
 );
 
--- Player visibility/fog of war data
-CREATE TABLE IF NOT EXISTS player_visibility (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    game_id INTEGER,
-    user_id INTEGER,
-    sector_id INTEGER,
-    x INTEGER,
-    y INTEGER,
-    last_seen_turn INTEGER,
-    visibility_level INTEGER DEFAULT 1, -- 1=seen, 2=scanned, 3=detailed
-    FOREIGN KEY (game_id) REFERENCES games(id),
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (sector_id) REFERENCES sectors(id),
-    UNIQUE(game_id, user_id, sector_id, x, y)
-);
+-- Deprecated: player_visibility table has been replaced by object_visibility
 
 -- Ship movement orders
 CREATE TABLE IF NOT EXISTS movement_orders (

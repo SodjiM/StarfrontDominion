@@ -469,6 +469,8 @@ async function resolveTurn(gameId, turnNumber) {
     });
     
     try {
+        // Begin a transaction for atomic resolution
+        await new Promise((resolve, reject) => db.run('BEGIN IMMEDIATE TRANSACTION', (e) => e ? reject(e) : resolve()));
     // 1. Process movement orders
         await processMovementOrders(gameId, turnNumber);
         
@@ -505,6 +507,9 @@ async function resolveTurn(gameId, turnNumber) {
                 }
             );
         });
+
+        // Commit the transaction
+        await new Promise((resolve, reject) => db.run('COMMIT', (e) => e ? reject(e) : resolve()));
         
                         console.log(`✅ Turn ${turnNumber} atomically resolved, starting turn ${nextTurn}`);
                         
@@ -519,6 +524,7 @@ async function resolveTurn(gameId, turnNumber) {
         
     } catch (error) {
         console.error(`❌ Error resolving turn ${turnNumber}:`, error);
+        try { await new Promise((resolve) => db.run('ROLLBACK', () => resolve())); } catch {}
         
         // Notify players of error
         io.to(`game-${gameId}`).emit('turn-error', {

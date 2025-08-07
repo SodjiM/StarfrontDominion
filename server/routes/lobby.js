@@ -172,12 +172,12 @@ router.delete('/game/:gameId', (req, res) => {
                 (err) => {
                     if (err) console.error('Error deleting movement orders:', err);
                     
-                    // 2. Delete visibility data
+                    // 2. Delete visibility memory
                     db.run(
-                        'DELETE FROM player_visibility WHERE game_id = ?',
+                        'DELETE FROM object_visibility WHERE game_id = ?',
                         [gameId],
                         (err) => {
-                            if (err) console.error('Error deleting visibility data:', err);
+                            if (err) console.error('Error deleting visibility memory:', err);
                             
                             // 3. Delete sector objects
                             db.run(
