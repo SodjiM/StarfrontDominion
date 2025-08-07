@@ -4438,10 +4438,9 @@ function openMapModal() {
                 <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 Galaxy Overview</h3>
                 <p style="color: #ccc; margin: 0; font-size: 0.9em;">All known solar systems in the galaxy</p>
             </div>
-            <div id="galaxySystemsList" class="galaxy-systems-list">
-                <div style="text-align: center; color: #888; padding: 40px;">
-                    Loading galaxy data...
-                </div>
+            <canvas id="galaxyCanvas" class="full-map-canvas" style="height: 400px;"></canvas>
+            <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">
+                ● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.
             </div>
         </div>
     `;
@@ -4482,6 +4481,8 @@ function switchMapTab(tabName) {
     // Refresh map if switching to solar system tab
     if (tabName === 'solar-system') {
         setTimeout(() => initializeFullMap(), 50);
+    } else if (tabName === 'galaxy') {
+        setTimeout(() => initializeGalaxyMap(), 50);
     }
 }
 
@@ -4511,6 +4512,116 @@ function initializeFullMap() {
     
     // Use the same rendering logic as the minimap but larger
     renderFullMapObjects(ctx, canvas, scaleX, scaleY);
+}
+
+// Deterministic galaxy map rendering
+async function initializeGalaxyMap() {
+    try {
+        const canvas = document.getElementById('galaxyCanvas');
+        if (!canvas || !gameClient) return;
+        // Fit canvas to container
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = Math.max(360, rect.height);
+        const w = canvas.width, h = canvas.height;
+
+        // Fetch graph from server
+        const res = await fetch(`/game/${gameClient.gameId}/galaxy-graph`);
+        const graph = await res.json();
+        if (!graph || !Array.isArray(graph.systems)) return;
+
+        // Build nodes/links
+        const systems = graph.systems;
+        const gates = graph.gates || [];
+
+        // Degree centrality for quick choke highlighting
+        const deg = new Map(systems.map(s => [s.id, 0]));
+        gates.forEach(g => {
+            if (deg.has(g.source)) deg.set(g.source, deg.get(g.source) + 1);
+            if (deg.has(g.target)) deg.set(g.target, deg.get(g.target) + 1);
+        });
+        let maxDeg = 1; deg.forEach(v => { if (v > maxDeg) maxDeg = v; });
+        const centrality = new Map();
+        deg.forEach((v, k) => centrality.set(k, v / maxDeg));
+
+        // Seeded RNG based on gameId+graph
+        function hashString(s) {
+            let h = 2166136261 >>> 0;
+            for (let i=0; i<s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+            return (h >>> 0);
+        }
+        function graphKey(systems, gates, gameId) {
+            const nodesStr = systems.map(s => s.id).sort().join('|');
+            const edgesStr = gates.map(e => `${e.source}>${e.target}`).sort().join('|');
+            return `${gameId}::${nodesStr}::${edgesStr}`;
+        }
+        const seed = hashString(graphKey(systems, gates, gameClient.gameId));
+        let s = seed >>> 0;
+        const rand = () => (s = Math.imul(s ^ (s >>> 15), 2246822507) + 0x9e3779b9) >>> 0, rand01 = () => (rand() / 0xffffffff);
+
+        // Simple deterministic force-like relaxation
+        const nodes = systems.map(sys => ({ id: sys.id, name: sys.name, x: rand01()*w, y: rand01()*h, vx: 0, vy: 0 }));
+        const id2 = new Map(nodes.map(n => [n.id, n]));
+        const links = gates.filter(e => id2.has(e.source) && id2.has(e.target)).map(e => ({ s: id2.get(e.source), t: id2.get(e.target) }));
+
+        const linkDist = Math.min(w, h) / 10;
+        for (let iter=0; iter<300; iter++) {
+            // Link springs
+            links.forEach(L => {
+                const dx = L.t.x - L.s.x, dy = L.t.y - L.s.y;
+                const d = Math.hypot(dx, dy) || 0.0001;
+                const k = 0.05; // spring strength
+                const f = k * (d - linkDist);
+                const fx = f * (dx/d), fy = f * (dy/d);
+                L.t.vx -= fx; L.t.vy -= fy;
+                L.s.vx += fx; L.s.vy += fy;
+            });
+            // Node repulsion
+            for (let i=0; i<nodes.length; i++) {
+                for (let j=i+1; j<nodes.length; j++) {
+                    const A = nodes[i], B = nodes[j];
+                    const dx = B.x - A.x, dy = B.y - A.y;
+                    const d2 = dx*dx + dy*dy + 0.01;
+                    const rep = 2000 / d2; // tweak repulsion
+                    const invd = 1/Math.sqrt(d2);
+                    const fx = rep * dx * invd, fy = rep * dy * invd;
+                    A.vx -= fx; A.vy -= fy; B.vx += fx; B.vy += fy;
+                }
+            }
+            // Damping + bounds
+            nodes.forEach(N => {
+                N.vx *= 0.85; N.vy *= 0.85;
+                N.x += N.vx; N.y += N.vy;
+                N.x = Math.max(30, Math.min(w-30, N.x));
+                N.y = Math.max(30, Math.min(h-30, N.y));
+            });
+        }
+
+        // Render
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0,0,w,h);
+        ctx.fillStyle = '#0b0f1a'; ctx.fillRect(0,0,w,h);
+        // Links
+        ctx.strokeStyle = 'rgba(100,181,246,0.35)'; ctx.lineWidth = 1.25;
+        links.forEach(L => { ctx.beginPath(); ctx.moveTo(L.s.x, L.s.y); ctx.lineTo(L.t.x, L.t.y); ctx.stroke(); });
+        // Nodes
+        nodes.forEach(N => {
+            const c = centrality.get(N.id) || 0;
+            const r = 6 + 10*c;
+            const grad = ctx.createRadialGradient(N.x, N.y, 0, N.x, N.y, r);
+            grad.addColorStop(0, `rgba(255,255,255,${0.85 - 0.5*c})`);
+            grad.addColorStop(1, `rgba(100,181,246,0.9)`);
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.arc(N.x, N.y, r, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = c > 0.6 ? '#ffca28' : '#64b5f6';
+            ctx.lineWidth = c > 0.6 ? 2 : 1; ctx.stroke();
+            if (r > 12) { ctx.fillStyle = '#e3f2fd'; ctx.font = '12px Arial'; ctx.textAlign='center'; ctx.fillText(N.name || N.id, N.x, N.y - r - 4); }
+        });
+    } catch (e) {
+        console.error('initializeGalaxyMap error:', e);
+        const list = document.getElementById('galaxyLegend');
+        if (list) list.innerText = 'Failed to render galaxy map';
+    }
 }
 
 function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {

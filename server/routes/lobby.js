@@ -179,6 +179,13 @@ router.delete('/game/:gameId', (req, res) => {
                         (err) => {
                             if (err) console.error('Error deleting visibility memory:', err);
                             
+                             // 2b. Delete legacy tile visibility if present
+                             db.run(
+                                 'DELETE FROM player_visibility WHERE game_id = ?',
+                                 [gameId],
+                                 (err) => {
+                                     if (err) console.error('Error deleting legacy player_visibility:', err);
+                                     
                             // 3. Delete harvesting tasks
                             db.run(
                                 `DELETE FROM harvesting_tasks WHERE ship_id IN (
@@ -312,12 +319,124 @@ router.delete('/game/:gameId', (req, res) => {
                                     );
                                 }
                             );
+                                }
+                            );
                         }
                     );
                 }
             );
         }
     );
+});
+
+// Admin-style route to clear all games and related data (dangerous!)
+router.delete('/games/clear-all', (req, res) => {
+    const { confirm } = req.body || {};
+    if (confirm !== 'DELETE') {
+        return res.status(400).json({ error: "Confirmation string 'DELETE' required" });
+    }
+    db.all('SELECT id FROM games', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Failed to list games' });
+        const ids = rows.map(r => r.id);
+        let processed = 0;
+        let failures = 0;
+        const results = [];
+        const next = () => {
+            if (processed >= ids.length) {
+                return res.json({ success: true, deleted: ids.length - failures, failed: failures, details: results });
+            }
+            const gameId = ids[processed++];
+            // Reuse the cascade steps inline (simpler than refactor here)
+            db.run(
+                `DELETE FROM movement_orders WHERE object_id IN (
+                    SELECT so.id FROM sector_objects so 
+                    JOIN sectors s ON so.sector_id = s.id 
+                    WHERE s.game_id = ?
+                )`,
+                [gameId],
+                () => {
+                    db.run('DELETE FROM object_visibility WHERE game_id = ?', [gameId], () => {
+                        db.run('DELETE FROM player_visibility WHERE game_id = ?', [gameId], () => {
+                            db.run(
+                                `DELETE FROM harvesting_tasks WHERE ship_id IN (
+                                    SELECT so.id FROM sector_objects so 
+                                    JOIN sectors s ON so.sector_id = s.id 
+                                    WHERE s.game_id = ?
+                                )`,
+                                [gameId],
+                                () => {
+                                    db.run(
+                                        `DELETE FROM movement_history WHERE object_id IN (
+                                            SELECT so.id FROM sector_objects so 
+                                            JOIN sectors s ON so.sector_id = s.id 
+                                            WHERE s.game_id = ?
+                                        )`,
+                                        [gameId],
+                                        () => {
+                                            db.run(
+                                                `DELETE FROM object_cargo WHERE object_id IN (
+                                                    SELECT so.id FROM sector_objects so 
+                                                    JOIN sectors s ON so.sector_id = s.id 
+                                                    WHERE s.game_id = ?
+                                                )`,
+                                                [gameId],
+                                                () => {
+                                                    db.run(
+                                                        `DELETE FROM ship_cargo WHERE ship_id IN (
+                                                            SELECT so.id FROM sector_objects so 
+                                                            JOIN sectors s ON so.sector_id = s.id 
+                                                            WHERE s.game_id = ?
+                                                        )`,
+                                                        [gameId],
+                                                        () => {
+                                                            db.run(
+                                                                `DELETE FROM resource_nodes WHERE sector_id IN (
+                                                                    SELECT id FROM sectors WHERE game_id = ?
+                                                                ) OR parent_object_id IN (
+                                                                    SELECT so.id FROM sector_objects so 
+                                                                    JOIN sectors s ON so.sector_id = s.id 
+                                                                    WHERE s.game_id = ?
+                                                                )`,
+                                                                [gameId, gameId],
+                                                                () => {
+                                                                    db.run(
+                                                                        `DELETE FROM sector_objects WHERE sector_id IN (
+                                                                            SELECT id FROM sectors WHERE game_id = ?
+                                                                        )`,
+                                                                        [gameId],
+                                                                        () => {
+                                                                            db.run('DELETE FROM turn_locks WHERE game_id = ?', [gameId], () => {
+                                                                                db.run('DELETE FROM turns WHERE game_id = ?', [gameId], () => {
+                                                                                    db.run('DELETE FROM sectors WHERE game_id = ?', [gameId], (errSectors) => {
+                                                                                        if (errSectors) failures++;
+                                                                                        db.run('DELETE FROM game_players WHERE game_id = ?', [gameId], () => {
+                                                                                            db.run('DELETE FROM games WHERE id = ?', [gameId], function(errGame) {
+                                                                                                results.push({ gameId, ok: !errGame });
+                                                                                                next();
+                                                                                            });
+                                                                                        });
+                                                                                    });
+                                                                                });
+                                                                            });
+                                                                        }
+                                                                    );
+                                                                }
+                                                            );
+                                                        }
+                                                    );
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
+                        });
+                    });
+                }
+            );
+        };
+        next();
+    });
 });
 
 module.exports = router; 

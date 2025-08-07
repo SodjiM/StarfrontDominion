@@ -279,11 +279,11 @@ class GameWorldManager {
     // Calculate combined vision from all player units
     static async calculatePlayerVision(gameId, userId, turnNumber) {
         return new Promise((resolve, reject) => {
-            db.all(
+                    db.all(
                 'SELECT id, sector_id, x, y, meta FROM sector_objects WHERE owner_id = ? AND type IN ("ship", "starbase")',
                 [userId],
-                (err, units) => {
-                    if (err) return reject(err);
+                        (err, units) => {
+                            if (err) return reject(err);
                     if (!units || units.length === 0) return resolve([]);
 
                     // Group by sector to batch queries
@@ -293,7 +293,7 @@ class GameWorldManager {
                         sectorIdToUnits.get(u.sector_id).push(u);
                     }
 
-                    const visibleObjects = new Map(); // objectId -> {object, visibilityLevel}
+                            const visibleObjects = new Map(); // objectId -> {object, visibilityLevel}
                     let sectorsProcessed = 0;
 
                     for (const [sectorId, sectorUnits] of sectorIdToUnits.entries()) {
@@ -301,7 +301,7 @@ class GameWorldManager {
                         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
                         const sensors = sectorUnits.map(u => {
                             const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
-                            const scanRange = meta.scanRange || 5;
+                                const scanRange = meta.scanRange || 5;
                             const detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
                             minX = Math.min(minX, u.x - scanRange);
                             maxX = Math.max(maxX, u.x + scanRange);
@@ -310,7 +310,7 @@ class GameWorldManager {
                             return { x: u.x, y: u.y, scanRange, detailedRange };
                         });
 
-                        db.all(
+                                db.all(
                             'SELECT * FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?',
                             [sectorId, minX, maxX, minY, maxY],
                             (e2, objectsInBox) => {
@@ -322,7 +322,7 @@ class GameWorldManager {
                                         const dist = Math.sqrt(dx * dx + dy * dy);
                                         if (dist <= s.scanRange) {
                                             const lvl = dist <= s.detailedRange ? 2 : 1;
-                                            const existing = visibleObjects.get(obj.id);
+                                                const existing = visibleObjects.get(obj.id);
                                             if (!existing || existing.visibilityLevel < lvl) {
                                                 visibleObjects.set(obj.id, { object: obj, visibilityLevel: lvl });
                                             }
@@ -389,11 +389,11 @@ class GameWorldManager {
                         return reject(objErr);
                     }
                     if (!rows || rows.length === 0) {
-                        updateCount++;
-                        if (updateCount === totalUpdates) {
-                            console.log(`👁️ Updated ${totalUpdates} visibility tiles for player ${userId} on turn ${turnNumber}`);
-                            resolve(Array.from(visionTiles));
-                        }
+                    updateCount++;
+                    if (updateCount === totalUpdates) {
+                        console.log(`👁️ Updated ${totalUpdates} visibility tiles for player ${userId} on turn ${turnNumber}`);
+                        resolve(Array.from(visionTiles));
+                    }
                         return;
                     }
                     const stmt = db.prepare(
@@ -531,13 +531,13 @@ class GameWorldManager {
                             const visibleIds = Array.from(visibleMap.keys());
                             const ownedQuery = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
                                                     mo.destination_x, mo.destination_y, mo.movement_path, mo.eta_turns, mo.status as movement_status,
-                                                    mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
+                                mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
                                                     ht.id as harvesting_task_id, ht.status as harvesting_status, ht.harvest_rate, ht.total_harvested, rt.resource_name as harvesting_resource
-                                               FROM sector_objects so
+                         FROM sector_objects so
                                                LEFT JOIN movement_orders mo ON (so.id = mo.object_id AND mo.status IN ('active','blocked','completed','warp_preparing'))
                                                LEFT JOIN harvesting_tasks ht ON (so.id = ht.ship_id AND ht.status IN ('active','paused'))
-                                               LEFT JOIN resource_nodes rn ON ht.resource_node_id = rn.id
-                                               LEFT JOIN resource_types rt ON rn.resource_type_id = rt.id
+                         LEFT JOIN resource_nodes rn ON ht.resource_node_id = rn.id
+                         LEFT JOIN resource_types rt ON rn.resource_type_id = rt.id
                                                WHERE so.sector_id = ? AND so.owner_id = ?`;
                             const nonOwnedVisibleQueryBase = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
                                                     mo.destination_x, mo.destination_y, mo.movement_path, mo.eta_turns, mo.status as movement_status,
@@ -565,17 +565,17 @@ class GameWorldManager {
                             }
                             const resourceQuery = `SELECT rn.id, 'resource_node' as type, rn.x, rn.y, NULL as owner_id,
                                                         JSON_OBJECT('resourceType', rt.resource_name,
-                                                                    'resourceAmount', rn.resource_amount,
-                                                                    'maxResource', rn.max_resource,
-                                                                    'size', rn.size,
-                                                                    'isDepleted', rn.is_depleted,
-                                                                    'iconEmoji', rt.icon_emoji,
-                                                                    'colorHex', rt.color_hex,
+                                    'resourceAmount', rn.resource_amount,
+                                    'maxResource', rn.max_resource,
+                                    'size', rn.size,
+                                    'isDepleted', rn.is_depleted,
+                                    'iconEmoji', rt.icon_emoji,
+                                    'colorHex', rt.color_hex,
                                                                     'alwaysKnown', 1) as meta,
-                                                        rn.sector_id, rt.category as celestial_type, rn.size as radius,
+                                rn.sector_id, rt.category as celestial_type, rn.size as radius,
                                                         rn.parent_object_id
-                                                 FROM resource_nodes rn
-                                                 JOIN resource_types rt ON rn.resource_type_id = rt.id
+                         FROM resource_nodes rn
+                         JOIN resource_types rt ON rn.resource_type_id = rt.id
                                                  WHERE rn.sector_id = ? AND rn.resource_amount > 0 AND rn.is_depleted = 0`;
                             tasks.push(new Promise((res, rej) => {
                                 db.all(resourceQuery, [sector.id], (e, rows) => e ? rej(e) : res(rows || []));
@@ -624,30 +624,30 @@ class GameWorldManager {
                         .catch(err => reject(err));
 
                     const proceed = (objects) => {
-                        // Get current turn info
-                        db.get(
-                            'SELECT * FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1',
-                            [gameId],
-                            (err, currentTurn) => {
-                                if (err) return reject(err);
-                                
-                                // Check if player has locked their turn (if there is a current turn)
-                                const turnNumber = currentTurn?.turn_number || 1;
-                                db.get(
-                                    'SELECT locked FROM turn_locks WHERE game_id = ? AND user_id = ? AND turn_number = ?',
-                                    [gameId, userId, turnNumber],
-                                    (err, lockStatus) => {
-                                        if (err) return reject(err);
-                                        
-                                        // Get player setup data
-                                        db.get(
-                                            'SELECT avatar, color_primary, color_secondary, setup_completed FROM game_players WHERE game_id = ? AND user_id = ?',
-                                            [gameId, userId],
-                                            (err, playerData) => {
-                                                if (err) return reject(err);
-                                                
-                                                // Parse meta JSON and determine visibility status for objects
-                                                const parsedObjects = objects.map(obj => {
+                            // Get current turn info
+                            db.get(
+                                'SELECT * FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1',
+                                [gameId],
+                                (err, currentTurn) => {
+                                    if (err) return reject(err);
+                                    
+                                    // Check if player has locked their turn (if there is a current turn)
+                                    const turnNumber = currentTurn?.turn_number || 1;
+                                    db.get(
+                                        'SELECT locked FROM turn_locks WHERE game_id = ? AND user_id = ? AND turn_number = ?',
+                                        [gameId, userId, turnNumber],
+                                        (err, lockStatus) => {
+                                            if (err) return reject(err);
+                                            
+                                            // Get player setup data
+                                            db.get(
+                                                'SELECT avatar, color_primary, color_secondary, setup_completed FROM game_players WHERE game_id = ? AND user_id = ?',
+                                                [gameId, userId],
+                                                (err, playerData) => {
+                                                    if (err) return reject(err);
+                                                    
+                                                    // Parse meta JSON and determine visibility status for objects
+                                                    const parsedObjects = objects.map(obj => {
                                                     let meta;
                                                     if (typeof obj.meta === 'string') {
                                                         try {
@@ -659,85 +659,85 @@ class GameWorldManager {
                                                     } else {
                                                         meta = obj.meta || {};
                                                     }
-                                                    const isOwned = obj.owner_id === userId;
+                                                        const isOwned = obj.owner_id === userId;
                                                     const isVisible = (obj.visibility_level || 0) > 0;
-                                                    const isAlwaysKnown = meta.alwaysKnown === true;
-                                                    
-                                                    // Parse movement data if available
-                                                    let movementData = null;
-                                                    if (obj.movement_path && obj.movement_status) {
-                                                        const movementPath = JSON.parse(obj.movement_path || '[]');
-                                                        movementData = {
-                                                            movementPath: movementPath,
-                                                            plannedDestination: obj.destination_x && obj.destination_y ? 
-                                                                { x: obj.destination_x, y: obj.destination_y } : null,
-                                                            movementETA: obj.eta_turns,
-                                                            movementActive: obj.movement_status === 'active' || obj.movement_status === 'completed',
-                                                            movementStatus: obj.movement_status
-                                                        };
-                                                    }
-                                                    
-                                                    // Parse warp data if available
-                                                    let warpData = null;
-                                                    if (obj.warp_phase) {
-                                                        warpData = {
-                                                            warpPhase: obj.warp_phase,
-                                                            warpPreparationTurns: obj.warp_preparation_turns || 0,
-                                                            warpDestination: obj.warp_destination_x && obj.warp_destination_y ? 
-                                                                { x: obj.warp_destination_x, y: obj.warp_destination_y } : null
-                                                        };
-                                                    }
-                                                    
-                                                    // Parse harvesting data if available
-                                                    let harvestingData = null;
-                                                    if (obj.harvesting_task_id) {
-                                                        harvestingData = {
-                                                            harvestingTaskId: obj.harvesting_task_id,
-                                                            harvestingStatus: obj.harvesting_status,
-                                                            harvestRate: obj.harvest_rate,
-                                                            totalHarvested: obj.total_harvested,
-                                                            harvestingResource: obj.harvesting_resource
-                                                        };
-                                                    }
-                                                    
-                                                    return {
-                                                        ...obj,
-                                                        meta,
+                                                        const isAlwaysKnown = meta.alwaysKnown === true;
+                                                        
+                                                        // Parse movement data if available
+                                                        let movementData = null;
+                                                        if (obj.movement_path && obj.movement_status) {
+                                                            const movementPath = JSON.parse(obj.movement_path || '[]');
+                                                            movementData = {
+                                                                movementPath: movementPath,
+                                                                plannedDestination: obj.destination_x && obj.destination_y ? 
+                                                                    { x: obj.destination_x, y: obj.destination_y } : null,
+                                                                movementETA: obj.eta_turns,
+                                                                movementActive: obj.movement_status === 'active' || obj.movement_status === 'completed',
+                                                                movementStatus: obj.movement_status
+                                                            };
+                                                        }
+                                                        
+                                                        // Parse warp data if available
+                                                        let warpData = null;
+                                                        if (obj.warp_phase) {
+                                                            warpData = {
+                                                                warpPhase: obj.warp_phase,
+                                                                warpPreparationTurns: obj.warp_preparation_turns || 0,
+                                                                warpDestination: obj.warp_destination_x && obj.warp_destination_y ? 
+                                                                    { x: obj.warp_destination_x, y: obj.warp_destination_y } : null
+                                                            };
+                                                        }
+                                                        
+                                                        // Parse harvesting data if available
+                                                        let harvestingData = null;
+                                                        if (obj.harvesting_task_id) {
+                                                            harvestingData = {
+                                                                harvestingTaskId: obj.harvesting_task_id,
+                                                                harvestingStatus: obj.harvesting_status,
+                                                                harvestRate: obj.harvest_rate,
+                                                                totalHarvested: obj.total_harvested,
+                                                                harvestingResource: obj.harvesting_resource
+                                                            };
+                                                        }
+                                                        
+                                                        return {
+                                                            ...obj,
+                                                            meta,
                                                         ...movementData,
                                                         ...warpData,
                                                         ...harvestingData,
-                                                        sectorInfo: {
+                                                            sectorInfo: {
+                                                                name: sector.name,
+                                                                archetype: sector.archetype,
+                                                                id: sector.id
+                                                            },
+                                                            visibilityStatus: {
+                                                                owned: isOwned,
+                                                                visible: isVisible || isOwned,
+                                                                dimmed: isAlwaysKnown && !isVisible && !isOwned,
+                                                                level: obj.visibility_level || 0,
+                                                                lastSeen: obj.last_seen_turn || (isOwned ? turnNumber : null)
+                                                            }
+                                                        };
+                                                    });
+                                                    
+                                                    resolve({
+                                                        sector: {
+                                                            ...sector,
                                                             name: sector.name,
-                                                            archetype: sector.archetype,
-                                                            id: sector.id
+                                                            archetype: sector.archetype
                                                         },
-                                                        visibilityStatus: {
-                                                            owned: isOwned,
-                                                            visible: isVisible || isOwned,
-                                                            dimmed: isAlwaysKnown && !isVisible && !isOwned,
-                                                            level: obj.visibility_level || 0,
-                                                            lastSeen: obj.last_seen_turn || (isOwned ? turnNumber : null)
-                                                        }
-                                                    };
-                                                });
-                                                
-                                                resolve({
-                                                    sector: {
-                                                        ...sector,
-                                                        name: sector.name,
-                                                        archetype: sector.archetype
-                                                    },
-                                                    objects: parsedObjects,
-                                                    currentTurn: currentTurn || { turn_number: 1, status: 'waiting' },
-                                                    turnLocked: lockStatus?.locked || false,
-                                                    playerSetup: playerData || { setup_completed: false }
-                                                });
-                                            }
-                                        );
-                                    }
-                                );
-                            }
-                        );
+                                                        objects: parsedObjects,
+                                                        currentTurn: currentTurn || { turn_number: 1, status: 'waiting' },
+                                                        turnLocked: lockStatus?.locked || false,
+                                                        playerSetup: playerData || { setup_completed: false }
+                                                    });
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
                     };
                 }
             );
@@ -855,9 +855,9 @@ router.get('/:gameId/state/:userId/sector/:sectorId', async (req, res) => {
     try {
         // Verify user is in the game
         const membership = await new Promise((resolve, reject) => {
-            db.get(
+    db.get(
                 'SELECT * FROM game_players WHERE game_id = ? AND user_id = ?',
-                [gameId, userId],
+        [gameId, userId],
                 (err, result) => {
                     if (err) reject(err);
                     else resolve(result);
@@ -872,6 +872,52 @@ router.get('/:gameId/state/:userId/sector/:sectorId', async (req, res) => {
         console.error('❌ Get sector state error:', error);
         res.status(500).json({ error: 'Failed to get sector state', details: error.message });
     }
+});
+
+// Galaxy graph: systems (sectors) and gates (interstellar connections)
+router.get('/:gameId/galaxy-graph', (req, res) => {
+    const { gameId } = req.params;
+    // Get sectors in this game
+    db.all('SELECT id, name FROM sectors WHERE game_id = ? ORDER BY id', [gameId], (err, sectors) => {
+        if (err) {
+            console.error('Error fetching sectors for galaxy graph:', err);
+            return res.status(500).json({ error: 'Failed to fetch sectors' });
+        }
+        // Get interstellar gates across all sectors in this game
+            db.all(
+            `SELECT so.sector_id as sourceSectorId,
+                    JSON_EXTRACT(so.meta, '$.destinationSectorId') as destSectorId,
+                    so.meta as rawMeta
+                 FROM sector_objects so
+             JOIN sectors s ON so.sector_id = s.id
+             WHERE s.game_id = ? AND so.type = 'interstellar-gate'`,
+            [gameId],
+            (err2, gatesRows) => {
+                if (err2) {
+                    console.error('Error fetching gates for galaxy graph:', err2);
+                    return res.status(500).json({ error: 'Failed to fetch gates' });
+                }
+                const systems = sectors.map(s => ({ id: s.id, name: s.name }));
+                const validSectorIds = new Set(sectors.map(s => s.id));
+                const edgeSet = new Set();
+                const gates = [];
+                (gatesRows || []).forEach(r => {
+                    const src = parseInt(r.sourceSectorId);
+                    const dst = parseInt(r.destSectorId);
+                    if (!Number.isFinite(src) || !Number.isFinite(dst)) return;
+                    if (!validSectorIds.has(src) || !validSectorIds.has(dst)) return;
+                    const a = Math.min(src, dst);
+                    const b = Math.max(src, dst);
+                    const key = `${a}-${b}`;
+                    if (!edgeSet.has(key)) {
+                        edgeSet.add(key);
+                        gates.push({ source: a, target: b });
+                    }
+                });
+                res.json({ systems, gates });
+            }
+        );
+    });
 });
 
 // Get visible map data for player around a specific position - ASYNCHRONOUS FRIENDLY
@@ -1084,10 +1130,10 @@ router.post('/scan/:gameId', (req, res) => {
                                 energyRemaining: meta.energy,
                                         message: `Active scan refreshed visibility`
                             });
-                                },
-                                (error) => {
+                        },
+                        (error) => {
                                     console.error('Error updating visibility memory:', error);
-                                    res.status(500).json({ error: 'Failed to update visibility' });
+                            res.status(500).json({ error: 'Failed to update visibility' });
                                 }
                             );
                         }
@@ -1924,7 +1970,7 @@ router.post('/interstellar-travel', (req, res) => {
                                     .catch(e => console.error('Visibility refresh after gate travel failed:', e));
                             });
                         });
-
+                        
                         res.json({ 
                             success: true, 
                             message: 'Ship successfully traveled through interstellar gate',
