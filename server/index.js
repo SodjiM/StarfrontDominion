@@ -42,6 +42,29 @@ app.get('/health', (req, res) => {
 
 // Socket.IO connection handling - ASYNCHRONOUS FRIENDLY
 io.on('connection', (socket) => {
+    // Basic chat: game-wide, direct messages, and group channels
+    socket.on('chat:send', (msg) => {
+        // msg: { gameId, fromUserId, toUserId?, channelId?, text }
+        try {
+            const payload = {
+                fromUserId: msg.fromUserId,
+                text: String(msg.text || '').slice(0, 500),
+                timestamp: new Date().toISOString(),
+                channelId: msg.channelId || null,
+                toUserId: msg.toUserId || null
+            };
+            if (msg.toUserId) {
+                // Direct message: emit only to the recipient if in room
+                io.to(`game-${msg.gameId}`).emit('chat:dm', { ...payload, toUserId: msg.toUserId });
+            } else if (msg.channelId) {
+                io.to(`game-${msg.gameId}`).emit('chat:channel', payload);
+            } else {
+                io.to(`game-${msg.gameId}`).emit('chat:game', payload);
+            }
+        } catch (e) {
+            socket.emit('chat:error', { message: 'Failed to send message' });
+        }
+    });
     console.log(`🚀 Player connected: ${socket.id}`);
     
     // Join game room and get current game status

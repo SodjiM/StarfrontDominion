@@ -144,6 +144,11 @@ class GameClient {
             this.addLogEntry(`Mining error: ${data.error}`, 'error');
         });
 
+        // Chat events
+        this.socket.on('chat:game', (msg) => { if (window.appendChat) window.appendChat(msg); });
+        this.socket.on('chat:channel', (msg) => { if (window.appendChat) window.appendChat(msg); });
+        this.socket.on('chat:dm', (msg) => { if (window.appendChat) window.appendChat(msg); });
+
         // ✅ Atomic Turn Resolution Policy: No real-time movement updates
         // All movement results will be visible after 'turn-resolved' via loadGameState()
         // 

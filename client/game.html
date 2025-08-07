@@ -1744,6 +1744,19 @@
             <div id="activityLog">
                 <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
             </div>
+            <div style="margin-top: 10px;">
+                <div class="panel-title">💬 Chat</div>
+                <div id="chatMessages" style="height:120px; overflow:auto; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
+                <div style="display:flex; gap:6px; margin-top:6px;">
+                    <select id="chatScope" style="background:#0b1a2a; color:#cfe4ff; border:1px solid #243b55; border-radius:4px; padding:4px;">
+                        <option value="game">Game</option>
+                        <option value="dm">Direct</option>
+                    </select>
+                    <input id="chatToUserId" placeholder="User ID (DM)" style="flex:0 0 110px; background:#0b1a2a; color:#cfe4ff; border:1px solid #243b55; border-radius:4px; padding:6px;" />
+                    <input id="chatInput" placeholder="Type a message" style="flex:1; background:#0b1a2a; color:#cfe4ff; border:1px solid #243b55; border-radius:4px; padding:6px;" />
+                    <button onclick="sendChat()" class="map-btn">Send</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1772,6 +1785,28 @@
             if (confirm('Are you sure you want to exit the game?')) {
                 window.location.href = 'lobby.html';
             }
+        }
+        // Basic chat client wiring
+        function appendChat(msg) {
+            const box = document.getElementById('chatMessages');
+            if (!box) return;
+            const line = document.createElement('div');
+            line.style.margin = '2px 0';
+            const scope = msg.channelId ? `[#${msg.channelId}]` : (msg.toUserId ? `(DM→${msg.toUserId})` : '(Game)');
+            line.textContent = `[${new Date(msg.timestamp).toLocaleTimeString()}] ${scope} ${msg.fromUserId}: ${msg.text}`;
+            box.appendChild(line);
+            box.scrollTop = box.scrollHeight;
+        }
+        function sendChat() {
+            if (!window.gameClient || !gameClient.socket) return;
+            const text = document.getElementById('chatInput').value.trim();
+            if (!text) return;
+            const scope = document.getElementById('chatScope').value;
+            const toUserId = document.getElementById('chatToUserId').value.trim();
+            const payload = { gameId: gameClient.gameId, fromUserId: gameClient.userId, text };
+            if (scope === 'dm' && toUserId) payload.toUserId = Number(toUserId);
+            gameClient.socket.emit('chat:send', payload);
+            document.getElementById('chatInput').value = '';
         }
     </script>
 </body>
