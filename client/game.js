@@ -677,8 +677,8 @@ class GameClient {
                     <button class="action-btn" onclick="setWarpMode()" ${this.turnLocked ? 'disabled' : ''}>
                         🌌 Warp
                     </button>
-                    <button class="action-btn" id="mineBtn" onclick="toggleMining()" ${this.turnLocked ? 'disabled' : ''}>
-                        ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : '⛏️ Mine'}
+                    <button class="action-btn" id="mineBtn" onclick="toggleMining()" ${this.turnLocked || !meta.canMine ? 'disabled' : ''}>
+                        ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (meta.canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}
                     </button>
                     <button class="action-btn" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
                         📦 Cargo
@@ -689,18 +689,33 @@ class GameClient {
                 ` : ''}
                 
                 ${unit.type === 'starbase' ? `
-                    <button class="action-btn" onclick="buildShip()" ${this.turnLocked ? 'disabled' : ''}>
-                        🚢 Build Ship
+                    <button class="action-btn" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
+                        📦 Cargo
+                    </button>
+                    <button class="action-btn" onclick="showBuildModal()" ${this.turnLocked ? 'disabled' : ''}>
+                        🔨 Build
                     </button>
                     <button class="action-btn" onclick="upgradeBase()" ${this.turnLocked ? 'disabled' : ''}>
                         ⬆️ Upgrade Base
                     </button>
                 ` : ''}
+                
+                ${unit.type === 'storage-structure' ? `
+                    <button class="action-btn" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
+                        📦 Storage
+                    </button>
+                ` : ''}
+                
+                ${unit.type === 'warp-beacon' ? `
+                    <div class="structure-info">
+                        <p>🌌 Warp destination available to all players</p>
+                    </div>
+                ` : ''}
             </div>
         `;
         
-        // Update cargo status for ships
-        if (unit && unit.type === 'ship' && unit.meta && unit.meta.cargoCapacity) {
+        // Update cargo status for ships and structures with cargo
+        if (unit && unit.meta && unit.meta.cargoCapacity) {
             updateCargoStatus(unit.id);
         }
     }
@@ -1834,6 +1849,9 @@ class GameClient {
         // Mouse move for cursor feedback
         this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
         
+        // Mouse wheel for zooming
+        this.canvas.addEventListener('wheel', (e) => this.handleCanvasWheel(e));
+        
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
     }
@@ -1872,6 +1890,43 @@ class GameClient {
             this.canvas.style.cursor = 'move'; // Empty space - move
         } else {
             this.canvas.style.cursor = 'default';
+        }
+    }
+
+    // Handle mouse wheel for zooming
+    handleCanvasWheel(e) {
+        e.preventDefault(); // Prevent page scroll
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Calculate world coordinates before zoom
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const worldX = this.camera.x + (mouseX - centerX) / this.tileSize;
+        const worldY = this.camera.y + (mouseY - centerY) / this.tileSize;
+        
+        // Determine zoom direction
+        const zoomIn = e.deltaY < 0;
+        const oldTileSize = this.tileSize;
+        
+        // Apply zoom with limits
+        if (zoomIn && this.tileSize < 40) {
+            this.tileSize += 2;
+        } else if (!zoomIn && this.tileSize > 8) {
+            this.tileSize -= 2;
+        }
+        
+        // Adjust camera to keep mouse position centered
+        if (this.tileSize !== oldTileSize) {
+            const newWorldX = this.camera.x + (mouseX - centerX) / this.tileSize;
+            const newWorldY = this.camera.y + (mouseY - centerY) / this.tileSize;
+            
+            this.camera.x += worldX - newWorldX;
+            this.camera.y += worldY - newWorldY;
+            
+            this.render();
         }
     }
 
@@ -2653,10 +2708,10 @@ class GameClient {
         );
         targets.push(...playerStructures);
         
-        // Add warp beacons (future feature)
+        // Add warp beacons
         const warpBeacons = this.objects.filter(obj => 
-            obj.type === 'warp_beacon' && 
-            (obj.owner_id === this.userId || obj.meta?.accessibility === 'neutral')
+            obj.type === 'warp-beacon' && 
+            (obj.owner_id === this.userId || obj.meta?.publicAccess === true)
         );
         targets.push(...warpBeacons);
         
@@ -2689,7 +2744,8 @@ class GameClient {
             switch (target.type) {
                 case 'starbase': return '🏭';
                 case 'station': return '🛰️';
-                case 'warp_beacon': return '📡';
+                case 'warp-beacon': return '🌌';
+                case 'storage-structure': return '📦';
                 default: return '🏗️';
             }
         }
@@ -2715,11 +2771,12 @@ class GameClient {
                 switch (target.type) {
                     case 'starbase': return 'Your Starbase';
                     case 'station': return 'Your Station';
-                    case 'warp_beacon': return 'Your Warp Beacon';
+                    case 'warp-beacon': return 'Your Warp Beacon';
+                    case 'storage-structure': return 'Your Storage';
                     default: return 'Your Structure';
                 }
-            } else if (target.type === 'warp_beacon' && target.meta?.accessibility === 'neutral') {
-                return 'Neutral Warp Beacon';
+            } else if (target.type === 'warp-beacon' && target.meta?.publicAccess === true) {
+                return 'Public Warp Beacon';
             } else {
                 return 'Allied Structure';
             }
@@ -3164,10 +3221,310 @@ async function scanArea() {
     }
 }
 
-function buildShip() {
-    if (gameClient) {
-        gameClient.addLogEntry('Ship construction not yet implemented', 'warning');
-        // TODO: Implement ship building
+// Show build modal with tabbed interface
+async function showBuildModal() {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No station selected', 'warning');
+        return;
+    }
+
+    const selectedStation = gameClient.selectedUnit;
+    if (selectedStation.type !== 'starbase') {
+        gameClient.addLogEntry('Only stations can build', 'warning');
+        return;
+    }
+
+    // Get station cargo to check available resources
+    try {
+        const response = await fetch(`/game/cargo/${selectedStation.id}?userId=${gameClient.userId}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            gameClient.addLogEntry(data.error || 'Failed to get station cargo', 'error');
+            return;
+        }
+
+        const cargo = data.cargo;
+        const rockQuantity = cargo.items.find(item => item.resource_name === 'rock')?.quantity || 0;
+        
+        // Create build modal content
+        const buildModal = document.createElement('div');
+        buildModal.className = 'build-modal';
+        buildModal.innerHTML = `
+            <div class="build-tabs">
+                <button class="build-tab active" onclick="switchBuildTab('ships')">
+                    🚢 Ships
+                </button>
+                <button class="build-tab" onclick="switchBuildTab('structures')">
+                    🏗️ Structures
+                </button>
+            </div>
+            
+            <div class="build-resources">
+                <div class="resource-display">
+                    <span class="resource-icon">🪨</span>
+                    <span class="resource-name">Rock:</span>
+                    <span class="resource-quantity">${rockQuantity}</span>
+                </div>
+            </div>
+            
+            <div id="ships-tab" class="build-tab-content">
+                <div class="build-section">
+                    <h3>🚢 Ship Construction</h3>
+                    <div class="build-options">
+                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">🔍 Explorer Ship</div>
+                                <div class="build-description">Basic exploration vessel</div>
+                                <div class="build-stats">
+                                    • Cargo: 10 units<br>
+                                    • Speed: 4 tiles/turn<br>
+                                    • Can mine and scan
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 1 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
+                                        onclick="buildShip('explorer', 1)" 
+                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="build-option ${rockQuantity >= 5 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">⛏️ Mining Vessel</div>
+                                <div class="build-description">Specialized mining ship</div>
+                                <div class="build-stats">
+                                    • Cargo: 20 units<br>
+                                    • Speed: 3 tiles/turn<br>
+                                    • 2x mining speed
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 5 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 5 ? '' : 'disabled'}" 
+                                        onclick="buildShip('mining-vessel', 5)" 
+                                        ${rockQuantity >= 5 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="build-option ${rockQuantity >= 10 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">🚚 Logistics Ship</div>
+                                <div class="build-description">Large cargo hauler</div>
+                                <div class="build-stats">
+                                    • Cargo: 50 units<br>
+                                    • Speed: 2 tiles/turn<br>
+                                    • Cannot mine
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 10 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 10 ? '' : 'disabled'}" 
+                                        onclick="buildShip('logistics', 10)" 
+                                        ${rockQuantity >= 10 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="structures-tab" class="build-tab-content hidden">
+                <div class="build-section">
+                    <h3>🏗️ Structure Manufacturing</h3>
+                    <div class="build-options">
+                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">📦 Storage Box</div>
+                                <div class="build-description">Deployable storage structure</div>
+                                <div class="build-stats">
+                                    • Cargo: 25 units<br>
+                                    • Deployable anywhere<br>
+                                    • Resource storage
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 1 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
+                                        onclick="buildStructure('storage-box', 1)" 
+                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="build-option ${rockQuantity >= 5 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">🌌 Warp Beacon</div>
+                                <div class="build-description">Deployable warp destination</div>
+                                <div class="build-stats">
+                                    • Allows warp travel<br>
+                                    • Accessible to all players<br>
+                                    • Permanent structure
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 5 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 5 ? '' : 'disabled'}" 
+                                        onclick="buildStructure('warp-beacon', 5)" 
+                                        ${rockQuantity >= 5 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        UI.showModal({
+            title: '🔨 Construction Bay',
+            content: buildModal,
+            actions: [
+                {
+                    text: 'Close',
+                    style: 'primary',
+                    action: () => true
+                }
+            ],
+            className: 'build-modal-container'
+        });
+
+    } catch (error) {
+        console.error('Error getting station cargo:', error);
+        gameClient.addLogEntry('Failed to access construction bay', 'error');
+    }
+}
+
+// Switch between build tabs
+function switchBuildTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.build-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.querySelector(`[onclick="switchBuildTab('${tabName}')"]`).classList.add('active');
+    
+    // Show/hide tab content
+    document.querySelectorAll('.build-tab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    document.getElementById(`${tabName}-tab`).classList.remove('hidden');
+}
+
+// Build a ship
+async function buildShip(shipType, cost) {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No station selected', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/game/build-ship', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                stationId: gameClient.selectedUnit.id,
+                shipType: shipType,
+                cost: cost,
+                userId: gameClient.userId
+            })
+        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
+            UI.closeModal();
+            // Refresh game state to show new ship
+            gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
+        } else {
+            gameClient.addLogEntry(data.error || 'Failed to build ship', 'error');
+        }
+
+    } catch (error) {
+        console.error('Error building ship:', error);
+        gameClient.addLogEntry('Failed to build ship', 'error');
+    }
+}
+
+// Build a structure (as cargo item)
+async function buildStructure(structureType, cost) {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No station selected', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/game/build-structure', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                stationId: gameClient.selectedUnit.id,
+                structureType: structureType,
+                cost: cost,
+                userId: gameClient.userId
+            })
+        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            gameClient.addLogEntry(`${data.structureName} manufactured successfully!`, 'success');
+            UI.closeModal();
+        } else {
+            gameClient.addLogEntry(data.error || 'Failed to build structure', 'error');
+        }
+
+    } catch (error) {
+        console.error('Error building structure:', error);
+        gameClient.addLogEntry('Failed to build structure', 'error');
+    }
+}
+
+// Deploy a structure from ship cargo
+async function deployStructure(structureType, shipId) {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No ship selected', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/game/deploy-structure', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                shipId: shipId,
+                structureType: structureType,
+                userId: gameClient.userId
+            })
+        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            gameClient.addLogEntry(`${data.structureName} deployed successfully!`, 'success');
+            UI.closeModal();
+            // Refresh game state to show new structure
+            gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
+        } else {
+            gameClient.addLogEntry(data.error || 'Failed to deploy structure', 'error');
+        }
+
+    } catch (error) {
+        console.error('Error deploying structure:', error);
+        gameClient.addLogEntry('Failed to deploy structure', 'error');
     }
 }
 
@@ -3357,6 +3714,9 @@ async function showCargo() {
                 const cargoItem = document.createElement('div');
                 cargoItem.className = 'cargo-item';
                 
+                // Check if item is deployable structure
+                const isDeployable = item.category === 'structure' && selectedUnit.type === 'ship';
+                
                 cargoItem.innerHTML = `
                     <div class="cargo-item-info">
                         <span class="cargo-icon" style="color: ${item.color_hex}">${item.icon_emoji}</span>
@@ -3367,8 +3727,15 @@ async function showCargo() {
                             </div>
                         </div>
                     </div>
-                    <div class="cargo-value">
-                        Value: ${item.quantity * (item.base_value || 1)}
+                    <div class="cargo-actions">
+                        <div class="cargo-value">
+                            Value: ${item.quantity * (item.base_value || 1)}
+                        </div>
+                        ${isDeployable ? `
+                            <button class="deploy-btn" onclick="deployStructure('${item.resource_name}', ${selectedUnit.id})">
+                                🚀 Deploy
+                            </button>
+                        ` : ''}
                     </div>
                 `;
                 

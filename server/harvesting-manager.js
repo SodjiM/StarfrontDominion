@@ -24,6 +24,12 @@ class HarvestingManager {
                 return { success: false, error: 'Ship not found' };
             }
             
+            // Check if ship can mine
+            const shipMeta = JSON.parse(ship.meta || '{}');
+            if (!shipMeta.canMine) {
+                return { success: false, error: 'This ship cannot mine resources' };
+            }
+            
             // Validate resource node exists and is harvestable
             const resourceNode = await this.getResourceNodeInfo(resourceNodeId);
             if (!resourceNode) {

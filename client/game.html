@@ -1195,6 +1195,199 @@
             color: #ccc;
             line-height: 1.4;
         }
+
+        /* Build Modal Styles */
+        .build-modal {
+            max-width: 800px;
+            width: 100%;
+        }
+
+        .build-tabs {
+            display: flex;
+            background: rgba(40, 40, 60, 0.9);
+            border-bottom: 1px solid #444;
+            padding: 0;
+            margin-bottom: 20px;
+        }
+
+        .build-tab {
+            flex: 1;
+            padding: 12px 20px;
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-bottom: 2px solid transparent;
+            font-size: 1em;
+        }
+
+        .build-tab:hover {
+            color: #64b5f6;
+            background: rgba(100, 181, 246, 0.1);
+        }
+
+        .build-tab.active {
+            color: #64b5f6;
+            background: rgba(100, 181, 246, 0.2);
+            border-bottom-color: #64b5f6;
+        }
+
+        .build-resources {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .resource-display {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1.1em;
+        }
+
+        .resource-icon {
+            font-size: 1.2em;
+        }
+
+        .resource-name {
+            color: #ccc;
+        }
+
+        .resource-quantity {
+            color: #4caf50;
+            font-weight: bold;
+        }
+
+        .build-tab-content {
+            min-height: 400px;
+        }
+
+        .build-tab-content.hidden {
+            display: none;
+        }
+
+        .build-section h3 {
+            color: #64b5f6;
+            margin-bottom: 20px;
+            font-size: 1.2em;
+        }
+
+        .build-options {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .build-option {
+            display: flex;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.2s ease;
+        }
+
+        .build-option:hover:not(.disabled) {
+            background: rgba(100, 181, 246, 0.1);
+            border-color: rgba(100, 181, 246, 0.3);
+        }
+
+        .build-option.disabled {
+            opacity: 0.5;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .build-info {
+            flex: 1;
+            margin-right: 20px;
+        }
+
+        .build-name {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #64b5f6;
+            margin-bottom: 8px;
+        }
+
+        .build-description {
+            color: #ccc;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+        }
+
+        .build-stats {
+            color: #888;
+            font-size: 0.85em;
+            line-height: 1.4;
+        }
+
+        .build-cost {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 10px;
+            min-width: 120px;
+        }
+
+        .cost-item {
+            color: #ffa726;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .build-btn {
+            background: linear-gradient(45deg, #4caf50, #45a049);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: bold;
+            transition: all 0.2s;
+            min-width: 80px;
+        }
+
+        .build-btn:hover:not(.disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+        }
+
+        .build-btn.disabled {
+            background: #666;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        /* Cargo Actions and Deploy Button */
+        .cargo-actions {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 8px;
+            min-width: 120px;
+        }
+
+        .deploy-btn {
+            background: linear-gradient(45deg, #2196f3, #1976d2);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: bold;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .deploy-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 8px rgba(33, 150, 243, 0.3);
+        }
     </style>
 </head>
 <body>

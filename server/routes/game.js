@@ -178,7 +178,10 @@ class GameWorldManager {
                             scanRange: 8,
                             movementSpeed: 4,
                             cargoCapacity: 10,
-                            harvestRate: 1.0
+                            harvestRate: 1.0,
+                            canMine: true,
+                            canActiveScan: true,
+                            shipType: 'explorer'
                         });
                         
                         db.run(
@@ -1190,6 +1193,333 @@ router.post('/transfer', (req, res) => {
             console.error('Error transferring resources:', error);
             res.status(500).json({ error: 'Failed to transfer resources' });
         });
+});
+
+// Ship type definitions
+const SHIP_TYPES = {
+    'explorer': {
+        name: 'Explorer Ship',
+        emoji: '🔍',
+        cargoCapacity: 10,
+        movementSpeed: 4,
+        harvestRate: 1.0,
+        canMine: true,
+        canActiveScan: true,
+        hp: 50,
+        maxHp: 50,
+        scanRange: 8
+    },
+    'mining-vessel': {
+        name: 'Mining Vessel',
+        emoji: '⛏️',
+        cargoCapacity: 20,
+        movementSpeed: 3,
+        harvestRate: 2.0, // 2x mining speed
+        canMine: true,
+        canActiveScan: false,
+        hp: 60,
+        maxHp: 60,
+        scanRange: 6
+    },
+    'logistics': {
+        name: 'Logistics Ship',
+        emoji: '🚚',
+        cargoCapacity: 50,
+        movementSpeed: 2,
+        harvestRate: 0, // Cannot mine
+        canMine: false,
+        canActiveScan: false,
+        hp: 40,
+        maxHp: 40,
+        scanRange: 4
+    }
+};
+
+// Structure type definitions (as cargo items)
+const STRUCTURE_TYPES = {
+    'storage-box': {
+        name: 'Storage Box',
+        emoji: '📦',
+        description: 'Deployable storage structure',
+        cargoCapacity: 25,
+        deployable: true
+    },
+    'warp-beacon': {
+        name: 'Warp Beacon',
+        emoji: '🌌',
+        description: 'Deployable warp destination',
+        deployable: true,
+        publicAccess: true
+    }
+};
+
+// Build ship endpoint
+router.post('/build-ship', (req, res) => {
+    const { stationId, shipType, cost, userId } = req.body;
+    
+    // Validate ship type
+    if (!SHIP_TYPES[shipType]) {
+        return res.status(400).json({ error: 'Invalid ship type' });
+    }
+    
+    const shipTemplate = SHIP_TYPES[shipType];
+    
+    // Verify station ownership
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
+        [stationId, userId, 'starbase'], (err, station) => {
+        if (err) {
+            console.error('Error finding station:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!station) {
+            return res.status(404).json({ error: 'Station not found or not owned by player' });
+        }
+        
+        // Check and consume resources
+        CargoManager.removeResourceFromCargo(stationId, 'rock', cost, false)
+            .then(result => {
+                if (!result.success) {
+                    return res.status(400).json({ error: result.error || 'Insufficient resources' });
+                }
+                
+                // Create ship adjacent to station
+                const shipName = `${shipTemplate.name} ${Math.floor(Math.random() * 1000)}`;
+                const shipMeta = JSON.stringify({
+                    name: shipName,
+                    hp: shipTemplate.hp,
+                    maxHp: shipTemplate.maxHp,
+                    scanRange: shipTemplate.scanRange,
+                    movementSpeed: shipTemplate.movementSpeed,
+                    cargoCapacity: shipTemplate.cargoCapacity,
+                    harvestRate: shipTemplate.harvestRate,
+                    canMine: shipTemplate.canMine,
+                    canActiveScan: shipTemplate.canActiveScan,
+                    shipType: shipType
+                });
+                
+                // Find adjacent position
+                const spawnX = station.x + (Math.random() < 0.5 ? -1 : 1);
+                const spawnY = station.y + (Math.random() < 0.5 ? -1 : 1);
+                
+                db.run(
+                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
+                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta],
+                    function(shipErr) {
+                        if (shipErr) {
+                            console.error('Error creating ship:', shipErr);
+                            return res.status(500).json({ error: 'Failed to create ship' });
+                        }
+                        
+                        const shipId = this.lastID;
+                        console.log(`🚢 Built ${shipName} (ID: ${shipId}) for user ${userId}`);
+                        
+                        // Initialize ship cargo
+                        CargoManager.initializeShipCargo(shipId, shipTemplate.cargoCapacity)
+                            .then(() => {
+                                res.json({ 
+                                    success: true, 
+                                    shipName: shipName,
+                                    shipId: shipId
+                                });
+                            })
+                            .catch(cargoErr => {
+                                console.error('Error initializing ship cargo:', cargoErr);
+                                res.json({ 
+                                    success: true, 
+                                    shipName: shipName,
+                                    shipId: shipId,
+                                    warning: 'Ship created but cargo initialization failed'
+                                });
+                            });
+                    }
+                );
+            })
+            .catch(error => {
+                console.error('Error consuming resources:', error);
+                res.status(500).json({ error: 'Failed to consume resources' });
+            });
+    });
+});
+
+// Build structure endpoint (creates cargo item)
+router.post('/build-structure', (req, res) => {
+    const { stationId, structureType, cost, userId } = req.body;
+    
+    // Validate structure type
+    if (!STRUCTURE_TYPES[structureType]) {
+        return res.status(400).json({ error: 'Invalid structure type' });
+    }
+    
+    const structureTemplate = STRUCTURE_TYPES[structureType];
+    
+    // Verify station ownership
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
+        [stationId, userId, 'starbase'], (err, station) => {
+        if (err) {
+            console.error('Error finding station:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!station) {
+            return res.status(404).json({ error: 'Station not found or not owned by player' });
+        }
+        
+        // Check and consume resources
+        CargoManager.removeResourceFromCargo(stationId, 'rock', cost, false)
+            .then(result => {
+                if (!result.success) {
+                    return res.status(400).json({ error: result.error || 'Insufficient resources' });
+                }
+                
+                // Add structure to station cargo as an item
+                // First, ensure we have a structure resource type
+                db.get('SELECT id FROM resource_types WHERE resource_name = ?', [structureType], (typeErr, resourceType) => {
+                    if (typeErr) {
+                        console.error('Error finding resource type:', typeErr);
+                        return res.status(500).json({ error: 'Database error' });
+                    }
+                    
+                    if (!resourceType) {
+                        // Create the resource type if it doesn't exist
+                        db.run(
+                            'INSERT INTO resource_types (resource_name, category, base_size, base_value, description, icon_emoji, color_hex) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                            [structureType, 'structure', 5, 10, structureTemplate.description, structureTemplate.emoji, '#64b5f6'],
+                            function(insertErr) {
+                                if (insertErr) {
+                                    console.error('Error creating resource type:', insertErr);
+                                    return res.status(500).json({ error: 'Failed to create structure type' });
+                                }
+                                
+                                const newResourceTypeId = this.lastID;
+                                addStructureToStation(stationId, newResourceTypeId);
+                            }
+                        );
+                    } else {
+                        addStructureToStation(stationId, resourceType.id);
+                    }
+                });
+                
+                function addStructureToStation(stationId, resourceTypeId) {
+                    CargoManager.addResourceToCargo(stationId, structureType, 1, false)
+                        .then(addResult => {
+                            if (addResult.success) {
+                                console.log(`🏗️ Built ${structureTemplate.name} for user ${userId}`);
+                                res.json({ 
+                                    success: true, 
+                                    structureName: structureTemplate.name
+                                });
+                            } else {
+                                res.status(500).json({ error: 'Failed to add structure to cargo' });
+                            }
+                        })
+                        .catch(addError => {
+                            console.error('Error adding structure to cargo:', addError);
+                            res.status(500).json({ error: 'Failed to add structure to cargo' });
+                        });
+                }
+            })
+            .catch(error => {
+                console.error('Error consuming resources:', error);
+                res.status(500).json({ error: 'Failed to consume resources' });
+            });
+    });
+});
+
+// Deploy structure endpoint
+router.post('/deploy-structure', (req, res) => {
+    const { shipId, structureType, userId } = req.body;
+    
+    // Validate structure type
+    if (!STRUCTURE_TYPES[structureType]) {
+        return res.status(400).json({ error: 'Invalid structure type' });
+    }
+    
+    const structureTemplate = STRUCTURE_TYPES[structureType];
+    
+    // Verify ship ownership
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
+        [shipId, userId, 'ship'], (err, ship) => {
+        if (err) {
+            console.error('Error finding ship:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!ship) {
+            return res.status(404).json({ error: 'Ship not found or not owned by player' });
+        }
+        
+        // Check if ship has the structure in cargo and remove it
+        CargoManager.removeResourceFromCargo(shipId, structureType, 1, true) // Use legacy table for ships
+            .then(result => {
+                if (!result.success) {
+                    return res.status(400).json({ error: result.error || 'Structure not found in ship cargo' });
+                }
+                
+                // Find adjacent position for deployment
+                const deployX = ship.x + (Math.random() < 0.5 ? -1 : 1);
+                const deployY = ship.y + (Math.random() < 0.5 ? -1 : 1);
+                
+                // Create structure metadata
+                const structureMeta = JSON.stringify({
+                    name: `${structureTemplate.name} ${Math.floor(Math.random() * 1000)}`,
+                    structureType: structureType,
+                    hp: 100,
+                    maxHp: 100,
+                    cargoCapacity: structureTemplate.cargoCapacity || 0,
+                    publicAccess: structureTemplate.publicAccess || false
+                });
+                
+                // Determine structure type in database
+                const dbStructureType = structureType === 'warp-beacon' ? 'warp-beacon' : 'storage-structure';
+                
+                db.run(
+                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
+                    [ship.sector_id, dbStructureType, deployX, deployY, userId, structureMeta],
+                    function(structureErr) {
+                        if (structureErr) {
+                            console.error('Error creating structure:', structureErr);
+                            return res.status(500).json({ error: 'Failed to deploy structure' });
+                        }
+                        
+                        const structureId = this.lastID;
+                        console.log(`🏗️ Deployed ${structureTemplate.name} (ID: ${structureId}) for user ${userId} at (${deployX}, ${deployY})`);
+                        
+                        // Initialize cargo for storage structures
+                        if (structureTemplate.cargoCapacity > 0) {
+                            CargoManager.initializeObjectCargo(structureId, structureTemplate.cargoCapacity)
+                                .then(() => {
+                                    console.log(`📦 Initialized cargo system for deployed structure ${structureId}`);
+                                    res.json({ 
+                                        success: true, 
+                                        structureName: structureTemplate.name,
+                                        structureId: structureId
+                                    });
+                                })
+                                .catch(cargoErr => {
+                                    console.error('Error initializing structure cargo:', cargoErr);
+                                    res.json({ 
+                                        success: true, 
+                                        structureName: structureTemplate.name,
+                                        structureId: structureId,
+                                        warning: 'Structure deployed but cargo initialization failed'
+                                    });
+                                });
+                        } else {
+                            res.json({ 
+                                success: true, 
+                                structureName: structureTemplate.name,
+                                structureId: structureId
+                            });
+                        }
+                    }
+                );
+            })
+            .catch(error => {
+                console.error('Error removing structure from cargo:', error);
+                res.status(500).json({ error: 'Failed to remove structure from cargo' });
+            });
+    });
 });
 
 module.exports = { router, GameWorldManager }; 
