@@ -118,6 +118,51 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Create or migrate object visibility memory table (per-object memory, not per-tile)
+        await new Promise((resolve, reject) => {
+            console.log('🔧 Ensuring object_visibility table exists...');
+            db.run(
+                `CREATE TABLE IF NOT EXISTS object_visibility (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    sector_id INTEGER NOT NULL,
+                    object_id INTEGER NOT NULL,
+                    last_seen_turn INTEGER,
+                    last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    best_visibility_level INTEGER DEFAULT 1,
+                    UNIQUE(game_id, user_id, sector_id, object_id)
+                )`,
+                (err) => {
+                    if (err) {
+                        console.error('Error creating object_visibility table:', err);
+                        return reject(err);
+                    }
+                    // Helpful indexes
+                    db.run(
+                        'CREATE INDEX IF NOT EXISTS idx_objvis_lookup ON object_visibility(game_id, user_id, sector_id)',
+                        (idxErr) => {
+                            if (idxErr) {
+                                console.error('Error creating index idx_objvis_lookup:', idxErr);
+                                return reject(idxErr);
+                            }
+                            db.run(
+                                'CREATE INDEX IF NOT EXISTS idx_objvis_object ON object_visibility(object_id)',
+                                (idxErr2) => {
+                                    if (idxErr2) {
+                                        console.error('Error creating index idx_objvis_object:', idxErr2);
+                                        return reject(idxErr2);
+                                    }
+                                    console.log('✅ object_visibility table ready');
+                                    resolve();
+                                }
+                            );
+                        }
+                    );
+                }
+            );
+        });
+
         // Insert sample games
         await new Promise((resolve, reject) => {
             db.run(`INSERT OR IGNORE INTO games (id, name, mode, status) VALUES 

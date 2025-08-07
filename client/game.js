@@ -23,6 +23,8 @@ class GameClient {
         this.movementHistoryCache = new Map(); // PHASE 2: Cache movement history by ship ID
         this.warpMode = false; // Track if we're in warp target selection mode
         this.warpTargets = []; // Available warp targets (celestial objects)
+        this.fogEnabled = true;
+        this.fogOffscreen = null;
     }
 
     // Initialize the game
@@ -744,8 +746,52 @@ class GameClient {
         // Draw selection highlight
         this.drawSelection(ctx, centerX, centerY);
         
+        // Draw fog of war overlay last for clarity
+        if (this.fogEnabled) {
+            this.drawFogOfWar(ctx, centerX, centerY);
+        }
+
         // Render mini-map
         this.renderMiniMap();
+    }
+
+    // Draw fog of war: dim everything, then punch radial gradients around owned sensors
+    drawFogOfWar(ctx, centerX, centerY) {
+        const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'starbase' || obj.type === 'sensor-tower'));
+        if (ownedSensors.length === 0) return;
+        const canvas = this.canvas;
+        // Create offscreen buffer if needed
+        if (!this.fogOffscreen || this.fogOffscreen.width !== canvas.width || this.fogOffscreen.height !== canvas.height) {
+            this.fogOffscreen = document.createElement('canvas');
+            this.fogOffscreen.width = canvas.width;
+            this.fogOffscreen.height = canvas.height;
+        }
+        const fctx = this.fogOffscreen.getContext('2d');
+        // Base dark overlay
+        fctx.clearRect(0, 0, this.fogOffscreen.width, this.fogOffscreen.height);
+        fctx.fillStyle = 'rgba(0,0,0,0.6)';
+        fctx.fillRect(0, 0, this.fogOffscreen.width, this.fogOffscreen.height);
+        // Punch out gradients for each sensor
+        fctx.globalCompositeOperation = 'destination-out';
+        ownedSensors.forEach(sensor => {
+            const meta = sensor.meta || {};
+            const scanRange = meta.scanRange || 5;
+            const screenX = Math.round((sensor.x - this.camera.x) * this.tileSize + centerX);
+            const screenY = Math.round((sensor.y - this.camera.y) * this.tileSize + centerY);
+            const radiusPx = scanRange * this.tileSize;
+            const gradient = fctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, Math.max(1, radiusPx));
+            // Fully clear near center, fade to no-clear at edge for a hazy boundary
+            gradient.addColorStop(0, 'rgba(0,0,0,1)');
+            gradient.addColorStop(0.7, 'rgba(0,0,0,0.4)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            fctx.fillStyle = gradient;
+            fctx.beginPath();
+            fctx.arc(screenX, screenY, Math.max(1, radiusPx), 0, Math.PI * 2);
+            fctx.fill();
+        });
+        fctx.globalCompositeOperation = 'source-over';
+        // Draw the fog layer on top
+        ctx.drawImage(this.fogOffscreen, 0, 0);
     }
 
     // Update sector overview title
@@ -1815,6 +1861,34 @@ class GameClient {
             ctx.fillStyle = obj.owner_id === this.userId ? '#4caf50' : '#ff5722';
             ctx.fillRect(x - size/2, y - size/2, size, size);
         });
+        
+        // Fog mask on minimap (mirror of main fog)
+        if (this.fogEnabled) {
+            const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'starbase' || obj.type === 'sensor-tower'));
+            if (ownedSensors.length > 0) {
+                // Base dark overlay
+                ctx.save();
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalCompositeOperation = 'destination-out';
+                ownedSensors.forEach(sensor => {
+                    const meta = sensor.meta || {};
+                    const scanRange = meta.scanRange || 5;
+                    const sx = sensor.x * scaleX;
+                    const sy = sensor.y * scaleY;
+                    const radius = scanRange * Math.max(scaleX, scaleY);
+                    const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(1, radius));
+                    gradient.addColorStop(0, 'rgba(0,0,0,1)');
+                    gradient.addColorStop(0.7, 'rgba(0,0,0,0.4)');
+                    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, Math.max(1, radius), 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                ctx.restore();
+            }
+        }
         
         // Draw camera viewport
         const viewWidth = (this.canvas.width / this.tileSize) * scaleX;
