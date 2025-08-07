@@ -44,14 +44,12 @@ class HarvestingManager {
                 };
             }
             
-            // Check if ship is already harvesting
+            // Check if ship is already harvesting and clean up old tasks
             const existingTask = await this.getActiveHarvestingTask(shipId);
             if (existingTask) {
-                return { 
-                    success: false, 
-                    error: 'Ship is already harvesting. Stop current operation first.',
-                    currentTask: existingTask
-                };
+                // Cancel the existing task to allow new one
+                await this.updateHarvestingTaskStatus(existingTask.id, 'cancelled');
+                console.log(`🔄 Cancelled existing harvesting task ${existingTask.id} for ship ${shipId} to start new one`);
             }
             
             // Calculate harvest rate (base rate * ship modifier * node difficulty)
@@ -192,8 +190,8 @@ class HarvestingManager {
         // Calculate actual harvest amount (limited by available resources)
         const harvestAmount = Math.min(task.harvest_rate, task.resource_amount);
         
-        // Try to add resources to ship cargo
-        const cargoResult = await CargoManager.addResourceToCargo(task.ship_id, task.resource_name, harvestAmount);
+        // Try to add resources to ship cargo (use legacy method for backward compatibility)
+        const cargoResult = await CargoManager.addResourceToShipCargo(task.ship_id, task.resource_name, harvestAmount);
         
         let actualHarvested = 0;
         
@@ -201,7 +199,7 @@ class HarvestingManager {
             actualHarvested = harvestAmount;
         } else if (cargoResult.maxQuantity > 0) {
             // Cargo partially full - harvest what we can
-            const partialResult = await CargoManager.addResourceToCargo(task.ship_id, task.resource_name, cargoResult.maxQuantity);
+            const partialResult = await CargoManager.addResourceToShipCargo(task.ship_id, task.resource_name, cargoResult.maxQuantity);
             if (partialResult.success) {
                 actualHarvested = cargoResult.maxQuantity;
             }

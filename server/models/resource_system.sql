@@ -48,6 +48,19 @@ CREATE TABLE IF NOT EXISTS ship_cargo (
     UNIQUE(ship_id, resource_type_id)
 );
 
+-- Object Cargo System - Universal cargo system for ships, structures, etc.
+-- This extends the ship_cargo table to support all object types
+CREATE TABLE IF NOT EXISTS object_cargo (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    object_id INTEGER NOT NULL,
+    resource_type_id INTEGER NOT NULL,
+    quantity INTEGER DEFAULT 0,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (object_id) REFERENCES sector_objects(id),
+    FOREIGN KEY (resource_type_id) REFERENCES resource_types(id),
+    UNIQUE(object_id, resource_type_id)
+);
+
 -- Active Harvesting Tasks - Ships currently harvesting resources
 CREATE TABLE IF NOT EXISTS harvesting_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

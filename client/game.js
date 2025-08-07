@@ -85,6 +85,27 @@ class GameClient {
 
         this.socket.on('player-locked-turn', (data) => {
             this.addLogEntry(`Player ${data.userId} locked turn ${data.turnNumber}`, 'info');
+            
+            // If this is the current player who locked the turn, update UI immediately
+            if (data.userId === this.userId) {
+                // Update the client-side turn locked status
+                this.turnLocked = true;
+                
+                // Update the button UI immediately
+                const lockBtn = document.getElementById('lockTurnBtn');
+                if (lockBtn) {
+                    lockBtn.textContent = '🔒 Turn Locked';
+                    lockBtn.classList.add('locked');
+                }
+                
+                // Also update the game state for consistency
+                if (this.gameState) {
+                    this.gameState.turnLocked = true;
+                }
+                
+                // Refresh the unit details panel to disable action buttons
+                this.updateUnitDetails();
+            }
         });
 
         this.socket.on('turn-resolving', (data) => {
@@ -239,6 +260,9 @@ class GameClient {
         // Update game title with sector name
         const gameTitle = document.getElementById('gameTitle');
         gameTitle.innerHTML = `🌌 ${this.gameState.sector.name || 'Your System'}`;
+        
+        // Update player avatar
+        this.updatePlayerAvatar();
         
         // Update turn lock status
         const lockBtn = document.getElementById('lockTurnBtn');
@@ -416,6 +440,18 @@ class GameClient {
             // STAGE C FIX: Only auto-select on first load, not every turn
             this.selectUnit(this.units[0].id);
             this.isFirstLoad = false;
+        }
+    }
+
+    // Update player avatar display
+    updatePlayerAvatar() {
+        const avatarImg = document.getElementById('playerAvatar');
+        if (!avatarImg || !this.gameState?.playerSetup) return;
+        
+        const avatar = this.gameState.playerSetup.avatar;
+        if (avatar) {
+            avatarImg.src = `assets/avatars/${avatar}.png`;
+            avatarImg.alt = `${avatar} avatar`;
         }
     }
 
@@ -3248,14 +3284,15 @@ function startMining(shipId, resourceNodeId, resourceName) {
 
 async function showCargo() {
     if (!gameClient || !gameClient.selectedUnit) {
-        gameClient?.addLogEntry('No ship selected', 'warning');
+        gameClient?.addLogEntry('No unit selected', 'warning');
         return;
     }
     
-    const shipId = gameClient.selectedUnit.id;
+    const selectedUnit = gameClient.selectedUnit;
+    const unitType = selectedUnit.type === 'ship' ? 'Ship' : 'Structure';
     
     try {
-        const response = await fetch(`/game/cargo/${shipId}?userId=${gameClient.userId}`);
+        const response = await fetch(`/game/cargo/${selectedUnit.id}?userId=${gameClient.userId}`);
         const data = await response.json();
         
         if (!response.ok) {
@@ -3265,13 +3302,22 @@ async function showCargo() {
         
         const cargo = data.cargo;
         
+        // Find adjacent objects for transfer options
+        const adjacentObjects = gameClient.gameState.objects.filter(obj => {
+            if (obj.id === selectedUnit.id || obj.owner_id !== gameClient.userId) return false;
+            
+            const dx = Math.abs(obj.x - selectedUnit.x);
+            const dy = Math.abs(obj.y - selectedUnit.y);
+            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+        });
+        
         // Create cargo display modal
         const cargoDisplay = document.createElement('div');
         cargoDisplay.className = 'cargo-display';
         
         const header = document.createElement('div');
         header.innerHTML = `
-            <h3>📦 Ship Cargo</h3>
+            <h3>📦 ${unitType} Cargo</h3>
             <div class="cargo-summary">
                 <div class="capacity-bar">
                     <div class="capacity-fill" style="width: ${(cargo.spaceUsed / cargo.capacity) * 100}%"></div>
@@ -3280,6 +3326,26 @@ async function showCargo() {
             </div>
         `;
         cargoDisplay.appendChild(header);
+        
+        // Show transfer options if adjacent objects exist
+        if (adjacentObjects.length > 0) {
+            const transferSection = document.createElement('div');
+            transferSection.className = 'transfer-section';
+            transferSection.innerHTML = `
+                <h4>🔄 Transfer Options</h4>
+                <p>Adjacent units available for resource transfer:</p>
+            `;
+            
+            adjacentObjects.forEach(obj => {
+                const transferBtn = document.createElement('button');
+                transferBtn.className = 'transfer-target-btn';
+                transferBtn.innerHTML = `${gameClient.getUnitIcon(obj.type)} ${obj.meta.name || obj.type} (${obj.x}, ${obj.y})`;
+                transferBtn.onclick = () => showTransferModal(selectedUnit.id, obj.id, obj.meta.name || obj.type);
+                transferSection.appendChild(transferBtn);
+            });
+            
+            cargoDisplay.appendChild(transferSection);
+        }
         
         if (cargo.items.length === 0) {
             const emptyMessage = document.createElement('div');
@@ -3311,7 +3377,7 @@ async function showCargo() {
         }
         
         UI.showModal({
-            title: '📦 Ship Cargo',
+            title: `📦 ${unitType} Cargo`,
             content: cargoDisplay,
             actions: [
                 {
@@ -3326,6 +3392,123 @@ async function showCargo() {
     } catch (error) {
         console.error('Error getting cargo:', error);
         gameClient.addLogEntry('Failed to get cargo information', 'error');
+    }
+}
+
+// Show transfer modal for resource transfers between objects
+async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
+    try {
+        // Get cargo from source object
+        const response = await fetch(`/game/cargo/${fromObjectId}?userId=${gameClient.userId}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            gameClient.addLogEntry(data.error || 'Failed to get cargo data', 'error');
+            return;
+        }
+        
+        const cargo = data.cargo;
+        
+        if (cargo.items.length === 0) {
+            gameClient.addLogEntry('No resources to transfer', 'warning');
+            return;
+        }
+        
+        // Create transfer modal
+        const transferDisplay = document.createElement('div');
+        transferDisplay.className = 'transfer-display';
+        
+        const header = document.createElement('div');
+        header.innerHTML = `
+            <h3>🔄 Transfer Resources</h3>
+            <p>Transfer resources to: <strong>${toObjectName}</strong></p>
+        `;
+        transferDisplay.appendChild(header);
+        
+        // Create list of transferable resources
+        cargo.items.forEach(item => {
+            const transferItem = document.createElement('div');
+            transferItem.className = 'transfer-item';
+            
+            transferItem.innerHTML = `
+                <div class="transfer-item-info">
+                    <span class="cargo-icon" style="color: ${item.color_hex}">${item.icon_emoji}</span>
+                    <div class="transfer-details">
+                        <div class="transfer-name">${item.resource_name}</div>
+                        <div class="transfer-available">Available: ${item.quantity} units</div>
+                    </div>
+                </div>
+                <div class="transfer-controls">
+                    <input type="number" class="transfer-quantity" min="1" max="${item.quantity}" value="1" id="transfer-${item.resource_name}">
+                    <button class="transfer-btn" onclick="performTransfer('${fromObjectId}', '${toObjectId}', '${item.resource_name}', document.getElementById('transfer-${item.resource_name}').value, '${toObjectName}')">
+                        Transfer
+                    </button>
+                </div>
+            `;
+            
+            transferDisplay.appendChild(transferItem);
+        });
+        
+        UI.showModal({
+            title: '🔄 Transfer Resources',
+            content: transferDisplay,
+            actions: [
+                {
+                    text: 'Cancel',
+                    style: 'secondary',
+                    action: () => true
+                }
+            ],
+            className: 'transfer-modal'
+        });
+        
+    } catch (error) {
+        console.error('Error showing transfer modal:', error);
+        gameClient.addLogEntry('Failed to show transfer options', 'error');
+    }
+}
+
+// Perform resource transfer
+async function performTransfer(fromObjectId, toObjectId, resourceName, quantity, toObjectName) {
+    const transferQuantity = parseInt(quantity);
+    
+    if (!transferQuantity || transferQuantity <= 0) {
+        gameClient.addLogEntry('Invalid transfer quantity', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/game/transfer', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                fromObjectId: parseInt(fromObjectId),
+                toObjectId: parseInt(toObjectId),
+                resourceName: resourceName,
+                quantity: transferQuantity,
+                userId: gameClient.userId
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            gameClient.addLogEntry(`Successfully transferred ${transferQuantity} ${resourceName} to ${toObjectName}`, 'success');
+            UI.closeModal(); // Close transfer modal
+            
+            // Refresh cargo display if still open
+            if (gameClient.selectedUnit && gameClient.selectedUnit.id === fromObjectId) {
+                setTimeout(() => showCargo(), 100); // Small delay to ensure modal closes first
+            }
+        } else {
+            gameClient.addLogEntry(result.error || 'Transfer failed', 'error');
+        }
+        
+    } catch (error) {
+        console.error('Error performing transfer:', error);
+        gameClient.addLogEntry('Failed to transfer resources', 'error');
     }
 }
 
@@ -3696,5 +3879,138 @@ function selectGalaxySystem(systemId) {
     } else {
         // Future: Navigate to different system
         gameClient.addLogEntry('Multi-system navigation coming soon!', 'info');
+    }
+}
+
+// Show comprehensive player assets modal
+async function showPlayerAssets() {
+    if (!gameClient || !gameClient.gameState) {
+        gameClient?.addLogEntry('Game state not available', 'warning');
+        return;
+    }
+    
+    try {
+        // Get all player-owned objects (ships and structures)
+        const playerObjects = gameClient.gameState.objects.filter(obj => obj.owner_id === gameClient.userId);
+        
+        if (playerObjects.length === 0) {
+            UI.showAlert('No assets found');
+            return;
+        }
+        
+        // Create assets display
+        const assetsDisplay = document.createElement('div');
+        assetsDisplay.className = 'player-assets-display';
+        
+        // Group objects by system (for now we only have one system, but structure for future)
+        const systemName = gameClient.gameState.sector.name || 'Your System';
+        
+        const systemSection = document.createElement('div');
+        systemSection.className = 'assets-system-section';
+        systemSection.innerHTML = `<h3>🌌 ${systemName}</h3>`;
+        
+        // Get cargo data for each object
+        const assetPromises = playerObjects.map(async (obj) => {
+            let cargoData = null;
+            
+            // Try to get cargo data (works for ships, will be extended for structures)
+            try {
+                const response = await fetch(`/game/cargo/${obj.id}?userId=${gameClient.userId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    cargoData = data.cargo;
+                }
+            } catch (error) {
+                // Cargo not available for this object type yet
+            }
+            
+            return { obj, cargoData };
+        });
+        
+        const assetsWithCargo = await Promise.all(assetPromises);
+        
+        // Display each asset
+        assetsWithCargo.forEach(({ obj, cargoData }) => {
+            const assetItem = document.createElement('div');
+            assetItem.className = 'asset-item';
+            
+            const icon = gameClient.getUnitIcon(obj.type);
+            const name = obj.meta.name || obj.type;
+            const position = `(${obj.x}, ${obj.y})`;
+            
+            let cargoInfo = '';
+            if (cargoData && cargoData.items.length > 0) {
+                const cargoSummary = cargoData.items.map(item => 
+                    `${item.icon_emoji} ${item.quantity} ${item.resource_name}`
+                ).join(', ');
+                cargoInfo = `<div class="asset-cargo">📦 ${cargoSummary}</div>`;
+            } else if (cargoData) {
+                cargoInfo = '<div class="asset-cargo">📦 Empty cargo hold</div>';
+            }
+            
+            assetItem.innerHTML = `
+                <div class="asset-header">
+                    <span class="asset-name">${icon} ${name}</span>
+                    <span class="asset-position">${position}</span>
+                </div>
+                ${cargoInfo}
+            `;
+            
+            systemSection.appendChild(assetItem);
+        });
+        
+        assetsDisplay.appendChild(systemSection);
+        
+        // Calculate total resources
+        const totalResources = new Map();
+        assetsWithCargo.forEach(({ cargoData }) => {
+            if (cargoData && cargoData.items) {
+                cargoData.items.forEach(item => {
+                    const existing = totalResources.get(item.resource_name) || 0;
+                    totalResources.set(item.resource_name, existing + item.quantity);
+                });
+            }
+        });
+        
+        // Add resource summary
+        if (totalResources.size > 0) {
+            const summarySection = document.createElement('div');
+            summarySection.className = 'assets-summary-section';
+            summarySection.innerHTML = '<h3>📊 Total Resources</h3>';
+            
+            const summaryGrid = document.createElement('div');
+            summaryGrid.className = 'resource-summary-grid';
+            
+            totalResources.forEach((quantity, resourceName) => {
+                const resourceItem = document.createElement('div');
+                resourceItem.className = 'resource-summary-item';
+                resourceItem.innerHTML = `
+                    <span class="resource-name">${resourceName}</span>
+                    <span class="resource-quantity">${quantity}</span>
+                `;
+                summaryGrid.appendChild(resourceItem);
+            });
+            
+            summarySection.appendChild(summaryGrid);
+            assetsDisplay.appendChild(summarySection);
+        }
+        
+        // Show modal
+        UI.showModal({
+            title: '📊 Player Assets',
+            content: assetsDisplay,
+            actions: [
+                {
+                    text: 'Close',
+                    style: 'primary',
+                    action: () => true
+                }
+            ],
+            className: 'player-assets-modal'
+        });
+        
+    } catch (error) {
+        console.error('Error showing player assets:', error);
+        gameClient.addLogEntry('Failed to load player assets', 'error');
     }
 } 

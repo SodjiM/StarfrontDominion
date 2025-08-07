@@ -145,7 +145,8 @@ class GameWorldManager {
                     hp: 100,
                     maxHp: 100,
                     scanRange: 15,
-                    pilots: 5
+                    pilots: 5,
+                    cargoCapacity: 50 // Starbases have larger cargo capacity than ships
                 });
                 
                 db.run(
@@ -157,7 +158,17 @@ class GameWorldManager {
                             return onError(err);
                         }
                         
+                        const starbaseId = this.lastID;
                         console.log(`🏭 Created starbase for ${player.username} at (${spawnX}, ${spawnY})`);
+                        
+                        // Initialize cargo system for the starbase
+                        CargoManager.initializeObjectCargo(starbaseId, 50)
+                            .then(() => {
+                                console.log(`📦 Initialized cargo system for starbase ${starbaseId}`);
+                            })
+                            .catch(error => {
+                                console.error('Error initializing starbase cargo:', error);
+                            });
                         
                         // Create starting ship adjacent to starbase
                         const shipMeta = JSON.stringify({
@@ -1116,32 +1127,69 @@ router.get('/resource-nodes/:gameId/:shipId', (req, res) => {
     );
 });
 
-// Get ship cargo
-router.get('/cargo/:shipId', (req, res) => {
-    const { shipId } = req.params;
+// Get object cargo (ships, structures, etc.)
+router.get('/cargo/:objectId', (req, res) => {
+    const { objectId } = req.params;
     const { userId } = req.query;
     
-    // Verify ship ownership
-    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ?', [shipId, userId], (err, ship) => {
+    // Verify object ownership
+    db.get('SELECT type FROM sector_objects WHERE id = ? AND owner_id = ?', [objectId, userId], (err, object) => {
         if (err) {
-            console.error('Error verifying ship ownership:', err);
+            console.error('Error verifying object ownership:', err);
             return res.status(500).json({ error: 'Database error' });
         }
         
-        if (!ship) {
-            return res.status(404).json({ error: 'Ship not found or not owned by player' });
+        if (!object) {
+            return res.status(404).json({ error: 'Object not found or not owned by player' });
         }
         
-        // Get cargo data
-        CargoManager.getShipCargo(shipId)
+        // Get cargo data - use legacy table for ships for backward compatibility
+        const useLegacyTable = object.type === 'ship';
+        CargoManager.getObjectCargo(objectId, useLegacyTable)
             .then(cargo => {
                 res.json({ cargo });
             })
             .catch(error => {
-                console.error('Error getting ship cargo:', error);
-                res.status(500).json({ error: 'Failed to get ship cargo' });
+                console.error('Error getting object cargo:', error);
+                res.status(500).json({ error: 'Failed to get object cargo' });
             });
     });
+});
+
+// Transfer resources between objects
+router.post('/transfer', (req, res) => {
+    const { fromObjectId, toObjectId, resourceName, quantity, userId } = req.body;
+    
+    // Validate input
+    if (!fromObjectId || !toObjectId || !resourceName || !quantity || !userId) {
+        return res.status(400).json({ error: 'Missing required fields: fromObjectId, toObjectId, resourceName, quantity, userId' });
+    }
+    
+    if (quantity <= 0) {
+        return res.status(400).json({ error: 'Quantity must be positive' });
+    }
+    
+    if (fromObjectId === toObjectId) {
+        return res.status(400).json({ error: 'Cannot transfer to the same object' });
+    }
+    
+    // Perform the transfer
+    CargoManager.transferResources(fromObjectId, toObjectId, resourceName, quantity, userId)
+        .then(result => {
+            if (result.success) {
+                res.json({
+                    success: true,
+                    message: `Successfully transferred ${result.quantityTransferred} ${result.resourceName} from ${result.fromObject} to ${result.toObject}`,
+                    transfer: result
+                });
+            } else {
+                res.status(400).json({ error: result.error, details: result });
+            }
+        })
+        .catch(error => {
+            console.error('Error transferring resources:', error);
+            res.status(500).json({ error: 'Failed to transfer resources' });
+        });
 });
 
 module.exports = { router, GameWorldManager }; 

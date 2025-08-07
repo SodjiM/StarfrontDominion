@@ -135,6 +135,46 @@
             color: #b0bec5;
         }
         
+        /* Player section styles */
+        .player-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid rgba(100, 181, 246, 0.3);
+        }
+        
+        .player-avatar {
+            margin-bottom: 10px;
+        }
+        
+        .player-avatar img {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid rgba(100, 181, 246, 0.5);
+            object-fit: cover;
+        }
+        
+        .player-assets-btn {
+            background: linear-gradient(45deg, #1976d2, #1565c0);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: bold;
+            transition: all 0.2s;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+        
+        .player-assets-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(25, 118, 210, 0.3);
+        }
+        
         /* Center map area */
         .map-container {
             grid-area: map;
@@ -864,6 +904,218 @@
             flex-direction: column;
         }
 
+        /* Player assets modal styles */
+        .player-assets-modal .modal-content {
+            max-width: 700px;
+            max-height: 80vh;
+        }
+
+        .player-assets-display {
+            font-family: inherit;
+        }
+
+        .assets-system-section {
+            margin-bottom: 25px;
+        }
+
+        .assets-system-section h3 {
+            color: #64b5f6;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 2px solid rgba(100, 181, 246, 0.3);
+            padding-bottom: 5px;
+        }
+
+        .asset-item {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+
+        .asset-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .asset-name {
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .asset-position {
+            color: #b0bec5;
+            font-size: 0.9em;
+        }
+
+        .asset-cargo {
+            color: #e0e0e0;
+            font-size: 0.9em;
+            margin-top: 5px;
+            padding-top: 5px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .assets-summary-section {
+            margin-top: 25px;
+            padding-top: 15px;
+            border-top: 2px solid rgba(100, 181, 246, 0.3);
+        }
+
+        .assets-summary-section h3 {
+            color: #4caf50;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+
+        .resource-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+        }
+
+        .resource-summary-item {
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            border-radius: 6px;
+            padding: 8px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .resource-name {
+            color: #ffffff;
+            font-size: 0.9em;
+        }
+
+        .resource-quantity {
+            color: #4caf50;
+            font-weight: bold;
+        }
+
+        /* Transfer system styles */
+        .transfer-section {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 2px solid rgba(100, 181, 246, 0.3);
+        }
+
+        .transfer-section h4 {
+            color: #64b5f6;
+            margin-bottom: 10px;
+            font-size: 1em;
+        }
+
+        .transfer-section p {
+            color: #b0bec5;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
+        .transfer-target-btn {
+            display: block;
+            width: 100%;
+            background: rgba(100, 181, 246, 0.1);
+            border: 1px solid rgba(100, 181, 246, 0.3);
+            color: #ffffff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .transfer-target-btn:hover {
+            background: rgba(100, 181, 246, 0.2);
+            border-color: rgba(100, 181, 246, 0.5);
+        }
+
+        /* Transfer modal styles */
+        .transfer-modal .modal-content {
+            max-width: 500px;
+            max-height: 70vh;
+        }
+
+        .transfer-display {
+            font-family: inherit;
+        }
+
+        .transfer-item {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .transfer-item-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .transfer-details {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .transfer-name {
+            font-weight: bold;
+            color: #ffffff;
+            margin-bottom: 2px;
+        }
+
+        .transfer-available {
+            color: #b0bec5;
+            font-size: 0.9em;
+        }
+
+        .transfer-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .transfer-quantity {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            width: 60px;
+            font-size: 0.9em;
+        }
+
+        .transfer-quantity:focus {
+            border-color: #64b5f6;
+            outline: none;
+        }
+
+        .transfer-btn {
+            background: linear-gradient(45deg, #4caf50, #45a049);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .transfer-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 8px rgba(76, 175, 80, 0.3);
+        }
+
         .map-tabs {
             display: flex;
             background: rgba(40, 40, 60, 0.9);
@@ -964,8 +1216,19 @@
             </div>
         </div>
         
-        <!-- Left Panel - Units -->
+        <!-- Left Panel - Player & Units -->
         <div class="left-panel">
+            <!-- Player Section -->
+            <div class="player-section">
+                <div class="player-avatar">
+                    <img id="playerAvatar" src="" alt="Player Avatar" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiM2NGI1ZjYiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI4IiB5PSI4Ij4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxOVYyMEgzVjE5TDUgMTcuMjVWMTFIMTBWMTIuNUgxNFYxMUgxOVYxNy4yNUwyMSAxOVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K';">
+                </div>
+                <button class="player-assets-btn" onclick="showPlayerAssets()">
+                    📊 Player Assets
+                </button>
+            </div>
+            
+            <!-- Fleet Section -->
             <div class="panel-title">🚢 Your Fleet</div>
             <div id="unitsList" class="loading">Loading units...</div>
         </div>
