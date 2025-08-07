@@ -165,9 +165,14 @@ class GameWorldManager {
                         CargoManager.initializeObjectCargo(starbaseId, 50)
                             .then(() => {
                                 console.log(`📦 Initialized cargo system for starbase ${starbaseId}`);
+                                // Add 5 starting rocks for testing
+                                return CargoManager.addResourceToCargo(starbaseId, 'rock', 5, false);
+                            })
+                            .then(() => {
+                                console.log(`🪨 Added 5 starting rocks to starbase ${starbaseId}`);
                             })
                             .catch(error => {
-                                console.error('Error initializing starbase cargo:', error);
+                                console.error('Error initializing starbase cargo or adding rocks:', error);
                             });
                         
                         // Create starting ship adjacent to starbase
@@ -445,15 +450,19 @@ class GameWorldManager {
     }
     
     // Get game state for a specific player (works asynchronously)
-    static async getPlayerGameState(gameId, userId) {
+    static async getPlayerGameState(gameId, userId, specificSectorId = null) {
         return new Promise((resolve, reject) => {
-            // Get player's sector
-            db.get(
-                'SELECT * FROM sectors WHERE game_id = ? AND owner_id = ?',
-                [gameId, userId],
-                (err, sector) => {
-                    if (err) return reject(err);
-                    if (!sector) return reject(new Error('Sector not found for player'));
+            // Get player's sector or specific sector
+            const sectorQuery = specificSectorId ? 
+                'SELECT * FROM sectors WHERE id = ? AND game_id = ?' :
+                'SELECT * FROM sectors WHERE game_id = ? AND owner_id = ?';
+            const sectorParams = specificSectorId ? 
+                [specificSectorId, gameId] : 
+                [gameId, userId];
+                
+            db.get(sectorQuery, sectorParams, (err, sector) => {
+                if (err) return reject(err);
+                if (!sector) return reject(new Error('Sector not found for player'));
                     
                     // Get visible objects with fog of war filtering, including movement and harvesting data
                     db.all(
@@ -1551,6 +1560,65 @@ router.get('/sectors', (req, res) => {
         }
         
         res.json({ sectors: sectors });
+    });
+});
+
+// Get all player objects across all sectors
+router.get('/player-fleet', (req, res) => {
+    const { gameId, userId } = req.query;
+    
+    if (!gameId || !userId) {
+        return res.status(400).json({ error: 'Game ID and User ID required' });
+    }
+    
+    db.all(`
+        SELECT so.*, s.name as sector_name
+        FROM sector_objects so
+        JOIN sectors s ON so.sector_id = s.id
+        WHERE s.game_id = ? AND so.owner_id = ?
+        ORDER BY s.name, so.type, so.id
+    `, [gameId, userId], (err, objects) => {
+        if (err) {
+            console.error('Error fetching player fleet:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        res.json({ fleet: objects });
+    });
+});
+
+// Switch player's view to a different sector
+router.post('/switch-sector', (req, res) => {
+    const { gameId, userId, sectorId } = req.body;
+    
+    if (!gameId || !userId || !sectorId) {
+        return res.status(400).json({ error: 'Game ID, User ID, and Sector ID required' });
+    }
+    
+    // Verify the sector exists and is part of this game
+    db.get('SELECT * FROM sectors WHERE id = ? AND game_id = ?', [sectorId, gameId], (err, sector) => {
+        if (err) {
+            console.error('Error finding sector:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!sector) {
+            return res.status(404).json({ error: 'Sector not found' });
+        }
+        
+        // Return the game state for the new sector
+        GameWorldManager.getPlayerGameState(gameId, userId, sectorId)
+            .then(gameState => {
+                res.json({
+                    success: true,
+                    gameState: gameState,
+                    message: `Switched to ${sector.name}`
+                });
+            })
+            .catch(error => {
+                console.error('Error getting game state for sector switch:', error);
+                res.status(500).json({ error: 'Failed to switch sectors' });
+            });
     });
 });
 

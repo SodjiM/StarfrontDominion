@@ -264,6 +264,9 @@ class GameClient {
         // Update player avatar
         this.updatePlayerAvatar();
         
+        // Update sector overview title
+        this.updateSectorOverviewTitle();
+        
         // Update turn lock status
         const lockBtn = document.getElementById('lockTurnBtn');
         if (this.gameState.turnLocked) {
@@ -276,36 +279,16 @@ class GameClient {
             this.turnLocked = false;
         }
 
-        // Update units list
-        const unitsList = document.getElementById('unitsList');
-        const allPlayerObjects = this.gameState.objects.filter(obj => obj.owner_id === this.userId);
+        // Update units list - load from all sectors
+        this.updateMultiSectorFleet();
+
+        this.objects = this.gameState.objects;
         
-        // STAGE 1 FIX: Deduplicate ships by ID to prevent phantom fleet entries
+        // Get player objects for selection logic
+        const allPlayerObjects = this.gameState.objects.filter(obj => obj.owner_id === this.userId);
         const playerObjects = allPlayerObjects.filter((obj, index, array) => 
             array.findIndex(duplicate => duplicate.id === obj.id) === index
         );
-        
-        if (allPlayerObjects.length !== playerObjects.length) {
-            console.log(`🧹 Fleet Panel: Filtered ${allPlayerObjects.length - playerObjects.length} duplicate ship entries`);
-        }
-        
-        if (playerObjects.length === 0) {
-            unitsList.innerHTML = '<div class="error">No units found</div>';
-            return;
-        }
-
-        unitsList.innerHTML = playerObjects.map(obj => `
-            <div class="unit-item" onclick="selectUnit(${obj.id})" id="unit-${obj.id}">
-                <div class="unit-name">${this.getUnitIcon(obj.type)} ${obj.meta.name || obj.type}</div>
-                <div class="unit-details">
-                    Position: (${obj.x}, ${obj.y})<br>
-                    HP: ${obj.meta.hp || '?'}/${obj.meta.maxHp || '?'}
-                </div>
-            </div>
-        `).join('');
-
-        this.objects = this.gameState.objects;
-        this.units = playerObjects;
         
         // FIX: Turn-based cleanup of lingering trails (10 turns max)
         const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
@@ -763,6 +746,16 @@ class GameClient {
         
         // Render mini-map
         this.renderMiniMap();
+    }
+
+    // Update sector overview title
+    updateSectorOverviewTitle() {
+        const titleElement = document.getElementById('sectorOverviewTitle');
+        if (titleElement && this.gameState?.sector?.name) {
+            titleElement.textContent = `🌌 ${this.gameState.sector.name}`;
+        } else if (titleElement) {
+            titleElement.textContent = 'Sector Overview';
+        }
     }
 
     // Draw grid
@@ -1905,6 +1898,162 @@ class GameClient {
         }
     }
 
+    // Update multi-sector fleet display
+    async updateMultiSectorFleet() {
+        const unitsList = document.getElementById('unitsList');
+        if (!unitsList) {
+            return;
+        }
+
+        try {
+            // Load the full fleet across all sectors
+            const response = await fetch(`/game/player-fleet?gameId=${this.gameId}&userId=${this.userId}`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load fleet');
+            }
+
+            const fleet = data.fleet;
+            
+            if (!fleet || fleet.length === 0) {
+                unitsList.innerHTML = '<div class="no-units">No units found</div>';
+                return;
+            }
+
+            // Group units by sector
+            const unitsBySector = {};
+            fleet.forEach(unit => {
+                const sectorName = unit.sector_name || 'Unknown Sector';
+                if (!unitsBySector[sectorName]) {
+                    unitsBySector[sectorName] = [];
+                }
+                unitsBySector[sectorName].push(unit);
+            });
+
+            // Generate HTML for all sectors
+            let html = '';
+            Object.keys(unitsBySector).sort().forEach(sectorName => {
+                const units = unitsBySector[sectorName];
+                const isCurrentSector = this.gameState?.sector?.name === sectorName;
+                
+                html += `
+                    <div class="sector-group">
+                        <div class="sector-header ${isCurrentSector ? 'current-sector' : ''}">
+                            <span class="sector-icon">${isCurrentSector ? '📍' : '🌌'}</span>
+                            <span class="sector-name">${sectorName}</span>
+                            <span class="unit-count">(${units.length})</span>
+                        </div>
+                        <div class="sector-units">
+                `;
+                
+                units.forEach(unit => {
+                    const meta = unit.meta ? JSON.parse(unit.meta) : {};
+                    const isSelected = this.selectedUnit && this.selectedUnit.id === unit.id;
+                    const inCurrentSector = isCurrentSector;
+                    
+                    html += `
+                        <div class="unit-item ${isSelected ? 'selected' : ''} ${!inCurrentSector ? 'remote-unit' : ''}" 
+                             onclick="gameClient.selectRemoteUnit(${unit.id}, ${unit.sector_id}, '${sectorName}', ${inCurrentSector})">
+                            <div class="unit-header">
+                                <span class="unit-icon">${this.getUnitIcon(unit.type)}</span>
+                                <span class="unit-name">${meta.name || unit.type}</span>
+                                ${!inCurrentSector ? '<span class="remote-indicator">📡</span>' : ''}
+                            </div>
+                            <div class="unit-stats">
+                                <div>System: ${sectorName}</div>
+                                <div>Position: (${unit.x}, ${unit.y})</div>
+                                <div>HP: ${meta.hp || 0}/${meta.maxHp || 0}</div>
+                                ${unit.type === 'ship' && inCurrentSector ? `<div id="cargoStatus-${unit.id}">Cargo: Loading...</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            unitsList.innerHTML = html;
+
+            // Update cargo status for ships in current sector
+            if (this.gameState?.objects) {
+                const currentSectorShips = this.gameState.objects.filter(obj => 
+                    obj.owner_id === this.userId && obj.type === 'ship'
+                );
+                currentSectorShips.forEach(ship => {
+                    updateCargoStatus(ship.id);
+                });
+            }
+
+        } catch (error) {
+            console.error('Error loading player fleet:', error);
+            unitsList.innerHTML = '<div class="no-units">Error loading fleet</div>';
+        }
+    }
+
+    // Get appropriate icon for unit type
+    getUnitIcon(unitType) {
+        switch (unitType) {
+            case 'ship': return '🚢';
+            case 'starbase': return '🏭';
+            case 'station': return '🛰️';
+            case 'storage-structure': return '📦';
+            case 'warp-beacon': return '🌌';
+            case 'interstellar-gate': return '🌀';
+            default: return '🏗️';
+        }
+    }
+
+    // Select a unit (possibly in a remote sector)
+    async selectRemoteUnit(unitId, sectorId, sectorName, inCurrentSector) {
+        if (inCurrentSector) {
+            // Unit is in current sector, select normally
+            this.selectUnit(unitId);
+        } else {
+            // Unit is in remote sector, switch to that sector
+            try {
+                const response = await fetch('/game/switch-sector', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        gameId: this.gameId,
+                        userId: this.userId,
+                        sectorId: sectorId
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Update game state to new sector
+                    this.gameState = data.gameState;
+                    this.addLogEntry(`Switched to ${sectorName}`, 'info');
+                    
+                    // Update the UI
+                    this.updateUI();
+                    this.render();
+                    this.renderMiniMap();
+                    this.updateSectorOverviewTitle();
+                    
+                    // Select the unit in the new sector
+                    setTimeout(() => {
+                        this.selectUnit(unitId);
+                    }, 100);
+                } else {
+                    this.addLogEntry(data.error || 'Failed to switch sectors', 'error');
+                }
+            } catch (error) {
+                console.error('Error switching sectors:', error);
+                this.addLogEntry('Failed to switch sectors', 'error');
+            }
+        }
+    }
+
     // Check if a ship is adjacent to an interstellar gate
     isAdjacentToInterstellarGate(ship) {
         if (!ship || !this.objects) return false;
@@ -2754,6 +2903,13 @@ class GameClient {
             (obj.owner_id === this.userId || obj.meta?.publicAccess === true)
         );
         targets.push(...warpBeacons);
+        
+        // Add interstellar gates
+        const interstellarGates = this.objects.filter(obj => 
+            obj.type === 'interstellar-gate' && 
+            (obj.owner_id === this.userId || obj.meta?.publicAccess === true)
+        );
+        targets.push(...interstellarGates);
         
         // Sort by distance
         targets.sort((a, b) => {
