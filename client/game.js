@@ -1964,47 +1964,128 @@ class GameClient {
     // Toggle floating minimap within main map area
     toggleFloatingMiniMap() {
         if (!this._floatingMini) {
+            const parent = this.canvas.parentElement;
             const container = document.createElement('div');
             container.id = 'floatingMiniWrap';
             container.style.position = 'absolute';
-            container.style.left = '12px';
-            container.style.bottom = '12px';
+            container.style.zIndex = '2000';
             container.style.border = '1px solid rgba(100,181,246,0.3)';
             container.style.borderRadius = '10px';
             container.style.background = '#0a0f1c';
             container.style.boxShadow = '0 10px 30px rgba(0,0,0,0.35)';
             container.style.pointerEvents = 'auto';
-            container.style.resize = 'both';
             container.style.overflow = 'hidden';
-            container.style.cursor = 'move';
+            container.style.display = 'flex';
+            container.style.flexDirection = 'column';
+            container.style.boxSizing = 'border-box';
+            container.style.resize = 'both';
+            container.style.minWidth = '200px';
+            container.style.minHeight = '140px';
+            // Initial size and position (top/left anchored)
+            const initialW = 260, initialH = 180, margin = 12;
+            container.style.width = initialW + 'px';
+            container.style.height = initialH + 'px';
+            container.style.left = margin + 'px';
+            const parentH = parent ? parent.clientHeight : 0;
+            container.style.top = Math.max(0, parentH - margin - initialH) + 'px';
+
+            // Header used for dragging
+            const header = document.createElement('div');
+            header.style.height = '26px';
+            header.style.background = 'rgba(10, 15, 28, 0.9)';
+            header.style.borderBottom = '1px solid rgba(100,181,246,0.3)';
+            header.style.display = 'flex';
+            header.style.alignItems = 'center';
+            header.style.justifyContent = 'space-between';
+            header.style.padding = '0 8px';
+            header.style.cursor = 'move';
+            header.style.userSelect = 'none';
+            header.innerHTML = '<span style="font-size:12px;color:#cfe4ff;display:flex;align-items:center;gap:6px"><span style="opacity:0.7">⠿</span> Mini-map</span><button title="Close" style="background:none;border:none;color:#cfe4ff;cursor:pointer;font-size:14px;line-height:1">×</button>';
+
+            const closeBtn = header.querySelector('button');
+            closeBtn.addEventListener('click', () => {
+                container.style.display = 'none';
+            });
 
             const mini = document.createElement('canvas');
-            mini.width = 260; mini.height = 180;
-            container.appendChild(mini);
-            this.canvas.parentElement.appendChild(container);
+            mini.style.display = 'block';
+            mini.style.width = '100%';
+            mini.style.height = '100%';
+            // Set initial internal size (content area below header)
+            mini.width = initialW;
+            mini.height = initialH - 26;
 
-            this._floatingMini = { container, canvas: mini, ctx: mini.getContext('2d'), dragging: false, dragDX:0, dragDY:0 };
-            // Dragging
-            container.addEventListener('mousedown', (e)=>{
-                if (e.target !== mini) { this._floatingMini.dragging = true; this._floatingMini.dragDX = e.clientX - container.offsetLeft; this._floatingMini.dragDY = e.clientY - container.offsetTop; }
+            container.appendChild(header);
+            container.appendChild(mini);
+            parent.appendChild(container);
+
+            const clampWithinParent = () => {
+                if (!parent) return;
+                const maxLeft = Math.max(0, parent.clientWidth - container.offsetWidth);
+                const maxTop = Math.max(0, parent.clientHeight - container.offsetHeight);
+                const left = Math.min(Math.max(0, container.offsetLeft), maxLeft);
+                const top = Math.min(Math.max(0, container.offsetTop), maxTop);
+                container.style.left = left + 'px';
+                container.style.top = top + 'px';
+            };
+
+            this._floatingMini = { container, header, canvas: mini, ctx: mini.getContext('2d'), dragging: false, dragDX:0, dragDY:0 };
+
+            // Dragging via header
+            header.addEventListener('mousedown', (e)=>{
+                this._floatingMini.dragging = true;
+                this._floatingMini.dragDX = e.clientX - container.offsetLeft;
+                this._floatingMini.dragDY = e.clientY - container.offsetTop;
+                e.preventDefault();
             });
             window.addEventListener('mousemove', (e)=>{
-                const f=this._floatingMini; if (!f||!f.dragging) return; container.style.left = (e.clientX - f.dragDX) + 'px'; container.style.top = (e.clientY - f.dragDY) + 'px'; container.style.bottom = 'auto';
+                const f=this._floatingMini; if (!f||!f.dragging) return;
+                const parentRect = parent.getBoundingClientRect();
+                let newLeft = e.clientX - f.dragDX;
+                let newTop = e.clientY - f.dragDY;
+                // Clamp to parent bounds
+                newLeft = Math.min(Math.max(0, newLeft), parent.clientWidth - container.offsetWidth);
+                newTop = Math.min(Math.max(0, newTop), parent.clientHeight - container.offsetHeight);
+                container.style.left = newLeft + 'px';
+                container.style.top = newTop + 'px';
             });
             window.addEventListener('mouseup', ()=>{ if (this._floatingMini) this._floatingMini.dragging=false; });
-            // Resize observer to keep canvas in sync
+
+            // Resize observer to keep canvas in sync and keep window in bounds
             const ro = new ResizeObserver(()=>{
-                mini.width = container.clientWidth; mini.height = container.clientHeight; this.renderFloatingMini();
+                // account for borders (2px total) and header height
+                const borderComp = 2; // 1px left + 1px right
+                const contentW = Math.max(1, Math.floor(container.clientWidth - borderComp));
+                const contentH = Math.max(1, Math.floor(container.clientHeight - header.offsetHeight - borderComp));
+                if (mini.width !== contentW || mini.height !== contentH) {
+                    mini.width = contentW;
+                    mini.height = contentH;
+                    this.renderFloatingMini();
+                }
+                clampWithinParent();
             });
             ro.observe(container);
             this._floatingMini.ro = ro;
-            // Render initial and on main renders
+
+            // Ensure initial clamp
+            clampWithinParent();
             this.renderFloatingMini();
         } else {
             // Toggle visibility
             const visible = this._floatingMini.container.style.display !== 'none';
-            this._floatingMini.container.style.display = visible ? 'none' : 'block';
-            if (!visible) this.renderFloatingMini();
+            this._floatingMini.container.style.display = visible ? 'none' : 'flex';
+            if (!visible) {
+                // Re-clamp on reopen
+                const parent = this.canvas.parentElement;
+                const { container } = this._floatingMini;
+                const maxLeft = Math.max(0, parent.clientWidth - container.offsetWidth);
+                const maxTop = Math.max(0, parent.clientHeight - container.offsetHeight);
+                const left = Math.min(Math.max(0, container.offsetLeft), maxLeft);
+                const top = Math.min(Math.max(0, container.offsetTop), maxTop);
+                container.style.left = left + 'px';
+                container.style.top = top + 'px';
+                this.renderFloatingMini();
+            }
         }
     }
 
