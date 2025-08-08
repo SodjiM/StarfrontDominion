@@ -180,12 +180,12 @@
                 </div>
                 
                 <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
-                    ${canJoin ? `<button class="btn btn-primary" onclick="joinGame(${game.id})">✅ Join Game</button>` : ''}
-                    ${canLeave ? `<button class="btn btn-danger" onclick="leaveGame(${game.id})">❌ Leave Game</button>` : ''}
-                    ${isUserGame && game.status === 'recruiting' ? `<button class="btn btn-primary" onclick="startGame(${game.id})">🚀 Start Game</button>` : ''}
-                    ${game.status === 'active' && isUserGame ? `<button class="btn btn-primary" onclick="enterGame(${game.id})">🎮 Enter Game</button>` : ''}
-                    ${isCreator ? `<button class="btn btn-danger" onclick="deleteGame(${game.id}, '${game.name}')" style="margin-left: auto;">🗑️ Delete Game</button>` : ''}
-                    <button class="btn btn-secondary" onclick="hideGameDetails()">Close</button>
+                    ${canJoin ? `<button class="sf-btn sf-btn-primary" onclick="joinGame(${game.id})">✅ Join Game</button>` : ''}
+                    ${canLeave ? `<button class="sf-btn sf-btn-danger" onclick="leaveGame(${game.id})">❌ Leave Game</button>` : ''}
+                    ${isUserGame && game.status === 'recruiting' ? `<button class="sf-btn sf-btn-primary" onclick="startGame(${game.id})">🚀 Start Game</button>` : ''}
+                    ${game.status === 'active' && isUserGame ? `<button class="sf-btn sf-btn-primary" onclick="enterGame(${game.id})">🎮 Enter Game</button>` : ''}
+                    ${isCreator ? `<button class="sf-btn sf-btn-danger" onclick="deleteGame(${game.id}, '${game.name}')" style="margin-left: auto;">🗑️ Delete Game</button>` : ''}
+                    <button class="sf-btn sf-btn-secondary" onclick="hideGameDetails()">Close</button>
                 </div>
             `;
             

@@ -227,7 +227,9 @@ const Modal = {
             config.actions.forEach(action => {
                 const btn = document.createElement('button');
                 btn.textContent = action.text || 'OK';
-                btn.className = `btn btn-${action.style || 'primary'}`;
+                // Map generic styles to modern sf-btn variants
+                const styleMap = { primary: 'sf-btn sf-btn-primary', secondary: 'sf-btn sf-btn-secondary', danger: 'sf-btn sf-btn-danger' };
+                btn.className = styleMap[action.style || 'primary'] || 'sf-btn sf-btn-primary';
                 btn.onclick = () => {
                     const result = action.action ? action.action() : null;
                     if (result !== false) {

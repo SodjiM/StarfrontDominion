@@ -678,42 +678,42 @@ class GameClient {
             
             <div style="margin-top: 20px;">
                 ${unit.type === 'ship' ? `
-                    <button class="action-btn" onclick="setMoveMode()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="setMoveMode()" ${this.turnLocked ? 'disabled' : ''}>
                         🎯 Set Destination
                     </button>
-                    <button class="action-btn" onclick="setWarpMode()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="setWarpMode()" ${this.turnLocked ? 'disabled' : ''}>
                         🌌 Warp
                     </button>
                     ${this.isAdjacentToInterstellarGate(unit) ? `
-                        <button class="action-btn" onclick="showInterstellarTravelOptions()" ${this.turnLocked ? 'disabled' : ''}>
+                        <button class="sf-btn sf-btn-secondary" onclick="showInterstellarTravelOptions()" ${this.turnLocked ? 'disabled' : ''}>
                             🌀 Interstellar Travel
                         </button>
                     ` : ''}
-                    <button class="action-btn" id="mineBtn" onclick="toggleMining()" ${this.turnLocked || !meta.canMine ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" id="mineBtn" onclick="toggleMining()" ${this.turnLocked || !meta.canMine ? 'disabled' : ''}>
                         ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (meta.canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}
                     </button>
-                    <button class="action-btn" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
                         📦 Cargo
                     </button>
-                    <button class="action-btn" onclick="scanArea()" ${this.turnLocked || !meta.canActiveScan ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="scanArea()" ${this.turnLocked || !meta.canActiveScan ? 'disabled' : ''}>
                         ${meta.canActiveScan ? '🔍 Active Scan' : '🔍 Scan Area (N/A)'}
                     </button>
                 ` : ''}
                 
                 ${unit.type === 'starbase' ? `
-                    <button class="action-btn" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
                         📦 Cargo
                     </button>
-                    <button class="action-btn" onclick="showBuildModal()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="showBuildModal()" ${this.turnLocked ? 'disabled' : ''}>
                         🔨 Build
                     </button>
-                    <button class="action-btn" onclick="upgradeBase()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="upgradeBase()" ${this.turnLocked ? 'disabled' : ''}>
                         ⬆️ Upgrade Base
                     </button>
                 ` : ''}
                 
                 ${unit.type === 'storage-structure' ? `
-                    <button class="action-btn" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
                         📦 Storage
                     </button>
                 ` : ''}

@@ -1,0 +1,98 @@
+{
+  "version": "1.0",
+  "defaultEntry": { "categoryId": "guides", "entryId": "welcome" },
+  "categories": [
+    {
+      "id": "guides",
+      "name": "Guides",
+      "icon": "📘",
+      "entries": [
+        {
+          "id": "welcome",
+          "title": "Welcome, Commander",
+          "icon": "🌌",
+          "tags": ["getting-started", "tutorial"],
+          "summary": "A quick primer for new players.",
+          "content": "**Welcome to Starfront: Dominion!**\n\nThis short guide covers the basics:\n- Select your ship and set a destination with the map.\n- Warp to points of interest like belts and nebulae.\n- Mine resources (rock, gas, energy) and haul them back.\n- Use stations to store, build, and expand.\n\nOpen other tabs on the left to learn about ships, stations, resources, and core rules. Good luck, Commander!"
+        }
+      ]
+    },
+    {
+      "id": "ships",
+      "name": "Ships",
+      "icon": "🚀",
+      "entries": [
+        {
+          "id": "explorer",
+          "title": "Explorer Ship",
+          "icon": "🔍",
+          "tags": ["ship", "scan"],
+          "summary": "Fast scout with strong sensors.",
+          "content": "The Explorer is a versatile scouting vessel.\n\n**Highlights**\n- Scan Range: 50\n- Speed: 4\n- Cargo: 10\n\nUse it to find belts, nebulae, and opportunities."
+        },
+        {
+          "id": "mining-vessel",
+          "title": "Mining Vessel",
+          "icon": "⛏️",
+          "tags": ["ship", "mining"],
+          "summary": "Optimized for resource extraction.",
+          "content": "Mining Vessels gather resources efficiently from nodes.\n\n**Tips**\n- Position in dense hotspots for best yield.\n- Watch cargo capacity and return to station to unload."
+        },
+        {
+          "id": "logistics",
+          "title": "Logistics Ship",
+          "icon": "🚚",
+          "tags": ["ship", "cargo"],
+          "summary": "Specialized hauler for transport.",
+          "content": "Logistics ships move cargo between outposts and bases.\n\nThey shine in team play and persistent economies."
+        }
+      ]
+    },
+    {
+      "id": "stations",
+      "name": "Stations",
+      "icon": "🏭",
+      "entries": [
+        { "id": "starbase", "title": "Starbase", "icon": "🏭", "tags": ["station"], "summary": "Your primary hub.", "content": "The Starbase serves as your central hub: storage, building, and upgrades." },
+        { "id": "storage-box", "title": "Storage Box", "icon": "📦", "tags": ["structure"], "summary": "Deployed storage.", "content": "Portable storage you can deploy near operations." },
+        { "id": "warp-beacon", "title": "Warp Beacon", "icon": "🌌", "tags": ["structure", "travel"], "summary": "Warp destination.", "content": "Provides a warp destination; some may be public." },
+        { "id": "interstellar-gate", "title": "Interstellar Gate", "icon": "🌀", "tags": ["structure", "travel"], "summary": "System travel.", "content": "Jump between sectors via stable gates." }
+      ]
+    },
+    {
+      "id": "resources",
+      "name": "Resources",
+      "icon": "⛏️",
+      "entries": [
+        { "id": "rock", "title": "Rock", "icon": "🪨", "tags": ["resource"], "summary": "Common mineral.", "content": "Rock is the backbone of construction. Found in asteroid belts; dense hotspots are efficient for mining." },
+        { "id": "gas", "title": "Gas", "icon": "💨", "tags": ["resource"], "summary": "Fuel and chemicals.", "content": "Gas harvested in nebulae powers advanced technologies and fuels industry." },
+        { "id": "energy", "title": "Energy", "icon": "⚡", "tags": ["resource"], "summary": "Collected near stars.", "content": "Energy nodes appear in orbital safe zones around stars; high-value but limited." },
+        { "id": "salvage", "title": "Salvage", "icon": "🔧", "tags": ["resource"], "summary": "Recovered components.", "content": "Found at derelicts; may enable tech progression and unique builds." }
+      ]
+    },
+    {
+      "id": "rules",
+      "name": "Gameplay",
+      "icon": "📜",
+      "entries": [
+        { "id": "turns", "title": "Turns & Locking", "icon": "⏱️", "tags": ["rules"], "summary": "How turns resolve.", "content": "Plan your moves, then lock your turn. The server resolves movement, mining, and scanning in phases." },
+        { "id": "scanning", "title": "Scanning & Visibility", "icon": "🔍", "tags": ["rules"], "summary": "Fog of war.", "content": "Scan range reveals objects; active scan extends range at an energy cost." },
+        { "id": "mining", "title": "Mining", "icon": "⛏️", "tags": ["rules"], "summary": "Harvesting nodes.", "content": "Mine from resource nodes until depleted. Dense hotspots boost player interaction and efficiency." },
+        { "id": "movement", "title": "Movement & Warp", "icon": "🌌", "tags": ["rules"], "summary": "Travel basics.", "content": "Move tile-by-tile or warp to fields and gates. Interstellar travel requires proximity to a gate." }
+      ]
+    },
+    {
+      "id": "objects",
+      "name": "Celestial Objects",
+      "icon": "🪐",
+      "entries": [
+        { "id": "belt", "title": "Asteroid Belts", "icon": "☄️", "tags": ["field"], "summary": "Rock hotspots.", "content": "Belts contain clusters of rock near warp entry. Expect competition and rich deposits." },
+        { "id": "nebula", "title": "Nebulae", "icon": "🌌", "tags": ["field"], "summary": "Gas clouds.", "content": "Nebula clusters and filaments appear near warp entry; great for gas harvesting." },
+        { "id": "star", "title": "Stars", "icon": "⭐", "tags": ["stellar"], "summary": "Energy sources.", "content": "Energy nodes spawn in safe orbital zones around stars." },
+        { "id": "derelict", "title": "Derelicts", "icon": "🛸", "tags": ["artificial"], "summary": "Salvage opportunities.", "content": "Old structures with salvage and exploration hooks." }
+      ]
+    }
+  ]
+}
+
+
