@@ -77,6 +77,68 @@ io.on('connection', (socket) => {
         // Send current game status to newly connected player
         sendGameStatusUpdate(gameId, userId, socket);
     });
+
+    // Provide players list including lock and online status
+    socket.on('players:list', async (payload, callback) => {
+        try {
+            const gameId = payload?.gameId || socket.gameId;
+            if (!gameId) return callback && callback({ success: false, error: 'Missing gameId' });
+
+            // Current turn
+            const currentTurn = await new Promise((resolve) => {
+                db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (err, row) => {
+                    resolve(row?.turn_number || 1);
+                });
+            });
+
+            // Players in game
+            const players = await new Promise((resolve) => {
+                db.all(
+                    `SELECT gp.user_id as userId, u.username, gp.avatar, gp.color_primary as colorPrimary, gp.color_secondary as colorSecondary
+                     FROM game_players gp 
+                     JOIN users u ON gp.user_id = u.id 
+                     WHERE gp.game_id = ?`,
+                    [gameId],
+                    (err, rows) => resolve(rows || [])
+                );
+            });
+
+            // Locked players map
+            const lockedSet = new Set(
+                await new Promise((resolve) => {
+                    db.all(
+                        'SELECT user_id FROM turn_locks WHERE game_id = ? AND turn_number = ? AND locked = 1',
+                        [gameId, currentTurn],
+                        (err, rows) => resolve((rows || []).map(r => r.user_id))
+                    );
+                })
+            );
+
+            // Online users: sockets in room
+            const room = io.sockets.adapter.rooms.get(`game-${gameId}`);
+            const onlineUserIds = new Set();
+            if (room) {
+                for (const sid of room) {
+                    const s = io.sockets.sockets.get(sid);
+                    if (s?.userId) onlineUserIds.add(Number(s.userId));
+                }
+            }
+
+            const enriched = players.map(p => ({
+                userId: p.userId,
+                username: p.username,
+                avatar: p.avatar || null,
+                colorPrimary: p.colorPrimary || null,
+                colorSecondary: p.colorSecondary || null,
+                locked: lockedSet.has(p.userId),
+                online: onlineUserIds.has(p.userId)
+            }));
+
+            callback && callback({ success: true, currentTurn, players: enriched });
+        } catch (e) {
+            callback && callback({ success: false, error: 'Failed to get players' });
+        }
+    });
     
     // Handle turn locking - ASYNCHRONOUS: Players can lock turns anytime
     socket.on('lock-turn', async (gameId, userId, turnNumber) => {

@@ -3534,6 +3534,70 @@ class GameClient {
     }
 }
 
+// Players modal: show all players, lock status, and online status
+async function showPlayersModal() {
+    if (!gameClient || !gameClient.socket) return;
+
+    try {
+        const data = await new Promise((resolve) => {
+            gameClient.socket.timeout(4000).emit('players:list', { gameId: gameClient.gameId }, (err, response) => {
+                if (err) resolve({ success: false, error: 'Timeout' });
+                else resolve(response);
+            });
+        });
+
+        if (!data || !data.success) {
+            UI.showAlert(data?.error || 'Failed to load players');
+            return;
+        }
+
+        const players = data.players || [];
+        const currentTurn = data.currentTurn;
+
+        const container = document.createElement('div');
+        container.innerHTML = `
+            <div class="form-section">
+                <h3>Players (Turn ${currentTurn})</h3>
+                <div style="display:grid; gap:10px;">
+                    ${players.map(p => {
+                        const avatarSrc = p.avatar ? `assets/avatars/${p.avatar}.png` : 'assets/avatars/explorer.png';
+                        const borderColor = p.colorPrimary || '#64b5f6';
+                        return `
+                        <div class=\"asset-item\" style=\"display:flex; align-items:center; justify-content:space-between;\">
+                            <div style=\"display:flex; align-items:center; gap:10px;\">
+                                <img src=\"${avatarSrc}\" alt=\"avatar\" style=\"width:36px; height:36px; border-radius:50%; border:2px solid ${borderColor}; object-fit:cover;\" onerror=\"this.src='assets/avatars/explorer.png'\">
+                                <div>
+                                    <div class=\"asset-name\">${p.username || 'Player ' + p.userId}</div>
+                                    <div class=\"asset-position\" style=\"display:flex; gap:10px;\">
+                                        <span title=\"Online status\">${p.online ? '🟢 Online' : '⚪ Offline'}</span>
+                                        <span title=\"Turn lock status\">${p.locked ? '🔒 Locked' : '🔓 Unlocked'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div style=\"text-align:right; color:#888; font-size:0.85em;\">
+                                <!-- Future: government, relations, etc. -->
+                                <div>Gov: —</div>
+                                <div>Relation: —</div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+
+        UI.showModal({
+            title: '👥 Players',
+            content: container,
+            actions: [
+                { text: 'Close', style: 'primary', action: () => true }
+            ]
+        });
+    } catch (e) {
+        console.error('Error showing players modal:', e);
+        UI.showAlert('Failed to load players');
+    }
+}
+
 // Global game instance
 let gameClient = null;
 
