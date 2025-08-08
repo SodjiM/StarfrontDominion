@@ -1578,38 +1578,33 @@
         
         <!-- Bottom: Mini Map + Log/Chat side-by-side -->
         <div class="mini-map sf-card" style="grid-area:auto; grid-column: 1 / span 2; min-height:0;">
-            <div style="font-size: 0.9em; margin-bottom: 6px; color: var(--primary); display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 0.9em; margin-bottom: 6px; color: var(--primary); display: flex; align-items: center; gap: 8px; justify-content: flex-start;">
                 <span id="sectorOverviewTitle">Sector Overview</span>
                 <button class="map-expand-btn sf-btn sf-btn-secondary" onclick="openMapModal()" title="Open Full Map">🗺️</button>
             </div>
             <div style="display:grid; grid-template-columns: 240px 1fr; gap: 8px; height: 100%; min-height: 0;">
                 <div style="display:flex; flex-direction:column; min-width:0;">
                     <canvas id="miniCanvas" style="flex:1; min-height:0;"></canvas>
-                    <div class="minimap-legend" style="font-size: 0.7em; margin-top: 6px; color: #888; line-height: 1.2;">
-                        <div>⭐ Stars  🌍 Planets  🌙 Moons</div>
-                        <div style="margin-top: 2px;">
-                            <span style="color: #8D6E63;">●</span> Rocks  
-                            <span style="color: #9C27B0;">●</span> Gas  
-                            <span style="color: #FFD54F;">●</span> Energy  
-                            <span style="color: #A1887F;">●</span> Salvage
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height:0;">
+                    <div style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
+                        <div class="panel-title" style="margin:0;">💬 Chat</div>
+                        <div id="chatMessages" style="overflow:auto; min-height:0; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
+                    <div style="display:grid; grid-template-columns: auto 110px 1fr auto; gap:6px; align-items:center;" onsubmit="return false;">
+                            <select id="chatScope" class="sf-select">
+                                <option value="game">Game</option>
+                                <option value="dm">Direct</option>
+                            </select>
+                            <input id="chatToUserId" class="sf-input" placeholder="User ID (DM)" />
+                            <input id="chatInput" class="sf-input" placeholder="Type a message" />
+                        <button onclick="sendChat()" class="sf-btn sf-btn-secondary" id="chatSendBtn">Send</button>
                         </div>
                     </div>
-                </div>
-                <div style="display:flex; flex-direction:column; min-width:0;">
-                    <div class="panel-title" style="margin:0 0 6px 0;">📜 Activity Log</div>
-                    <div id="activityLog" style="flex:1; overflow:auto; min-height:0; max-height: calc(28vh - 80px);">
-                        <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
-                    </div>
-                    <div class="panel-title" style="margin:8px 0 6px 0;">💬 Chat</div>
-                    <div id="chatMessages" style="height:90px; overflow:auto; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
-                    <div style="display:flex; gap:6px; margin-top:6px;">
-                        <select id="chatScope" class="sf-select">
-                            <option value="game">Game</option>
-                            <option value="dm">Direct</option>
-                        </select>
-                        <input id="chatToUserId" class="sf-input" placeholder="User ID (DM)" style="flex:0 0 110px;" />
-                        <input id="chatInput" class="sf-input" placeholder="Type a message" style="flex:1;" />
-                        <button onclick="sendChat()" class="sf-btn sf-btn-secondary">Send</button>
+                    <div style="display:grid; grid-template-rows: auto 1fr; gap:6px; min-height:0;">
+                        <div class="panel-title" style="margin:0;">📜 Activity Log</div>
+                        <div id="activityLog" style="overflow:auto; min-height:0;">
+                            <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1663,7 +1658,18 @@
             if (scope === 'dm' && toUserId) payload.toUserId = Number(toUserId);
             gameClient.socket.emit('chat:send', payload);
             document.getElementById('chatInput').value = '';
+            // Optimistic append for game-wide messages
+            if (window.appendChat && scope === 'game') {
+                window.appendChat({ fromUserId: gameClient.userId, text, timestamp: new Date().toISOString() });
+            }
         }
+        // Enter to send
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && document.activeElement === document.getElementById('chatInput')) {
+                e.preventDefault();
+                sendChat();
+            }
+        });
     </script>
 </body>
 </html> 

@@ -290,40 +290,40 @@ router.delete('/game/:gameId', (req, res) => {
                                                                                                                     // 12. Finally delete the game itself
                                                                                                                     db.run(
                                                                                                                         'DELETE FROM games WHERE id = ?',
-                                                                                                                        [gameId],
-                                                                                                                        function(err) {
-                                                                                                                            if (err) {
-                                                                                                                                console.error('Error deleting game:', err);
-                                                                                                                                return res.status(500).json({ error: 'Failed to delete game' });
-                                                                                                                            }
-                                                                                                                            
-                                                                                                                            if (this.changes === 0) {
-                                                                                                                                return res.status(404).json({ error: 'Game not found' });
-                                                                                                                            }
-                                                                                                                            
-                                                                                                                            console.log(`✅ Game ${gameId} (${game.name}) deleted successfully by user ${userId}`);
-                                                                                                                            res.json({ 
-                                                                                                                                success: true, 
-                                                                                                                                message: `Game "${game.name}" deleted successfully` 
-                                                                                                                            });
-                                                                                                                        }
-                                                                                                                    );
-                                                                                                                }
-                                                                                                            );
-                                                                                                        }
-                                                                                                    );
-                                                                                                }
-                                                                                            );
-                                                                                        }
-                                                                                    );
-                                                                                }
-                                                                            );
+                                                                        [gameId],
+                                                                        function(err) {
+                                                                            if (err) {
+                                                                                console.error('Error deleting game:', err);
+                                                                                return res.status(500).json({ error: 'Failed to delete game' });
+                                                                            }
+                                                                            
+                                                                            if (this.changes === 0) {
+                                                                                return res.status(404).json({ error: 'Game not found' });
+                                                                            }
+                                                                            
+                                                                            console.log(`✅ Game ${gameId} (${game.name}) deleted successfully by user ${userId}`);
+                                                                            res.json({ 
+                                                                                success: true, 
+                                                                                message: `Game "${game.name}" deleted successfully` 
+                                                                            });
                                                                         }
                                                                     );
                                                                 }
                                                             );
                                                         }
                                                     );
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                }
+            );
+        }
+    );
                                                 }
                                             );
                                         }

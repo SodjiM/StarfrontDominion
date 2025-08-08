@@ -4466,15 +4466,6 @@ function openMapModal() {
                 <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
             </div>
             <canvas id="fullMapCanvas" class="full-map-canvas"></canvas>
-            <div style="margin-top: 15px; font-size: 0.8em; color: #888;">
-                <div>⭐ Stars  🌍 Planets  🌙 Moons  🚢 Ships  🏭 Starbases</div>
-                <div style="margin-top: 5px;">
-                    <span style="color: #8D6E63;">●</span> Rocks  
-                    <span style="color: #9C27B0;">●</span> Gas  
-                    <span style="color: #FFD54F;">●</span> Energy  
-                    <span style="color: #A1887F;">●</span> Salvage
-                </div>
-            </div>
         </div>
         
         <div id="galaxy-tab" class="map-tab-content hidden">
@@ -4545,7 +4536,7 @@ function initializeFullMap() {
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Draw sector boundary
+    // Draw sector boundary (legend removed)
     ctx.strokeStyle = 'rgba(100, 181, 246, 0.3)';
     ctx.lineWidth = 2;
     ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
@@ -4648,7 +4639,7 @@ async function initializeGalaxyMap() {
         // Links
         ctx.strokeStyle = 'rgba(100,181,246,0.35)'; ctx.lineWidth = 1.25;
         links.forEach(L => { ctx.beginPath(); ctx.moveTo(L.s.x, L.s.y); ctx.lineTo(L.t.x, L.t.y); ctx.stroke(); });
-        // Nodes
+        // Nodes + always-on labels
         nodes.forEach(N => {
             const c = centrality.get(N.id) || 0;
             const r = 6 + 10*c;
@@ -4659,7 +4650,24 @@ async function initializeGalaxyMap() {
             ctx.beginPath(); ctx.arc(N.x, N.y, r, 0, Math.PI*2); ctx.fill();
             ctx.strokeStyle = c > 0.6 ? '#ffca28' : '#64b5f6';
             ctx.lineWidth = c > 0.6 ? 2 : 1; ctx.stroke();
-            if (r > 12) { ctx.fillStyle = '#e3f2fd'; ctx.font = '12px Arial'; ctx.textAlign='center'; ctx.fillText(N.name || N.id, N.x, N.y - r - 4); }
+
+            // Label every node (clamped to view)
+            const name = N.name || String(N.id);
+            ctx.font = '11px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#e3f2fd';
+            ctx.shadowColor = 'rgba(0,0,0,0.9)';
+            ctx.shadowBlur = 3;
+            let labelX = N.x;
+            let labelY = N.y - (r + 6);
+            if (labelY < 12) labelY = N.y + r + 12; // if too close to top, render below
+            // Clamp to canvas bounds horizontally
+            const metrics = ctx.measureText(name);
+            const half = metrics.width / 2;
+            if (labelX - half < 6) labelX = 6 + half;
+            if (labelX + half > w - 6) labelX = w - 6 - half;
+            ctx.fillText(name, labelX, labelY);
+            ctx.shadowBlur = 0;
         });
     } catch (e) {
         console.error('initializeGalaxyMap error:', e);
