@@ -73,6 +73,10 @@ io.on('connection', (socket) => {
         socket.gameId = gameId;
         socket.userId = userId;
         console.log(`👤 Player ${userId} joined game ${gameId} room`);
+        // Update presence timestamp
+        if (userId) {
+            db.run('UPDATE users SET last_seen_at = ? WHERE id = ?', [new Date().toISOString(), userId], () => {});
+        }
         
         // Send current game status to newly connected player
         sendGameStatusUpdate(gameId, userId, socket);
@@ -94,7 +98,7 @@ io.on('connection', (socket) => {
             // Players in game
             const players = await new Promise((resolve) => {
                 db.all(
-                    `SELECT gp.user_id as userId, u.username, gp.avatar, gp.color_primary as colorPrimary, gp.color_secondary as colorSecondary
+                    `SELECT gp.user_id as userId, u.username, u.last_seen_at as lastSeenAt, gp.avatar, gp.color_primary as colorPrimary, gp.color_secondary as colorSecondary
                      FROM game_players gp 
                      JOIN users u ON gp.user_id = u.id 
                      WHERE gp.game_id = ?`,
@@ -131,7 +135,8 @@ io.on('connection', (socket) => {
                 colorPrimary: p.colorPrimary || null,
                 colorSecondary: p.colorSecondary || null,
                 locked: lockedSet.has(p.userId),
-                online: onlineUserIds.has(p.userId)
+                online: onlineUserIds.has(p.userId),
+                lastSeenAt: p.lastSeenAt || null
             }));
 
             callback && callback({ success: true, currentTurn, players: enriched });
@@ -435,6 +440,9 @@ io.on('connection', (socket) => {
     
     socket.on('disconnect', () => {
         console.log(`👋 Player ${socket.userId} disconnected from game ${socket.gameId}`);
+        if (socket.userId) {
+            db.run('UPDATE users SET last_seen_at = ? WHERE id = ?', [new Date().toISOString(), socket.userId], () => {});
+        }
     });
 });
 

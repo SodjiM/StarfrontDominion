@@ -3569,7 +3569,7 @@ async function showPlayersModal() {
                                 <div>
                                     <div class=\"asset-name\">${p.username || 'Player ' + p.userId}</div>
                                     <div class=\"asset-position\" style=\"display:flex; gap:10px;\">
-                                        <span title=\"Online status\">${p.online ? '🟢 Online' : '⚪ Offline'}</span>
+                                        <span title=\"Online status\">${p.online ? '🟢 Online' : '⚪ Offline'}${!p.online && p.lastSeenAt ? ` · seen ${timeAgo(p.lastSeenAt)}` : ''}</span>
                                         <span title=\"Turn lock status\">${p.locked ? '🔒 Locked' : '🔓 Unlocked'}</span>
                                     </div>
                                 </div>
@@ -3652,6 +3652,33 @@ function centerOnSelected() {
         gameClient.camera.x = gameClient.selectedUnit.x;
         gameClient.camera.y = gameClient.selectedUnit.y;
         gameClient.render();
+    }
+}
+
+// Relative time formatter used in Players modal
+function timeAgo(isoString) {
+    try {
+        const then = new Date(isoString).getTime();
+        const now = Date.now();
+        const seconds = Math.max(0, Math.floor((now - then) / 1000));
+        const units = [
+            ['year', 31536000],
+            ['month', 2592000],
+            ['week', 604800],
+            ['day', 86400],
+            ['hour', 3600],
+            ['minute', 60],
+            ['second', 1],
+        ];
+        for (const [name, secs] of units) {
+            if (seconds >= secs) {
+                const value = Math.floor(seconds / secs);
+                return `${value} ${name}${value !== 1 ? 's' : ''} ago`;
+            }
+        }
+        return 'just now';
+    } catch (e) {
+        return '';
     }
 }
 
