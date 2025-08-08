@@ -304,6 +304,7 @@ class GameClient {
         }
 
         // Update units list - load from all sectors
+        this.attachFleetToolbarHandlers();
         this.updateMultiSectorFleet();
 
         this.objects = this.gameState.objects;
@@ -2217,26 +2218,70 @@ class GameClient {
                 unitsBySector[sectorName].push(unit);
             });
 
+            // Build sector filter options
+            const sectorFilterEl = document.getElementById('fleetSectorFilter');
+            if (sectorFilterEl) {
+                const current = sectorFilterEl.value || 'all';
+                sectorFilterEl.innerHTML = '<option value="all">All Sectors</option>' +
+                    Object.keys(unitsBySector).sort().map(s => `<option value="${s}">${s}</option>`).join('');
+                if ([...sectorFilterEl.options].some(o => o.value === current)) sectorFilterEl.value = current;
+            }
+
+            // Read filters
+            const q = (document.getElementById('fleetSearch')?.value || '').trim().toLowerCase();
+            const typeFilter = document.getElementById('fleetTypeFilter')?.value || 'all';
+            const statusFilter = document.getElementById('fleetStatusFilter')?.value || 'all';
+            const sectorFilter = document.getElementById('fleetSectorFilter')?.value || 'all';
+            const sortBy = document.getElementById('fleetSort')?.value || 'name';
+            const onlyFav = document.getElementById('fleetFavoritesToggle')?.dataset?.active === '1';
+
             // Generate HTML for all sectors
             let html = '';
             Object.keys(unitsBySector).sort().forEach(sectorName => {
                 const units = unitsBySector[sectorName];
                 const isCurrentSector = this.gameState?.sector?.name === sectorName;
-                
+                if (sectorFilter !== 'all' && sectorFilter !== sectorName) return;
+
                 html += `
                     <div class="sector-group">
-                        <div class="sector-header ${isCurrentSector ? 'current-sector' : ''}">
+                        <div class="sector-header ${isCurrentSector ? 'current-sector' : ''}" onclick="gameClient.toggleSectorCollapse('${sectorName.replace(/'/g, "\'")}')" data-sector="${sectorName}">
+                            <span class="chevron">▶</span>
                             <span class="sector-icon">${isCurrentSector ? '📍' : '🌌'}</span>
                             <span class="sector-name">${sectorName}</span>
                             <span class="unit-count">(${units.length})</span>
                         </div>
-                        <div class="sector-units">
+                        <div class="sector-units" id="sector-units-${this.safeId(sectorName)}">
                 `;
                 
-                units.forEach(unit => {
+                const filtered = units.filter(unit => {
+                    const meta = unit.meta ? JSON.parse(unit.meta) : {};
+                    if (onlyFav && !this.isFavoriteUnit(unit.id)) return false;
+                    if (typeFilter !== 'all') {
+                        const t = unit.type === 'ship' ? 'ship' : (unit.type === 'starbase' ? 'starbase' : 'structure');
+                        if (t !== typeFilter) return false;
+                    }
+                    const status = this.getUnitStatus(meta, unit);
+                    if (statusFilter !== 'all' && status !== statusFilter) return false;
+                    const name = (meta.name || unit.type || '').toLowerCase();
+                    if (q && !name.includes(q)) return false;
+                    return true;
+                }).sort((a,b)=>{
+                    const ma = a.meta ? JSON.parse(a.meta) : {};
+                    const mb = b.meta ? JSON.parse(b.meta) : {};
+                    if (sortBy === 'name') return (ma.name||a.type).localeCompare(mb.name||b.type);
+                    if (sortBy === 'status') return this.getUnitStatus(ma,a).localeCompare(this.getUnitStatus(mb,b));
+                    if (sortBy === 'cargo') return (this.getCargoFill(b)-this.getCargoFill(a));
+                    if (sortBy === 'eta') return (this.getEta(a)||999) - (this.getEta(b)||999);
+                    return 0;
+                });
+
+                filtered.forEach(unit => {
                     const meta = unit.meta ? JSON.parse(unit.meta) : {};
                     const isSelected = this.selectedUnit && this.selectedUnit.id === unit.id;
                     const inCurrentSector = isCurrentSector;
+                    const status = this.getUnitStatus(meta, unit);
+                    const cargoFill = this.getCargoFill(unit);
+                    const eta = this.getEta(unit);
                     
                     html += `
                         <div class="unit-item ${isSelected ? 'selected' : ''} ${!inCurrentSector ? 'remote-unit' : ''}" 
@@ -2246,11 +2291,12 @@ class GameClient {
                                 <span class="unit-name">${meta.name || unit.type}</span>
                                 ${!inCurrentSector ? '<span class="remote-indicator">📡</span>' : ''}
                             </div>
-                            <div class="unit-stats">
-                                <div>System: ${sectorName}</div>
-                                <div>Position: (${unit.x}, ${unit.y})</div>
-                                <div>HP: ${meta.hp || 0}/${meta.maxHp || 0}</div>
-                                ${unit.type === 'ship' && inCurrentSector ? `<div id="cargoStatus-${unit.id}">Cargo: Loading...</div>` : ''}
+                            <div class="unit-meta">
+                                <span class="chip">${sectorName}</span>
+                                <span class="chip ${status==='moving'?'status-moving':status==='mining'?'status-mining':(status==='docked'?'status-docked':'status-idle')}">${status==='moving'?'➜ Moving':status==='mining'?'⛏️ Mining':status==='docked'?'⚓ Docked':'Idle'}</span>
+                                ${unit.type==='ship' && cargoFill!=null ? `<span class="chip">📦 ${cargoFill}</span>` : ''}
+                                ${eta ? `<span class="chip">⏱️ ETA ${eta}</span>` : ''}
+                                <span class="favorite ${this.isFavoriteUnit(unit.id)?'active':''}" onclick="event.stopPropagation();gameClient.toggleFavoriteUnit(${unit.id});">⭐</span>
                             </div>
                         </div>
                     `;
@@ -2264,7 +2310,7 @@ class GameClient {
 
             unitsList.innerHTML = html;
 
-            // Update cargo status for ships in current sector
+            // Update cargo status for ships in current sector (only displayed as chip; keep for right panel accuracy)
             if (this.gameState?.objects) {
                 const currentSectorShips = this.gameState.objects.filter(obj => 
                     obj.owner_id === this.userId && obj.type === 'ship'
@@ -2277,6 +2323,25 @@ class GameClient {
         } catch (error) {
             console.error('Error loading player fleet:', error);
             unitsList.innerHTML = '<div class="no-units">Error loading fleet</div>';
+        }
+    }
+
+    // Hook up toolbar events (debounced)
+    attachFleetToolbarHandlers() {
+        const debounce = (fn, wait=200) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a), wait);} };
+        ['fleetSearch','fleetTypeFilter','fleetStatusFilter','fleetSectorFilter','fleetSort'].forEach(id=>{
+            const el = document.getElementById(id); if (!el) return;
+            el.oninput = el.onchange = debounce(()=> this.updateMultiSectorFleet(), 180);
+        });
+        const fav = document.getElementById('fleetFavoritesToggle');
+        if (fav) {
+            fav.onclick = () => {
+                const active = fav.dataset.active === '1';
+                fav.dataset.active = active ? '0' : '1';
+                fav.classList.toggle('sf-btn-primary', !active);
+                fav.classList.toggle('sf-btn-secondary', active);
+                this.updateMultiSectorFleet();
+            };
         }
     }
 
@@ -2337,6 +2402,63 @@ class GameClient {
                 console.error('Error switching sectors:', error);
                 this.addLogEntry('Failed to switch sectors', 'error');
             }
+        }
+    }
+
+    // Helpers for left panel chips
+    getUnitStatus(meta, unit) {
+        // Derive status from known fields
+        if (unit.harvestingStatus === 'active' || meta.mining === true) return 'mining';
+        if (unit.movement_path || meta.moving === true) return 'moving';
+        if (meta.docked) return 'docked';
+        return 'idle';
+    }
+
+    getCargoFill(unit) {
+        try {
+            const meta = unit.meta ? JSON.parse(unit.meta) : {};
+            if (meta.cargoCapacity == null) return null;
+            const used = (meta.cargoUsed != null) ? meta.cargoUsed : (meta.cargo?.reduce?.((s,c)=>s + (c.quantity||0), 0) || 0);
+            return `${used}/${meta.cargoCapacity}`;
+        } catch { return null; }
+    }
+
+    getEta(unit) {
+        // If movement has eta_turns or can be derived from path length
+        if (unit.eta_turns != null) return unit.eta_turns;
+        if (unit.movement_path) {
+            try { const p = JSON.parse(unit.movement_path); return Array.isArray(p) ? Math.max(1, Math.ceil(p.length / (unit.movement_speed||4))) : null; } catch { return null; }
+        }
+        return null;
+    }
+
+    toggleSectorCollapse(sectorName) {
+        const el = document.querySelector(`.sector-header[data-sector="${sectorName}"]`);
+        const body = document.getElementById(`sector-units-${this.safeId(sectorName)}`);
+        if (!el || !body) return;
+        const collapsed = el.classList.toggle('collapsed');
+        if (collapsed) { body.style.display = 'none'; } else { body.style.display = 'grid'; }
+    }
+
+    safeId(text) {
+        return (text || '').replace(/[^a-z0-9]+/gi, '-');
+    }
+
+    isFavoriteUnit(unitId) {
+        try { const s = localStorage.getItem('favoriteUnits'); if (!s) return false; const set = new Set(JSON.parse(s)); return set.has(unitId); } catch { return false; }
+    }
+
+    toggleFavoriteUnit(unitId) {
+        try {
+            const s = localStorage.getItem('favoriteUnits');
+            const arr = s ? JSON.parse(s) : [];
+            const set = new Set(arr);
+            if (set.has(unitId)) set.delete(unitId); else set.add(unitId);
+            localStorage.setItem('favoriteUnits', JSON.stringify([...set]));
+            // Refresh list without a full network fetch; reuse last fetched fleet if desired.
+            this.updateMultiSectorFleet();
+        } catch {
+            // no-op
         }
     }
 

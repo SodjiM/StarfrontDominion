@@ -1545,7 +1545,33 @@
         
         <!-- Left Panel - Units -->
         <div class="left-panel sf-card">
-            <div class="panel-title">🚢 Your Fleet</div>
+            <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span>🚢 Your Fleet</span>
+            </div>
+            <div class="fleet-toolbar" style="padding:0 2px;">
+                <input id="fleetSearch" class="sf-input" placeholder="Search name or tag" />
+                <select id="fleetTypeFilter" class="sf-select">
+                    <option value="all">All Types</option>
+                    <option value="ship">Ships</option>
+                    <option value="starbase">Stations</option>
+                    <option value="structure">Structures</option>
+                </select>
+                <select id="fleetStatusFilter" class="sf-select">
+                    <option value="all">All Status</option>
+                    <option value="idle">Idle</option>
+                    <option value="moving">Moving</option>
+                    <option value="mining">Mining</option>
+                    <option value="docked">Docked</option>
+                </select>
+                <select id="fleetSectorFilter" class="sf-select"><option value="all">All Sectors</option></select>
+                <select id="fleetSort" class="sf-select">
+                    <option value="name">Sort: Name</option>
+                    <option value="status">Sort: Status</option>
+                    <option value="eta">Sort: ETA</option>
+                    <option value="cargo">Sort: Cargo</option>
+                </select>
+                <button id="fleetFavoritesToggle" class="sf-btn sf-btn-secondary" title="Show favorites only">⭐</button>
+            </div>
             <div id="unitsList" class="loading">Loading units...</div>
         </div>
         
