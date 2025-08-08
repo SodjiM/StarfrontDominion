@@ -25,6 +25,8 @@ class GameClient {
         this.warpTargets = []; // Available warp targets (celestial objects)
         this.fogEnabled = true;
         this.fogOffscreen = null;
+        this.lastFleet = null; // Cached fleet for stats strip
+        this.senateProgress = 0; // 0-100 senate update meter
     }
 
     // Initialize the game
@@ -45,6 +47,8 @@ class GameClient {
             const stored = localStorage.getItem('avatar');
             if (stored) avatarMini.src = stored;
         }
+        // Load senate progress from local storage
+        this.loadSenateProgress();
         
         // Connect to Socket.IO
         this.connectSocket();
@@ -129,6 +133,8 @@ class GameClient {
         this.socket.on('turn-resolved', (data) => {
             this.addLogEntry(`Turn ${data.turnNumber} resolved! Starting turn ${data.nextTurn}`, 'success');
             this.loadGameState(); // Refresh game state
+            // Tick senate meter +1% per resolved turn
+            this.incrementSenateProgress(1);
         });
 
         this.socket.on('warp-confirmed', (data) => {
@@ -287,6 +293,8 @@ class GameClient {
         
         // Update player avatar
         this.updatePlayerAvatar();
+        // Update player information card (identity, stats, actions)
+        this.updatePlayerInformationPanel();
         
         // Update sector overview title
         this.updateSectorOverviewTitle();
@@ -308,6 +316,9 @@ class GameClient {
         this.updateMultiSectorFleet();
 
         this.objects = this.gameState.objects;
+
+        // After state load, also re-apply senate UI (in case of first load)
+        this.applySenateProgressToUI();
         
         // Get player objects for selection logic
         const allPlayerObjects = this.gameState.objects.filter(obj => obj.owner_id === this.userId);
@@ -461,6 +472,101 @@ class GameClient {
             avatarImg.src = `assets/avatars/${avatar}.png`;
             avatarImg.alt = `${avatar} avatar`;
         }
+    }
+
+    // Update the bottom-left player information card
+    updatePlayerInformationPanel() {
+        const setup = this.gameState?.playerSetup || {};
+        // Commander name from session
+        const username = (Session.getUser()?.username) || 'Commander';
+        const nameEl = document.getElementById('commanderName');
+        if (nameEl) nameEl.textContent = username;
+
+        // System name subtitle
+        const sysEl = document.getElementById('systemNameLabel');
+        if (sysEl) sysEl.textContent = setup.systemName || '—';
+
+        // Color swatch
+        const swatch = document.getElementById('playerColorSwatch');
+        if (swatch) {
+            swatch.style.background = setup.colorPrimary || '#64b5f6';
+            const secondary = setup.colorSecondary || '#9c27b0';
+            swatch.style.boxShadow = `0 0 10px 2px ${secondary}`;
+        }
+
+        // Avatar image (mini)
+        const mini = document.getElementById('playerAvatarMini');
+        if (mini && setup.avatar) {
+            mini.src = `assets/avatars/${setup.avatar}.png`;
+            mini.alt = `${setup.avatar} avatar`;
+        }
+
+        // Stats: credits (placeholder), ships, stations, senators (placeholder)
+        const creditsEl = document.getElementById('creditsChip');
+        if (creditsEl) creditsEl.textContent = '—'; // TODO: hook real credits when available
+
+        const senatorsEl = document.getElementById('senatorsChip');
+        if (senatorsEl) senatorsEl.textContent = '—'; // TODO: hook real senators count
+
+        const shipsEl = document.getElementById('shipsChip');
+        const stationsEl = document.getElementById('stationsChip');
+
+        if (this.lastFleet && Array.isArray(this.lastFleet)) {
+            const ships = this.lastFleet.filter(u => u.type === 'ship').length;
+            const stations = this.lastFleet.filter(u => u.type === 'starbase' || u.type === 'station').length;
+            if (shipsEl) shipsEl.textContent = String(ships);
+            if (stationsEl) stationsEl.textContent = String(stations);
+        } else {
+            if (shipsEl) shipsEl.textContent = '…';
+            if (stationsEl) stationsEl.textContent = '…';
+        }
+
+        // Senate ring
+        this.applySenateProgressToUI();
+    }
+
+    // Senate progress persistence helpers
+    senateStorageKey() {
+        return `senateProgress:${this.gameId}:${this.userId}`;
+    }
+    loadSenateProgress() {
+        try {
+            const val = localStorage.getItem(this.senateStorageKey());
+            this.senateProgress = Math.min(100, Math.max(0, parseInt(val || '0', 10)));
+        } catch { this.senateProgress = 0; }
+        this.applySenateProgressToUI();
+    }
+    saveSenateProgress() {
+        try { localStorage.setItem(this.senateStorageKey(), String(this.senateProgress)); } catch {}
+    }
+    setSenateProgress(pct) {
+        this.senateProgress = Math.min(100, Math.max(0, Math.floor(pct)));
+        this.saveSenateProgress();
+        this.applySenateProgressToUI();
+    }
+    incrementSenateProgress(delta) {
+        const prev = this.senateProgress;
+        this.setSenateProgress(prev + delta);
+        if (this.senateProgress >= 100) {
+            // Trigger Senate modal and reset
+            if (typeof showSenateModal === 'function') {
+                showSenateModal();
+            } else {
+                UI.showAlert('Senate session begins. (Feature coming soon)', '🏛️ Senate');
+            }
+            this.setSenateProgress(0);
+        }
+    }
+    applySenateProgressToUI() {
+        const arc = document.getElementById('senateArc');
+        const label = document.getElementById('senateProgressLabel');
+        const pct = Math.min(100, Math.max(0, this.senateProgress));
+        if (arc) {
+            // Path length is 100 via pathLength attr; 100 -> 0 offset (full), 0 -> 100 offset (empty)
+            const offset = 100 - pct;
+            arc.setAttribute('stroke-dashoffset', String(offset));
+        }
+        if (label) label.textContent = `${pct}%`;
     }
 
     // Get icon for unit type (including celestial objects)
@@ -2206,8 +2312,14 @@ class GameClient {
             if (!fleet || fleet.length === 0) {
                 unitsList.classList.remove('loading');
                 unitsList.innerHTML = '<div class="no-units">No units found</div>';
+                this.lastFleet = [];
+                this.updatePlayerInformationPanel();
                 return;
             }
+
+            // Cache for stats strip and other UI
+            this.lastFleet = fleet;
+            this.updatePlayerInformationPanel();
 
             // Group units by sector
             const unitsBySector = {};
@@ -5425,3 +5537,23 @@ async function showPlayerAssets() {
         gameClient.addLogEntry('Failed to load player assets', 'error');
     }
 } 
+
+// Basic Senate modal stub (to be expanded later)
+function showSenateModal() {
+    const content = document.createElement('div');
+    content.innerHTML = `
+        <div style="display:grid; gap:12px;">
+            <p>Government management is coming soon.</p>
+            <ul style="margin-left:16px; color:#ccc; line-height:1.6;">
+                <li>Propose and vote on laws</li>
+                <li>Manage senators and political factions</li>
+                <li>Diplomacy and interstellar policies</li>
+            </ul>
+        </div>
+    `;
+    UI.showModal({
+        title: '🏛️ Senate',
+        content,
+        actions: [ { text: 'Close', style: 'secondary', action: () => true } ]
+    });
+}

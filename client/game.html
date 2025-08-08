@@ -1518,6 +1518,35 @@
             padding: 20px;
             font-style: italic;
         }
+        
+        /* Player Card */
+        .player-card {
+            padding: 12px;
+            display: grid;
+            grid-template-rows: auto auto auto;
+            row-gap: 10px;
+            align-content: start;
+        }
+        .player-identity { display: flex; align-items: center; gap: 12px; }
+        .avatar-wrap { position: relative; width: 56px; height: 56px; }
+        .avatar-wrap img {
+            width: 56px; height: 56px; border-radius: 50%;
+            border: 2px solid rgba(100,181,246,0.5);
+            object-fit: cover;
+            display: block;
+        }
+        .senate-ring { position: absolute; left: -2px; top: -8px; width: 60px; height: 40px; pointer-events: none; }
+        .senate-track { fill: none; stroke: rgba(255,255,255,0.15); stroke-width: 6; stroke-linecap: round; }
+        .senate-progress { fill: none; stroke: #8a2be2; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 0.25s ease; }
+        .senate-label { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); font-size: 0.7em; color: #cfcfff; }
+        .identity-text { display: flex; flex-direction: column; gap: 2px; }
+        .name-row { display: flex; align-items: center; gap: 8px; font-weight: bold; color: #e3f2fd; }
+        .color-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.4); display: inline-block; box-shadow: 0 0 0 0 transparent; transition: box-shadow 0.25s ease; }
+        .subtext { color: #b0bec5; font-size: 0.9em; }
+        .stats-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        .stat-chip { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,0.04); justify-content: center; }
+        .stat-chip .icon { opacity: 0.9; }
+        .player-actions { display: flex; gap: 8px; justify-content: flex-end; }
     </style>
 </head>
 <body>
@@ -1597,10 +1626,37 @@
         </div>
         
         <!-- PlayerInformation panel at bottom-left, outside ChatNotification -->
-        <div id="playerInformation" class="sf-card" style="grid-area: minimap; padding:10px; display:flex; align-items:center; gap:12px;">
-            <img id="playerAvatarMini" src="assets/avatars/explorer.png" alt="avatar" style="width:48px; height:48px; border-radius:50%; border:1px solid rgba(100,181,246,0.4)" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiM2NGI1ZjYiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI4IiB5PSI4Ij4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxOVYyMEgzVjE5TDUgMTcuMjVWMTFIMTBWMTIuNUgxNFYxMUgxOVYxNy4yNUwyMSAxOVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K'">
-            <button class="sf-btn sf-btn-secondary" onclick="showPlayerAssets()">Player Assets</button>
-            <button class="sf-btn sf-btn-secondary" onclick="alert('State view coming soon')">State</button>
+        <div id="playerInformation" class="sf-card player-card" style="grid-area: minimap;">
+            <div class="player-identity">
+                <div class="avatar-wrap">
+                    <img id="playerAvatarMini" src="assets/avatars/explorer.png" alt="avatar" onerror="this.src='assets/avatars/explorer.png'">
+                    <!-- Senate semicircle ring -->
+                    <svg class="senate-ring" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
+                        <!-- track -->
+                        <path d="M 5 55 A 45 45 0 0 1 95 55" class="senate-track" pathLength="100"></path>
+                        <!-- progress -->
+                        <path id="senateArc" d="M 5 55 A 45 45 0 0 1 95 55" class="senate-progress" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"></path>
+                    </svg>
+                    <div class="senate-label" id="senateProgressLabel">0%</div>
+                </div>
+                <div class="identity-text">
+                    <div class="name-row">
+                        <span id="commanderName">Commander</span>
+                        <span id="playerColorSwatch" class="color-swatch" title="Player Color"></span>
+                    </div>
+                    <div class="subtext" id="systemNameLabel">—</div>
+                </div>
+            </div>
+            <div class="stats-strip">
+                <div class="stat-chip" title="Credits"><span class="icon">💳</span><span id="creditsChip">—</span></div>
+                <div class="stat-chip" title="Ships"><span class="icon">🚢</span><span id="shipsChip">…</span></div>
+                <div class="stat-chip" title="Stations"><span class="icon">🛰️</span><span id="stationsChip">…</span></div>
+                <div class="stat-chip" title="Senators"><span class="icon">🏛️</span><span id="senatorsChip">—</span></div>
+            </div>
+            <div class="player-actions">
+                <button class="sf-btn sf-btn-secondary" onclick="showPlayerAssets()">Player Assets</button>
+                <button class="sf-btn sf-btn-secondary" onclick="showSenateModal()">Senate</button>
+            </div>
         </div>
         
         <!-- Chat/Notification panel to the right -->
