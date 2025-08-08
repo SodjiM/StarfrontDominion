@@ -144,7 +144,7 @@ class GameWorldManager {
                     name: `${player.username} Prime Station`,
                     hp: 100,
                     maxHp: 100,
-                    scanRange: 30,
+                    scanRange: 200,
                     pilots: 5,
                     cargoCapacity: 50 // Starbases have larger cargo capacity than ships
                 };
@@ -181,7 +181,7 @@ class GameWorldManager {
                             name: `${player.username} Explorer`,
                             hp: 50,
                             maxHp: 50,
-                            scanRange: 14,
+                            scanRange: 50,
                             movementSpeed: 4,
                             cargoCapacity: 10,
                             harvestRate: 1.0,
@@ -1363,7 +1363,7 @@ const SHIP_TYPES = {
         canActiveScan: true,
         hp: 50,
         maxHp: 50,
-        scanRange: 14
+        scanRange: 50
     },
     'mining-vessel': {
         name: 'Mining Vessel',
@@ -1375,7 +1375,7 @@ const SHIP_TYPES = {
         canActiveScan: false,
         hp: 60,
         maxHp: 60,
-        scanRange: 10
+        scanRange: 50
     },
     'logistics': {
         name: 'Logistics Ship',
@@ -1387,7 +1387,7 @@ const SHIP_TYPES = {
         canActiveScan: false,
         hp: 40,
         maxHp: 40,
-        scanRange: 8
+        scanRange: 50
     }
 };
 

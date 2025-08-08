@@ -269,7 +269,7 @@ class SystemGenerator {
         const baseDistance = 400 + Math.max(...stars.map(s => s.radius)) + 100; // Start beyond star radius + buffer
         
         for (let i = 0; i < zoneCount; i++) {
-            const distance = CelestialObjectManager.calculateOrbitalDistance(i, baseDistance);
+            const distance = CelestialObjectManager.calculateOrbitalDistance(i, baseDistance, context.rng);
             context.orbitalZones.push({
                 index: i,
                 distance,

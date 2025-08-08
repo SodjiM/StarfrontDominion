@@ -471,12 +471,13 @@ class CelestialObjectManager {
      * @param {number} baseDistance - Base orbital distance
      * @returns {number} Orbital distance from center
      */
-    static calculateOrbitalDistance(orbitIndex, baseDistance = 400) {
+    static calculateOrbitalDistance(orbitIndex, baseDistance = 400, rng = null) {
         // Orbital distances follow rough planetary spacing: each orbit ~300-700 tiles apart
         const variation = 0.2; // 20% variation
         const baseSpacing = 350;
         const distance = baseDistance + (orbitIndex * baseSpacing);
-        const variationAmount = distance * variation * (Math.random() - 0.5);
+        const rand = rng ? (rng.random() - 0.5) : (Math.random() - 0.5);
+        const variationAmount = distance * variation * rand;
         
         return Math.round(distance + variationAmount);
     }

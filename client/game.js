@@ -1015,7 +1015,8 @@ class GameClient {
             case 'moon':
                 return { border: '#BDBDBD', background: 'rgba(189, 189, 189, 0.5)', text: '#BDBDBD' };
             case 'belt':
-                return { border: '#FF5722', background: 'rgba(255, 87, 34, 0.3)', text: '#FF5722' };
+                // Use more neutral colors; belts are visualized by their resource nodes, not a bold ring
+                return { border: 'rgba(255,255,255,0.08)', background: 'rgba(255, 255, 255, 0.05)', text: '#CCCCCC' };
             case 'nebula':
                 return { border: '#E91E63', background: 'rgba(233, 30, 99, 0.4)', text: '#E91E63' };
             case 'wormhole':
@@ -1271,19 +1272,16 @@ class GameClient {
             // Detailed view - show individual asteroids
             this.drawDetailedAsteroidField(ctx, x, y, size, colors);
         } else {
-            // Distant view - show as a ring with some scattered points
-            ctx.strokeStyle = colors.border;
-            ctx.lineWidth = Math.max(2, size * 0.005);
-            
-            // Main belt outline
-            ctx.beginPath();
-            ctx.arc(x, y, size/2, 0, Math.PI * 2);
-            ctx.stroke();
-            
-            // Some scattered points for distant view
+            // Distant view - instead of a simple outline, render sparse asteroid hints
             if (size > this.tileSize) {
                 this.drawDistantAsteroids(ctx, x, y, size, colors);
             }
+            // Optionally, draw a very subtle faint ring just for orientation
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(x, y, size/2, 0, Math.PI * 2);
+            ctx.stroke();
         }
     }
     
@@ -1304,6 +1302,11 @@ class GameClient {
         // Use object ID for consistent nebula structure
         const objId = this.objects.find(obj => obj.x === x && obj.y === y)?.id || 0;
         const seed = objId * 54321;
+        // Resolve base RGB from provided background color once
+        const colorMatch = (colors.background || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        const baseR = colorMatch ? colorMatch[1] : '138';
+        const baseG = colorMatch ? colorMatch[2] : '43';
+        const baseB = colorMatch ? colorMatch[3] : '226';
         
         // Multiple layers of nebula gas
         const layers = [
@@ -1313,17 +1316,11 @@ class GameClient {
         ];
         
         layers.forEach((layer, layerIndex) => {
-            // Extract RGB from colors.background
-            const colorMatch = colors.background.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-            const r = colorMatch ? colorMatch[1] : '138';
-            const g = colorMatch ? colorMatch[2] : '43';
-            const b = colorMatch ? colorMatch[3] : '226';
-            
             // Create gradient for this layer
             const gradient = ctx.createRadialGradient(x, y, 0, x, y, layer.radius);
-            gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${layer.alpha})`);
-            gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${layer.alpha * 0.6})`);
-            gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+            gradient.addColorStop(0, `rgba(${baseR}, ${baseG}, ${baseB}, ${layer.alpha})`);
+            gradient.addColorStop(0.7, `rgba(${baseR}, ${baseG}, ${baseB}, ${layer.alpha * 0.6})`);
+            gradient.addColorStop(1, `rgba(${baseR}, ${baseG}, ${baseB}, 0)`);
             
             ctx.fillStyle = gradient;
             ctx.beginPath();
@@ -1332,7 +1329,7 @@ class GameClient {
             
             // Add particle-like details
             if (this.tileSize > 10) {
-                ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${layer.alpha * 1.5})`;
+                ctx.fillStyle = `rgba(${baseR}, ${baseG}, ${baseB}, ${layer.alpha * 1.5})`;
                 for (let i = 0; i < layer.particles; i++) {
                     const particleSeed = seed + layerIndex * 100 + i;
                     const angle = ((particleSeed % 628) / 100);
@@ -1361,8 +1358,8 @@ class GameClient {
                 
                 const brightGradient = ctx.createRadialGradient(spotX, spotY, 0, spotX, spotY, spotSize);
                 brightGradient.addColorStop(0, `rgba(255, 255, 255, 0.3)`);
-                brightGradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, 0.4)`);
-                brightGradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                brightGradient.addColorStop(0.5, `rgba(${baseR}, ${baseG}, ${baseB}, 0.4)`);
+                brightGradient.addColorStop(1, `rgba(${baseR}, ${baseG}, ${baseB}, 0)`);
                 
                 ctx.fillStyle = brightGradient;
                 ctx.beginPath();
