@@ -411,12 +411,19 @@ router.delete('/games/clear-all', (req, res) => {
                                                                 [gameId, gameId],
                                                                 () => {
                                                                     db.run(
-                                                                        `DELETE FROM sector_objects WHERE sector_id IN (
+                                                                `DELETE FROM sector_objects WHERE sector_id IN (
                                                                             SELECT id FROM sectors WHERE game_id = ?
                                                                         )`,
                                                                         [gameId],
                                                                         () => {
-                                                                            db.run('DELETE FROM turn_locks WHERE game_id = ?', [gameId], () => {
+                                                                            // Also remove generation history rows tied to these sectors
+                                                                            db.run(
+                                                                                `DELETE FROM generation_history WHERE sector_id IN (
+                                                                                    SELECT id FROM sectors WHERE game_id = ?
+                                                                                )`,
+                                                                                [gameId],
+                                                                                () => {
+                                                                                    db.run('DELETE FROM turn_locks WHERE game_id = ?', [gameId], () => {
                                                                                 db.run('DELETE FROM turns WHERE game_id = ?', [gameId], () => {
                                                                                     db.run('DELETE FROM sectors WHERE game_id = ?', [gameId], (errSectors) => {
                                                                                         if (errSectors) failures++;
@@ -429,6 +436,8 @@ router.delete('/games/clear-all', (req, res) => {
                                                                                     });
                                                                                 });
                                                                             });
+                                                                                }
+                                                                            );
                                                                         }
                                                                     );
                                                                 }
