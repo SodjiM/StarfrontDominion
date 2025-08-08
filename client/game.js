@@ -2204,6 +2204,7 @@ class GameClient {
             const fleet = data.fleet;
             
             if (!fleet || fleet.length === 0) {
+                unitsList.classList.remove('loading');
                 unitsList.innerHTML = '<div class="no-units">No units found</div>';
                 return;
             }
@@ -2250,7 +2251,7 @@ class GameClient {
                             <span class="sector-name">${sectorName}</span>
                             <span class="unit-count">(${units.length})</span>
                         </div>
-                        <div class="sector-units" id="sector-units-${this.safeId(sectorName)}">
+                        <div class="sector-units" id="sector-units-${this.safeId(sectorName)}" style="display:grid;width:100%;box-sizing:border-box;">
                 `;
                 
                 const filtered = units.filter(unit => {
@@ -2308,6 +2309,7 @@ class GameClient {
                 `;
             });
 
+            unitsList.classList.remove('loading');
             unitsList.innerHTML = html;
 
             // Update cargo status for ships in current sector (only displayed as chip; keep for right panel accuracy)
@@ -2322,6 +2324,7 @@ class GameClient {
 
         } catch (error) {
             console.error('Error loading player fleet:', error);
+            unitsList.classList.remove('loading');
             unitsList.innerHTML = '<div class="no-units">Error loading fleet</div>';
         }
     }

@@ -17,7 +17,7 @@
         /* Main layout grid */
         .game-container {
             display: grid;
-            grid-template-columns: 280px 1fr 380px;
+            grid-template-columns: 320px 1fr 380px;
             grid-template-rows: 64px 1fr minmax(240px, 28vh);
             grid-template-areas:
                 "topbar topbar topbar"
@@ -51,7 +51,7 @@
         .lock-turn-btn.locked { background: linear-gradient(180deg, rgba(255,152,0,0.35), rgba(255,152,0,0.18)); border-color: rgba(255,152,0,0.45); }
         
         /* Left panel - Units list */
-        .left-panel { grid-area: leftpanel; padding: 12px; overflow-y: auto; }
+        .left-panel { grid-area: leftpanel; padding: 12px; overflow: hidden; display:grid; grid-template-rows: auto auto 1fr; row-gap:8px; }
         
         .panel-title { font-size: 1.05em; margin-bottom: 10px; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
         
@@ -1548,7 +1548,7 @@
             <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                 <span>🚢 Your Fleet</span>
             </div>
-            <div class="fleet-toolbar" style="padding:0 2px;">
+            <div class="fleet-toolbar" style="padding:0 2px; width:100%; box-sizing:border-box;">
                 <input id="fleetSearch" class="sf-input" placeholder="Search name or tag" />
                 <select id="fleetTypeFilter" class="sf-select">
                     <option value="all">All Types</option>
@@ -1572,7 +1572,7 @@
                 </select>
                 <button id="fleetFavoritesToggle" class="sf-btn sf-btn-secondary" title="Show favorites only">⭐</button>
             </div>
-            <div id="unitsList" class="loading">Loading units...</div>
+            <div id="unitsList" class="loading" style="min-height:0; overflow:auto; overflow-x:hidden; scrollbar-gutter: stable both-edges;">Loading units...</div>
         </div>
         
         <!-- Center Map -->
