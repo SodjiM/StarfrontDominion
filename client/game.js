@@ -57,7 +57,11 @@ class GameClient {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
         this.miniCanvas = document.getElementById('miniCanvas');
-        this.miniCtx = this.miniCanvas.getContext('2d');
+        if (this.miniCanvas) {
+            this.miniCtx = this.miniCanvas.getContext('2d');
+        } else {
+            this.miniCtx = null;
+        }
         
         // Set canvas size
         this.resizeCanvas();
@@ -70,8 +74,10 @@ class GameClient {
         this.canvas.width = container.clientWidth;
         this.canvas.height = container.clientHeight;
         
-        this.miniCanvas.width = this.miniCanvas.parentElement.clientWidth - 20;
-        this.miniCanvas.height = this.miniCanvas.parentElement.clientHeight - 40;
+        if (this.miniCanvas && this.miniCanvas.parentElement) {
+            this.miniCanvas.width = this.miniCanvas.parentElement.clientWidth - 20;
+            this.miniCanvas.height = this.miniCanvas.parentElement.clientHeight - 40;
+        }
         
         this.render();
     }
@@ -1949,6 +1955,61 @@ class GameClient {
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
     }
 
+    // Toggle floating minimap within main map area
+    toggleFloatingMiniMap() {
+        if (!this._floatingMini) {
+            const container = document.createElement('div');
+            container.id = 'floatingMiniWrap';
+            container.style.position = 'absolute';
+            container.style.left = '12px';
+            container.style.bottom = '12px';
+            container.style.border = '1px solid rgba(100,181,246,0.3)';
+            container.style.borderRadius = '10px';
+            container.style.background = '#0a0f1c';
+            container.style.boxShadow = '0 10px 30px rgba(0,0,0,0.35)';
+            container.style.pointerEvents = 'auto';
+
+            const mini = document.createElement('canvas');
+            mini.width = 260; mini.height = 180;
+            container.appendChild(mini);
+            this.canvas.parentElement.appendChild(container);
+
+            this._floatingMini = { container, canvas: mini, ctx: mini.getContext('2d') };
+            // Render initial and on main renders
+            this.renderFloatingMini();
+        } else {
+            // Toggle visibility
+            const visible = this._floatingMini.container.style.display !== 'none';
+            this._floatingMini.container.style.display = visible ? 'none' : 'block';
+            if (!visible) this.renderFloatingMini();
+        }
+    }
+
+    renderFloatingMini() {
+        if (!this._floatingMini || !this.objects) return;
+        const { canvas, ctx } = this._floatingMini;
+        // Background
+        ctx.fillStyle = '#0a0a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = 'rgba(100, 181, 246, 0.3)';
+        ctx.lineWidth = 2; ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+        const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
+        // Celestials
+        this.objects.filter(o=>this.isCelestialObject(o)).forEach(obj=>{
+            const x = obj.x * scaleX, y = obj.y * scaleY; const meta = obj.meta||{}; const t = meta.celestialType || obj.celestial_type;
+            if (t==='belt'||t==='nebula') return; ctx.fillStyle = this.getCelestialColors(obj).border; ctx.beginPath(); ctx.arc(x,y,2,0,Math.PI*2); ctx.fill();
+        });
+        // Ships/bases
+        this.objects.filter(o=>!this.isCelestialObject(o)&&o.type!=='resource_node').forEach(o=>{
+            const x = o.x * scaleX, y = o.y * scaleY; ctx.fillStyle = o.owner_id===this.userId?'#4CAF50':'#FF9800'; ctx.fillRect(x-2,y-2,4,4);
+        });
+        // Camera viewport box
+        const viewW = canvas.width*(this.canvas.width/5000/ this.tileSize);
+        const viewH = canvas.height*(this.canvas.height/5000/ this.tileSize);
+        const vX = this.camera.x*scaleX - viewW/2; const vY = this.camera.y*scaleY - viewH/2;
+        ctx.strokeStyle = '#ffeb3b'; ctx.lineWidth = 1; ctx.strokeRect(vX, vY, viewW, viewH);
+    }
+
     // Drag-to-pan state
     startDragPan(e) {
         if (e.button !== 0) return; // left button only
@@ -1982,6 +2043,7 @@ class GameClient {
         this.camera.y = Math.max(0, Math.min(5000, this._dragPan.cameraY - tilesDY));
         this.render();
         this.renderMiniMap();
+        this.renderFloatingMini();
     }
 
     // Handle mouse movement for cursor feedback

@@ -1562,7 +1562,8 @@
             <div class="map-controls">
                 <button class="map-btn sf-btn sf-btn-secondary" onclick="zoomIn()">🔍+</button>
                 <button class="map-btn sf-btn sf-btn-secondary" onclick="zoomOut()">🔍-</button>
-                <button class="map-btn sf-btn sf-btn-secondary" onclick="centerOnSelected()">🎯</button>
+                <button class="map-btn sf-btn sf-btn-secondary" onclick="gameClient.toggleFloatingMiniMap()">🎯</button>
+                <button class="map-btn sf-btn sf-btn-secondary" onclick="openMapModal()" title="Open Full Map">🗺️</button>
             </div>
         </div>
         
@@ -1577,15 +1578,12 @@
         </div>
         
         <!-- Bottom: Mini Map + Log/Chat side-by-side -->
-        <div class="mini-map sf-card" style="grid-area:auto; grid-column: 1 / span 2; min-height:0;">
+        <div class="mini-map sf-card" style="grid-area:auto; grid-column: 2 / span 1; min-height:0;">
             <div style="font-size: 0.9em; margin-bottom: 6px; color: var(--primary); display: flex; align-items: center; gap: 8px; justify-content: flex-start;">
                 <span id="sectorOverviewTitle">Sector Overview</span>
                 <button class="map-expand-btn sf-btn sf-btn-secondary" onclick="openMapModal()" title="Open Full Map">🗺️</button>
             </div>
-            <div style="display:grid; grid-template-columns: 240px 1fr; gap: 8px; height: 100%; min-height: 0;">
-                <div style="display:flex; flex-direction:column; min-width:0;">
-                    <canvas id="miniCanvas" style="flex:1; min-height:0;"></canvas>
-                </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 100%; min-height: 0;">
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height:0;">
                     <div style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
                         <div class="panel-title" style="margin:0;">💬 Chat</div>
