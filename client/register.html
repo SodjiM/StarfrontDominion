@@ -4,150 +4,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Register - Starfront: Dominion</title>
+    <link rel="stylesheet" href="styles.css">
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #0c0c1e 0%, #1a1a3a 100%);
-            color: #ffffff;
-            margin: 0;
-            padding: 0;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .container {
-            max-width: 400px;
-            padding: 40px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 15px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        
-        h1 {
-            text-align: center;
-            font-size: 2em;
-            margin-bottom: 30px;
-            background: linear-gradient(45deg, #64b5f6, #42a5f5);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 5px;
-            color: #b0bec5;
-        }
-        
-        input {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-            font-size: 1em;
-            box-sizing: border-box;
-        }
-        
-        input:focus {
-            outline: none;
-            border-color: #64b5f6;
-            box-shadow: 0 0 10px rgba(100, 181, 246, 0.3);
-        }
-        
-        button {
-            width: 100%;
-            padding: 15px;
-            font-size: 1.1em;
-            background: linear-gradient(45deg, #1976d2, #1565c0);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            box-shadow: 0 5px 15px rgba(25, 118, 210, 0.3);
-        }
-        
-        button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 25px rgba(25, 118, 210, 0.4);
-        }
-        
-        button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .error {
-            color: #f44336;
-            margin-top: 10px;
-            text-align: center;
-        }
-        
-        .success {
-            color: #4caf50;
-            margin-top: 10px;
-            text-align: center;
-        }
-        
-        .back-link {
-            text-align: center;
-            margin-top: 20px;
-        }
-        
-        .back-link a {
-            color: #64b5f6;
-            text-decoration: none;
-        }
-        
-        .back-link a:hover {
-            text-decoration: underline;
-        }
-        
-        .loading {
-            display: none;
-            text-align: center;
-            color: #64b5f6;
-        }
-        
-        .password-requirements {
-            font-size: 0.9em;
-            color: #b0bec5;
-            margin-top: 5px;
-        }
+      body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display:flex; align-items:center; justify-content:center; }
+      .container { max-width: 420px; padding: 36px; margin: 48px 16px; }
+      h1 { text-align:center; margin-bottom: 18px; }
+      .form-group { margin-bottom: 18px; }
+      label { color: var(--muted); }
+      input { width:100%; }
+      .back-link { text-align:center; margin-top: 14px; }
+      .back-link a { color: var(--primary); text-decoration:none; }
+      .back-link a:hover { text-decoration: underline; }
+      .password-requirements { color: var(--muted); }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>✨ Register</h1>
+    <div class="container sf-card">
+        <h1 class="sf-title">✨ Register</h1>
         
         <form id="registerForm">
             <div class="form-group">
                 <label for="username">Username:</label>
-                <input type="text" id="username" name="username" required minlength="3" maxlength="20">
+                <input class="sf-input" type="text" id="username" name="username" required minlength="3" maxlength="20">
                 <div class="password-requirements">3-20 characters, letters and numbers only</div>
             </div>
             
             <div class="form-group">
                 <label for="password">Password:</label>
-                <input type="password" id="password" name="password" required minlength="6">
+                <input class="sf-input" type="password" id="password" name="password" required minlength="6">
                 <div class="password-requirements">Minimum 6 characters</div>
             </div>
             
             <div class="form-group">
                 <label for="confirmPassword">Confirm Password:</label>
-                <input type="password" id="confirmPassword" name="confirmPassword" required>
+                <input class="sf-input" type="password" id="confirmPassword" name="confirmPassword" required>
             </div>
             
-            <button type="submit" id="registerBtn">Create Account</button>
+            <button class="sf-btn sf-btn-primary" type="submit" id="registerBtn">Create Account</button>
             <div class="loading" id="loading">🚀 Creating your galactic profile...</div>
             <div class="error" id="error"></div>
             <div class="success" id="success"></div>

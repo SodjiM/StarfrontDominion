@@ -4,261 +4,50 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lobby - Starfront: Dominion</title>
+    <link rel="stylesheet" href="styles.css">
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #0c0c1e 0%, #1a1a3a 100%);
-            color: #ffffff;
-            margin: 0;
-            padding: 20px;
-            min-height: 100vh;
-        }
-        
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 15px;
-            backdrop-filter: blur(10px);
-        }
-        
-        .title {
-            font-size: 2em;
-            background: linear-gradient(45deg, #64b5f6, #42a5f5);
-            background-clip: text;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        
-        .games-section {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
-        }
-        
-        .games-panel {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 15px;
-            padding: 20px;
-            backdrop-filter: blur(10px);
-        }
-        
-        .games-panel h2 {
-            margin-top: 0;
-            color: #64b5f6;
-            border-bottom: 2px solid rgba(100, 181, 246, 0.3);
-            padding-bottom: 10px;
-        }
-        
-        .game-item {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 15px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .game-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: #64b5f6;
-        }
-        
-        .game-item.user-game {
-            border-color: #4caf50;
-            background: rgba(76, 175, 80, 0.1);
-        }
-        
-        .game-item.full {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        
-        .game-title {
-            font-size: 1.2em;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-        
-        .game-meta {
-            font-size: 0.9em;
-            color: #b0bec5;
-            display: flex;
-            justify-content: space-between;
-        }
-        
-        .game-status {
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.8em;
-            font-weight: bold;
-        }
-        
-        .status-recruiting {
-            background: #4caf50;
-            color: white;
-        }
-        
-        .status-active {
-            background: #ff9800;
-            color: white;
-        }
-        
-        .status-finished {
-            background: #757575;
-            color: white;
-        }
-        
-        .actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 30px;
-        }
-        
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1em;
-            transition: all 0.2s;
-        }
-        
-        .btn-primary {
-            background: linear-gradient(45deg, #1976d2, #1565c0);
-            color: white;
-            box-shadow: 0 5px 15px rgba(25, 118, 210, 0.3);
-        }
-        
-        .btn-primary:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 25px rgba(25, 118, 210, 0.4);
-        }
-        
-        .btn-secondary {
-            background: linear-gradient(45deg, #424242, #616161);
-            color: white;
-            box-shadow: 0 5px 15px rgba(66, 66, 66, 0.3);
-        }
-        
-        .btn-danger {
-            background: linear-gradient(45deg, #d32f2f, #c62828);
-            color: white;
-            box-shadow: 0 5px 15px rgba(211, 47, 47, 0.3);
-        }
-        
-        .btn-danger:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 25px rgba(211, 47, 47, 0.4);
-            background: linear-gradient(45deg, #c62828, #b71c1c);
-        }
-        
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .game-details {
-            display: none;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            padding: 20px;
-            margin-top: 20px;
-        }
-        
-        .players-list {
-            margin-top: 15px;
-        }
-        
-        .player-item {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 8px 12px;
-            border-radius: 5px;
-            margin-bottom: 5px;
-            display: flex;
-            justify-content: space-between;
-        }
-        
-        .player-item.creator {
-            background: rgba(255, 193, 7, 0.1);
-            border: 1px solid rgba(255, 193, 7, 0.3);
-        }
-        
-        .loading {
-            text-align: center;
-            color: #64b5f6;
-            padding: 20px;
-        }
-        
-        .error {
-            color: #f44336;
-            text-align: center;
-            padding: 10px;
-            background: rgba(244, 67, 54, 0.1);
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-        
-        @media (max-width: 768px) {
-            .games-section {
-                grid-template-columns: 1fr;
-            }
-            
-            .header {
-                flex-direction: column;
-                text-align: center;
-                gap: 10px;
-            }
-        }
+      body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; }
+      .container { max-width: 1220px; margin: 0 auto; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 22px; padding: 16px; }
+      .title { font-size: 2em; }
+      .games-section { display:grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+      .games-panel h2 { margin-top:0; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+      .game-item { margin-bottom: 12px; }
+      .actions { display:flex; gap:10px; margin-top: 16px; }
+      @media (max-width: 768px) { .games-section { grid-template-columns: 1fr; } .header { flex-direction:column; gap:10px; } }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <div class="title">🌌 Starfront: Dominion - Lobby</div>
+        <div class="header sf-card">
+            <div class="title sf-title">🌌 Starfront: Dominion - Lobby</div>
             <div class="user-info">
                 <span id="username">Welcome, Commander</span>
-                <button class="btn btn-secondary" onclick="logout()">Logout</button>
+                <button class="sf-btn sf-btn-secondary" onclick="logout()">Logout</button>
             </div>
         </div>
         
         <div class="games-section">
-            <div class="games-panel">
+            <div class="games-panel sf-card">
                 <h2>💠 Your Games</h2>
                 <div id="userGames" class="loading">Loading your games...</div>
             </div>
             
-            <div class="games-panel">
+            <div class="games-panel sf-card">
                 <h2>🧩 Available Games</h2>
                 <div id="availableGames" class="loading">Loading available games...</div>
             </div>
         </div>
         
         <div class="actions">
-            <button class="btn btn-primary" onclick="showCreateGameModal()">🚀 Create New Game</button>
-            <button class="btn btn-secondary" onclick="refreshGames()">🔄 Refresh</button>
-            <button class="btn btn-secondary" onclick="window.location.href='index.html'">← Main Menu</button>
+            <button class="sf-btn sf-btn-primary" onclick="showCreateGameModal()">🚀 Create New Game</button>
+            <button class="sf-btn sf-btn-secondary" onclick="refreshGames()">🔄 Refresh</button>
+            <button class="sf-btn sf-btn-secondary" onclick="window.location.href='index.html'">← Main Menu</button>
+            <button class="sf-btn sf-btn-danger" style="margin-left:auto" onclick="clearAllGames()">🗑️ Clear All Games</button>
         </div>
         
-        <div id="gameDetails" class="game-details"></div>
-        <div id="error" class="error" style="display: none;"></div>
+        <div id="gameDetails" class="game-details sf-card"></div>
+        <div id="error" class="error sf-card" style="display: none;"></div>
     </div>
 
     <script src="main.js"></script>
@@ -327,15 +116,15 @@
 
         // Create game element HTML
         function createGameElement(game, isUserGame) {
-            const statusClass = `status-${game.status}`;
-            const gameClass = isUserGame ? 'user-game' : (game.status !== 'recruiting' ? 'full' : '');
+            const statusClass = `sf-badge sf-badge-${game.status}`;
+            const gameClass = `sf-list-item ${isUserGame ? 'user-game' : (game.status !== 'recruiting' ? 'full' : '')}`;
             
             return `
                 <div class="game-item ${gameClass}" onclick="selectGame(${game.id})">
                     <div class="game-title">${game.name}</div>
                     <div class="game-meta">
                         <span>Mode: ${game.mode}</span>
-                        <span class="game-status ${statusClass}">${game.status.toUpperCase()}</span>
+                        <span class="${statusClass}">${game.status.toUpperCase()}</span>
                     </div>
                 </div>
             `;
@@ -524,6 +313,30 @@
                     await selectGame(data.gameId);
                 } else {
                     showError(data.error || 'Failed to create game');
+                }
+            } catch (err) {
+                showError('Connection failed');
+            }
+        }
+
+        // Clear all games (admin convenience for development/testing)
+        async function clearAllGames() {
+            if (!confirm('This will delete ALL games and their data. Type DELETE to confirm.')) return;
+            const conf = prompt('Type DELETE to confirm deleting ALL games:');
+            if (conf !== 'DELETE') return;
+            try {
+                const response = await fetch('/lobby/games/clear-all', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: 'DELETE' })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert(`Cleared games. Deleted: ${data.deleted}, Failed: ${data.failed}`);
+                    await loadGames();
+                    hideGameDetails();
+                } else {
+                    showError(data.error || 'Failed to clear games');
                 }
             } catch (err) {
                 showError('Connection failed');

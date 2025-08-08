@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Starfront: Dominion - Game</title>
+    <link rel="stylesheet" href="styles.css">
     <style>
         * {
             margin: 0;
@@ -11,37 +12,24 @@
             box-sizing: border-box;
         }
         
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #0c0c1e 0%, #1a1a3a 100%);
-            color: #ffffff;
-            overflow: hidden;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
         
         /* Main layout grid */
         .game-container {
             display: grid;
-            grid-template-columns: 250px 1fr 300px;
-            grid-template-rows: 60px 1fr 200px;
+            grid-template-columns: 280px 1fr 380px;
+            grid-template-rows: 64px 1fr minmax(240px, 28vh);
             grid-template-areas:
                 "topbar topbar topbar"
                 "leftpanel map rightpanel"
                 "minimap log rightpanel";
-            height: 100vh;
-            gap: 2px;
+            height: 100dvh; /* avoids OS/taskbar overlap */
+            gap: 8px;
+            padding: 8px;
         }
         
         /* Top bar */
-        .top-bar {
-            grid-area: topbar;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-        }
+        .top-bar { grid-area: topbar; display: flex; justify-content: space-between; align-items: center; padding: 0 16px; }
         
         .game-info {
             display: flex;
@@ -49,10 +37,7 @@
             gap: 30px;
         }
         
-        .game-title {
-            font-size: 1.2em;
-            color: #64b5f6;
-        }
+        .game-title { font-size: 1.2em; color: var(--primary); }
         
         .turn-status {
             display: flex;
@@ -60,90 +45,29 @@
             gap: 10px;
         }
         
-        .turn-counter {
-            background: rgba(100, 181, 246, 0.2);
-            padding: 5px 15px;
-            border-radius: 15px;
-            font-weight: bold;
-        }
+        .turn-counter { background: rgba(100,181,246,0.18); padding: 5px 12px; border-radius: 999px; font-weight: bold; }
         
-        .lock-turn-btn {
-            background: linear-gradient(45deg, #4caf50, #45a049);
-            color: white;
-            border: none;
-            padding: 8px 20px;
-            border-radius: 20px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: all 0.2s;
-        }
-        
-        .lock-turn-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.3);
-        }
-        
-        .lock-turn-btn.locked {
-            background: linear-gradient(45deg, #ff9800, #f57c00);
-        }
+        /* lock-turn-btn inherits from sf-btn */
+        .lock-turn-btn.locked { background: linear-gradient(180deg, rgba(255,152,0,0.35), rgba(255,152,0,0.18)); border-color: rgba(255,152,0,0.45); }
         
         /* Left panel - Units list */
-        .left-panel {
-            grid-area: leftpanel;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            padding: 15px;
-            border-right: 1px solid rgba(255, 255, 255, 0.2);
-            overflow-y: auto;
-        }
+        .left-panel { grid-area: leftpanel; padding: 12px; overflow-y: auto; }
         
-        .panel-title {
-            font-size: 1.1em;
-            margin-bottom: 15px;
-            color: #64b5f6;
-            border-bottom: 2px solid rgba(100, 181, 246, 0.3);
-            padding-bottom: 5px;
-        }
+        .panel-title { font-size: 1.05em; margin-bottom: 10px; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
         
-        .unit-item {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 8px;
-            padding: 10px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .unit-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: #64b5f6;
-        }
-        
-        .unit-item.selected {
-            border-color: #4caf50;
-            background: rgba(76, 175, 80, 0.1);
-        }
+        .unit-item { background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px; cursor: pointer; }
+        .unit-item:hover { border-color: rgba(99,167,255,0.35); background: rgba(255,255,255,0.06); }
+        .unit-item.selected { border-color: rgba(102,187,106,0.6); background: rgba(102,187,106,0.12); }
         
         .unit-name {
             font-weight: bold;
             margin-bottom: 3px;
         }
         
-        .unit-details {
-            font-size: 0.9em;
-            color: #b0bec5;
-        }
+        .unit-details { font-size: 0.9em; color: var(--muted); }
         
         /* Player section styles */
-        .player-section {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid rgba(100, 181, 246, 0.3);
-        }
+        .player-section { display: flex; flex-direction: column; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
         
         .player-avatar {
             margin-bottom: 10px;
@@ -176,12 +100,7 @@
         }
         
         /* Center map area */
-        .map-container {
-            grid-area: map;
-            background: rgba(0, 0, 0, 0.3);
-            position: relative;
-            overflow: hidden;
-        }
+        .map-container { grid-area: map; position: relative; overflow: hidden; }
         
         #gameCanvas {
             width: 100%;
@@ -189,37 +108,12 @@
             cursor: pointer;
         }
         
-        .map-controls {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            display: flex;
-            gap: 5px;
-        }
+        .map-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
         
-        .map-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            padding: 8px 12px;
-            border-radius: 5px;
-            cursor: pointer;
-            backdrop-filter: blur(10px);
-        }
-        
-        .map-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
+        /* map-btn inherits from sf-btn */
         
         /* Right panel - Selected unit info */
-        .right-panel {
-            grid-area: rightpanel;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            padding: 15px;
-            border-left: 1px solid rgba(255, 255, 255, 0.2);
-            overflow-y: auto;
-        }
+        .right-panel { grid-area: rightpanel; padding: 12px; overflow-y: auto; }
         
         .unit-info {
             margin-bottom: 20px;
@@ -233,53 +127,15 @@
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
         
-        .action-btn {
-            width: 100%;
-            margin-bottom: 10px;
-            padding: 10px;
-            background: linear-gradient(45deg, #1976d2, #1565c0);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .action-btn:hover {
-            transform: translateY(-1px);
-        }
-        
-        .action-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
+        /* action-btn inherits from sf-btn */
         
         /* Mini-map */
-        .mini-map {
-            grid-area: minimap;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            padding: 10px;
-            border-top: 1px solid rgba(255, 255, 255, 0.2);
-        }
+        .mini-map { grid-area: minimap; padding: 10px; display: grid; grid-template-rows: auto 1fr; }
         
-        #miniCanvas {
-            width: 100%;
-            height: 100%;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 5px;
-        }
+        #miniCanvas { width: 100%; height: 100%; border: 1px solid var(--border); border-radius: 8px; }
         
         /* Activity log */
-        .activity-log {
-            grid-area: log;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            padding: 15px;
-            border-top: 1px solid rgba(255, 255, 255, 0.2);
-            overflow-y: auto;
-        }
+        .activity-log { grid-area: log; padding: 12px; overflow-y: auto; }
         
         .log-entry {
             margin-bottom: 8px;
@@ -1667,30 +1523,30 @@
 <body>
     <div class="game-container">
         <!-- Top Bar -->
-        <div class="top-bar">
+        <div class="top-bar sf-card">
             <div class="game-info">
                 <div class="game-title" id="gameTitle">🌌 Starfront: Dominion</div>
                 <div class="turn-status">
                     <div class="turn-counter" id="turnCounter">Turn 1</div>
-                    <button class="lock-turn-btn" id="lockTurnBtn" onclick="toggleTurnLock()">
+                    <button class="lock-turn-btn sf-btn sf-btn-primary" id="lockTurnBtn" onclick="toggleTurnLock()">
                         🔓 Lock Turn
                     </button>
                 </div>
             </div>
             <div>
-                <button class="map-btn" onclick="showSettings()">⚙️</button>
-                <button class="map-btn" onclick="exitGame()">❌</button>
+                <button class="map-btn sf-btn sf-btn-secondary" onclick="showSettings()">⚙️</button>
+                <button class="map-btn sf-btn sf-btn-danger" onclick="exitGame()">❌</button>
             </div>
         </div>
         
         <!-- Left Panel - Player & Units -->
-        <div class="left-panel">
+        <div class="left-panel sf-card">
             <!-- Player Section -->
             <div class="player-section">
                 <div class="player-avatar">
                     <img id="playerAvatar" src="" alt="Player Avatar" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiM2NGI1ZjYiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI4IiB5PSI4Ij4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxOVYyMEgzVjE5TDUgMTcuMjVWMTFIMTBWMTIuNUgxNFYxMUgxOVYxNy4yNUwyMSAxOVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K';">
                 </div>
-                <button class="player-assets-btn" onclick="showPlayerAssets()">
+                <button class="player-assets-btn sf-btn sf-btn-secondary" onclick="showPlayerAssets()">
                     📊 Player Assets
                 </button>
             </div>
@@ -1701,17 +1557,17 @@
         </div>
         
         <!-- Center Map -->
-        <div class="map-container">
+        <div class="map-container sf-card">
             <canvas id="gameCanvas"></canvas>
             <div class="map-controls">
-                <button class="map-btn" onclick="zoomIn()">🔍+</button>
-                <button class="map-btn" onclick="zoomOut()">🔍-</button>
-                <button class="map-btn" onclick="centerOnSelected()">🎯</button>
+                <button class="map-btn sf-btn sf-btn-secondary" onclick="zoomIn()">🔍+</button>
+                <button class="map-btn sf-btn sf-btn-secondary" onclick="zoomOut()">🔍-</button>
+                <button class="map-btn sf-btn sf-btn-secondary" onclick="centerOnSelected()">🎯</button>
             </div>
         </div>
         
         <!-- Right Panel - Selected Unit Info -->
-        <div class="right-panel">
+        <div class="right-panel sf-card">
             <div class="panel-title">📊 Unit Details</div>
             <div id="unitDetails">
                 <div style="text-align: center; color: #666; padding: 20px;">
@@ -1720,41 +1576,41 @@
             </div>
         </div>
         
-        <!-- Mini Map -->
-        <div class="mini-map">
-            <div style="font-size: 0.9em; margin-bottom: 5px; color: #64b5f6; display: flex; justify-content: space-between; align-items: center;">
+        <!-- Bottom: Mini Map + Log/Chat side-by-side -->
+        <div class="mini-map sf-card" style="grid-area:auto; grid-column: 1 / span 2; min-height:0;">
+            <div style="font-size: 0.9em; margin-bottom: 6px; color: var(--primary); display: flex; justify-content: space-between; align-items: center;">
                 <span id="sectorOverviewTitle">Sector Overview</span>
-                <button class="map-expand-btn" onclick="openMapModal()" title="Open Full Map">🗺️</button>
+                <button class="map-expand-btn sf-btn sf-btn-secondary" onclick="openMapModal()" title="Open Full Map">🗺️</button>
             </div>
-            <canvas id="miniCanvas"></canvas>
-            <div class="minimap-legend" style="font-size: 0.7em; margin-top: 3px; color: #888; line-height: 1.2;">
-                <div>⭐ Stars  🌍 Planets  🌙 Moons</div>
-                <div style="margin-top: 2px;">
-                    <span style="color: #8D6E63;">●</span> Rocks  
-                    <span style="color: #9C27B0;">●</span> Gas  
-                    <span style="color: #FFD54F;">●</span> Energy  
-                    <span style="color: #A1887F;">●</span> Salvage
+            <div style="display:grid; grid-template-columns: 240px 1fr; gap: 8px; height: 100%; min-height: 0;">
+                <div style="display:flex; flex-direction:column; min-width:0;">
+                    <canvas id="miniCanvas" style="flex:1; min-height:0;"></canvas>
+                    <div class="minimap-legend" style="font-size: 0.7em; margin-top: 6px; color: #888; line-height: 1.2;">
+                        <div>⭐ Stars  🌍 Planets  🌙 Moons</div>
+                        <div style="margin-top: 2px;">
+                            <span style="color: #8D6E63;">●</span> Rocks  
+                            <span style="color: #9C27B0;">●</span> Gas  
+                            <span style="color: #FFD54F;">●</span> Energy  
+                            <span style="color: #A1887F;">●</span> Salvage
+                        </div>
+                    </div>
                 </div>
-            </div>
-        </div>
-        
-        <!-- Activity Log -->
-        <div class="activity-log">
-            <div class="panel-title">📜 Activity Log</div>
-            <div id="activityLog">
-                <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
-            </div>
-            <div style="margin-top: 10px;">
-                <div class="panel-title">💬 Chat</div>
-                <div id="chatMessages" style="height:120px; overflow:auto; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
-                <div style="display:flex; gap:6px; margin-top:6px;">
-                    <select id="chatScope" style="background:#0b1a2a; color:#cfe4ff; border:1px solid #243b55; border-radius:4px; padding:4px;">
-                        <option value="game">Game</option>
-                        <option value="dm">Direct</option>
-                    </select>
-                    <input id="chatToUserId" placeholder="User ID (DM)" style="flex:0 0 110px; background:#0b1a2a; color:#cfe4ff; border:1px solid #243b55; border-radius:4px; padding:6px;" />
-                    <input id="chatInput" placeholder="Type a message" style="flex:1; background:#0b1a2a; color:#cfe4ff; border:1px solid #243b55; border-radius:4px; padding:6px;" />
-                    <button onclick="sendChat()" class="map-btn">Send</button>
+                <div style="display:flex; flex-direction:column; min-width:0;">
+                    <div class="panel-title" style="margin:0 0 6px 0;">📜 Activity Log</div>
+                    <div id="activityLog" style="flex:1; overflow:auto; min-height:0; max-height: calc(28vh - 80px);">
+                        <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
+                    </div>
+                    <div class="panel-title" style="margin:8px 0 6px 0;">💬 Chat</div>
+                    <div id="chatMessages" style="height:90px; overflow:auto; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
+                    <div style="display:flex; gap:6px; margin-top:6px;">
+                        <select id="chatScope" class="sf-select">
+                            <option value="game">Game</option>
+                            <option value="dm">Direct</option>
+                        </select>
+                        <input id="chatToUserId" class="sf-input" placeholder="User ID (DM)" style="flex:0 0 110px;" />
+                        <input id="chatInput" class="sf-input" placeholder="Type a message" style="flex:1;" />
+                        <button onclick="sendChat()" class="sf-btn sf-btn-secondary">Send</button>
+                    </div>
                 </div>
             </div>
         </div>

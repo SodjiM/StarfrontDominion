@@ -1935,14 +1935,53 @@ class GameClient {
             this.handleCanvasRightClick(e);
         });
         
-        // Mouse move for cursor feedback
+        // Mouse move for cursor feedback and drag-pan
         this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
+        this.canvas.addEventListener('mousedown', (e) => this.startDragPan(e));
+        this.canvas.addEventListener('mouseup', () => this.stopDragPan());
+        this.canvas.addEventListener('mouseleave', () => this.stopDragPan());
+        this.canvas.addEventListener('mousemove', (e) => this.handleDragPan(e));
         
         // Mouse wheel for zooming
         this.canvas.addEventListener('wheel', (e) => this.handleCanvasWheel(e));
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+    }
+
+    // Drag-to-pan state
+    startDragPan(e) {
+        if (e.button !== 0) return; // left button only
+        const rect = this.canvas.getBoundingClientRect();
+        this._dragPan = {
+            active: true,
+            startX: e.clientX - rect.left,
+            startY: e.clientY - rect.top,
+            cameraX: this.camera.x,
+            cameraY: this.camera.y
+        };
+        this.canvas.style.cursor = 'grabbing';
+    }
+
+    stopDragPan() {
+        if (this._dragPan) this._dragPan.active = false;
+        this.canvas.style.cursor = 'default';
+    }
+
+    handleDragPan(e) {
+        if (!this._dragPan || !this._dragPan.active) return;
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const dx = x - this._dragPan.startX;
+        const dy = y - this._dragPan.startY;
+        // Move camera opposite of mouse movement; scale by tileSize
+        const tilesDX = dx / this.tileSize;
+        const tilesDY = dy / this.tileSize;
+        this.camera.x = Math.max(0, Math.min(5000, this._dragPan.cameraX - tilesDX));
+        this.camera.y = Math.max(0, Math.min(5000, this._dragPan.cameraY - tilesDY));
+        this.render();
+        this.renderMiniMap();
     }
 
     // Handle mouse movement for cursor feedback
@@ -4413,10 +4452,10 @@ function openMapModal() {
     const modalContent = document.createElement('div');
     modalContent.innerHTML = `
         <div class="map-tabs">
-            <button class="map-tab active" onclick="switchMapTab('solar-system')">
+            <button class="map-tab active sf-btn sf-btn-secondary" onclick="switchMapTab('solar-system')">
                 🌌 Solar System
             </button>
-            <button class="map-tab" onclick="switchMapTab('galaxy')">
+            <button class="map-tab sf-btn sf-btn-secondary" onclick="switchMapTab('galaxy')">
                 🌌 Galaxy
             </button>
         </div>
