@@ -39,6 +39,12 @@ class GameClient {
 
         // Setup canvas
         this.setupCanvas();
+        // Apply avatar in PlayerInformation if present
+        const avatarMini = document.getElementById('playerAvatarMini');
+        if (avatarMini) {
+            const stored = localStorage.getItem('avatar');
+            if (stored) avatarMini.src = stored;
+        }
         
         // Connect to Socket.IO
         this.connectSocket();
@@ -1968,13 +1974,30 @@ class GameClient {
             container.style.background = '#0a0f1c';
             container.style.boxShadow = '0 10px 30px rgba(0,0,0,0.35)';
             container.style.pointerEvents = 'auto';
+            container.style.resize = 'both';
+            container.style.overflow = 'hidden';
+            container.style.cursor = 'move';
 
             const mini = document.createElement('canvas');
             mini.width = 260; mini.height = 180;
             container.appendChild(mini);
             this.canvas.parentElement.appendChild(container);
 
-            this._floatingMini = { container, canvas: mini, ctx: mini.getContext('2d') };
+            this._floatingMini = { container, canvas: mini, ctx: mini.getContext('2d'), dragging: false, dragDX:0, dragDY:0 };
+            // Dragging
+            container.addEventListener('mousedown', (e)=>{
+                if (e.target !== mini) { this._floatingMini.dragging = true; this._floatingMini.dragDX = e.clientX - container.offsetLeft; this._floatingMini.dragDY = e.clientY - container.offsetTop; }
+            });
+            window.addEventListener('mousemove', (e)=>{
+                const f=this._floatingMini; if (!f||!f.dragging) return; container.style.left = (e.clientX - f.dragDX) + 'px'; container.style.top = (e.clientY - f.dragDY) + 'px'; container.style.bottom = 'auto';
+            });
+            window.addEventListener('mouseup', ()=>{ if (this._floatingMini) this._floatingMini.dragging=false; });
+            // Resize observer to keep canvas in sync
+            const ro = new ResizeObserver(()=>{
+                mini.width = container.clientWidth; mini.height = container.clientHeight; this.renderFloatingMini();
+            });
+            ro.observe(container);
+            this._floatingMini.ro = ro;
             // Render initial and on main renders
             this.renderFloatingMini();
         } else {

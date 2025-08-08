@@ -1539,19 +1539,8 @@
             </div>
         </div>
         
-        <!-- Left Panel - Player & Units -->
+        <!-- Left Panel - Units -->
         <div class="left-panel sf-card">
-            <!-- Player Section -->
-            <div class="player-section">
-                <div class="player-avatar">
-                    <img id="playerAvatar" src="" alt="Player Avatar" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiM2NGI1ZjYiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI4IiB5PSI4Ij4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxOVYyMEgzVjE5TDUgMTcuMjVWMTFIMTBWMTIuNUgxNFYxMUgxOVYxNy4yNUwyMSAxOVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K';">
-                </div>
-                <button class="player-assets-btn sf-btn sf-btn-secondary" onclick="showPlayerAssets()">
-                    📊 Player Assets
-                </button>
-            </div>
-            
-            <!-- Fleet Section -->
             <div class="panel-title">🚢 Your Fleet</div>
             <div id="unitsList" class="loading">Loading units...</div>
         </div>
@@ -1577,15 +1566,21 @@
             </div>
         </div>
         
-        <!-- Bottom: Mini Map + Log/Chat side-by-side -->
-        <div class="mini-map sf-card" style="grid-area:auto; grid-column: 2 / span 1; min-height:0;">
+        <!-- PlayerInformation panel at bottom-left, outside ChatNotification -->
+        <div id="playerInformation" class="sf-card" style="grid-area: minimap; padding:10px; display:flex; align-items:center; gap:12px;">
+            <img id="playerAvatarMini" src="assets/avatars/explorer.png" alt="avatar" style="width:48px; height:48px; border-radius:50%; border:1px solid rgba(100,181,246,0.4)" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiM2NGI1ZjYiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI4IiB5PSI4Ij4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxOVYyMEgzVjE5TDUgMTcuMjVWMTFIMTBWMTIuNUgxNFYxMUgxOVYxNy4yNUwyMSAxOVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K'">
+            <button class="sf-btn sf-btn-secondary" onclick="showPlayerAssets()">Player Assets</button>
+            <button class="sf-btn sf-btn-secondary" onclick="alert('State view coming soon')">State</button>
+        </div>
+        
+        <!-- Chat/Notification panel to the right -->
+        <div class="chat-notification sf-card" style="grid-area:auto; grid-column: 2 / span 1; min-height:0;">
             <div style="font-size: 0.9em; margin-bottom: 6px; color: var(--primary); display: flex; align-items: center; gap: 8px; justify-content: flex-start;">
                 <span id="sectorOverviewTitle">Sector Overview</span>
                 <button class="map-expand-btn sf-btn sf-btn-secondary" onclick="openMapModal()" title="Open Full Map">🗺️</button>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 100%; min-height: 0;">
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height:0;">
-                    <div style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
+                <div style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
                         <div class="panel-title" style="margin:0;">💬 Chat</div>
                         <div id="chatMessages" style="overflow:auto; min-height:0; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
                     <div style="display:grid; grid-template-columns: auto 110px 1fr auto; gap:6px; align-items:center;" onsubmit="return false;">
