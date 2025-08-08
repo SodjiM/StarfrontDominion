@@ -17,11 +17,25 @@
 }
 
 /* Background: layered nebula + subtle stars */
+html, body {
+  height: 100%;
+}
+
 body {
+  /* Make the space background cover the entire viewport and beyond */
+  min-height: 100vh;
   background: radial-gradient(1200px 800px at 20% -10%, rgba(56, 94, 168, 0.25), transparent 60%),
               radial-gradient(900px 600px at 90% 10%, rgba(126, 49, 154, 0.18), transparent 60%),
               linear-gradient(135deg, #0a0f1c 0%, #0a0e1a 30%, #0a0e19 100%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  background-size: cover;
   color: var(--text);
+}
+
+/* Ensure lobby containers stretch so the gradient never stops midway */
+.container {
+  min-height: calc(100vh - 40px);
 }
 
 /* Card/panel */
