@@ -4207,6 +4207,84 @@ async function renderShipyard(selectedStation, cargo) {
         const jd = await resp.json();
         if (resp.ok) blueprints = jd.blueprints || [];
     } catch {}
+    // Client-side fallback mapping if server doesn't provide refined fields
+    const ROLE_TO_REFINED = {
+        'stealth-scout': 'scout-recon',
+        'brawler': 'brawler',
+        'sniper': 'sniper-siege',
+        'interceptor': 'interceptor',
+        'assassin': 'stealth-strike',
+        'miner': 'prospector-miner',
+        'ecm': 'ecm-disruption',
+        'torpedo': 'torpedo-missile',
+        'courier': 'logistics',
+        'stealth-strike': 'stealth-strike',
+        'boarding': 'heavy-assault',
+        'miner-raider': 'prospector-miner',
+        'ecm-torpedo': 'torpedo-missile',
+        'escort': 'escort',
+        'siege': 'sniper-siege',
+        'fortress': 'fortress',
+        'gunline': 'sniper-siege',
+        'carrier': 'carrier',
+        'beam-destroyer': 'sniper-siege',
+        'torpedo-siege': 'torpedo-missile',
+        'ecm-fortress': 'ecm-disruption',
+        'logistics': 'logistics',
+        'repair-tender': 'medical-repair',
+        'defensive-carrier': 'carrier',
+        'command-artillery': 'command',
+        'siege-ecm': 'sniper-siege',
+        'logistics-fortress': 'logistics',
+        'freighter': 'logistics',
+        'colony': 'colony-ship',
+        'transport': 'logistics',
+        'medical': 'medical-repair',
+        'deepcore-miner': 'prospector-miner',
+        'gas-harvester': 'gas-harvester',
+        'strip-miner': 'prospector-miner',
+        'mining-command': 'prospector-miner',
+        'salvage': 'salvage',
+        'supercarrier': 'carrier',
+        'dreadnought': 'heavy-assault',
+        'flagship-command': 'flagship',
+        'heavy-shield': 'fortress',
+        'stealth-battleship': 'stealth-strike',
+        'mobile-shipyard': 'logistics',
+        'worldship': 'fortress',
+        'megafreighter': 'logistics',
+        'exploration': 'scout-recon',
+        'fleet-anchor': 'fortress',
+        'planet-cracker': 'sniper-siege',
+        'gas-refinery': 'gas-harvester',
+        'prospecting-ark': 'prospector-miner'
+    };
+    const REFINED_TO_GROUP = {
+        'brawler': 'combat',
+        'sniper-siege': 'combat',
+        'interceptor': 'combat',
+        'heavy-assault': 'combat',
+        'stealth-strike': 'combat',
+        'carrier': 'combat',
+        'escort': 'support-utility',
+        'command': 'support-utility',
+        'medical-repair': 'support-utility',
+        'logistics': 'support-utility',
+        'scout-recon': 'exploration-expansion',
+        'colony-ship': 'exploration-expansion',
+        'prospector-miner': 'exploration-expansion',
+        'gas-harvester': 'exploration-expansion',
+        'salvage': 'exploration-expansion',
+        'ecm-disruption': 'specialist',
+        'torpedo-missile': 'specialist',
+        'fortress': 'specialist',
+        'flagship': 'specialist'
+    };
+    blueprints = (blueprints || []).map(b => {
+        const refinedRole = b.refinedRole || ROLE_TO_REFINED[b.role] || b.role;
+        const refinedGroup = b.refinedGroup || REFINED_TO_GROUP[refinedRole] || null;
+        return { ...b, refinedRole, refinedGroup };
+    });
     const CORE_BASELINES = {
         frigate: { 'Ferrite Alloy': 20, 'Crytite': 12, 'Ardanium': 10, 'Vornite': 8, 'Zerothium': 6 },
         battleship: { 'Ferrite Alloy': 120, 'Crytite': 80, 'Ardanium': 60, 'Vornite': 50, 'Zerothium': 40 },
@@ -4232,16 +4310,66 @@ async function renderShipyard(selectedStation, cargo) {
     };
 
     const tabs = ['frigate','battleship','capital'];
-    const rolesAll = Array.from(new Set(blueprints.map(b=>b.role))).sort();
-    let activeRole = null; // null = all
+    // Build refined role list from server-provided mapping; fallback to original role if missing
+    const refinedAll = Array.from(new Set(blueprints.map(b=>b.refinedRole || b.role)));
+    // Keep a stable order grouped for UX
+    const REFINED_ORDER = [
+        // Combat
+        'brawler','sniper-siege','interceptor','heavy-assault','stealth-strike','carrier',
+        // Support & Utility
+        'escort','command','medical-repair','logistics',
+        // Exploration & Expansion
+        'scout-recon','colony-ship','prospector-miner','gas-harvester','salvage',
+        // Specialist
+        'ecm-disruption','torpedo-missile','fortress','flagship'
+    ];
+    const LABELS = {
+        'brawler': 'Brawler',
+        'sniper-siege': 'Sniper / Siege',
+        'interceptor': 'Interceptor',
+        'heavy-assault': 'Heavy Assault',
+        'stealth-strike': 'Stealth Strike',
+        'carrier': 'Carrier',
+        'escort': 'Escort',
+        'command': 'Command',
+        'medical-repair': 'Medical / Repair',
+        'logistics': 'Logistics',
+        'scout-recon': 'Scout / Recon',
+        'colony-ship': 'Colony Ship',
+        'prospector-miner': 'Prospector / Miner',
+        'gas-harvester': 'Gas Harvester',
+        'salvage': 'Salvage',
+        'ecm-disruption': 'ECM / Disruption',
+        'torpedo-missile': 'Torpedo / Missile',
+        'fortress': 'Fortress',
+        'flagship': 'Flagship'
+    };
+    const GROUPS = [
+        { key: 'combat', label: 'Combat Roles', roles: ['brawler','sniper-siege','interceptor','heavy-assault','stealth-strike','carrier'] },
+        { key: 'support-utility', label: 'Support & Utility', roles: ['escort','command','medical-repair','logistics'] },
+        { key: 'exploration-expansion', label: 'Exploration & Expansion', roles: ['scout-recon','colony-ship','prospector-miner','gas-harvester','salvage'] },
+        { key: 'specialist', label: 'Specialist Roles', roles: ['ecm-disruption','torpedo-missile','fortress','flagship'] }
+    ];
+    const rolesAll = REFINED_ORDER.filter(r => refinedAll.includes(r));
+    let activeRole = null; // null = all refined roles
     let active = 'frigate';
     const header = document.createElement('div');
     header.className = 'build-tabs-shipyard';
     tabs.forEach(t => {
         const b = document.createElement('button');
         b.className = 'sf-btn ' + (active===t ? 'sf-btn-primary' : 'sf-btn-secondary');
+        b.dataset.class = t;
         b.textContent = t.charAt(0).toUpperCase() + t.slice(1);
-        b.onclick = () => { active = t; renderList(); };
+        b.onclick = () => {
+            active = t;
+            // Update tab highlighting
+            header.querySelectorAll('button').forEach(bb => {
+                const cls = bb.dataset.class;
+                bb.className = 'sf-btn ' + (cls===active ? 'sf-btn-primary' : 'sf-btn-secondary');
+            });
+            renderList();
+            updateChips();
+        };
         header.appendChild(b);
     });
     // Role chips bar
@@ -4257,7 +4385,23 @@ async function renderShipyard(selectedStation, cargo) {
     const updateChips = () => {
         roleBar.innerHTML = '';
         roleBar.appendChild(makeChip('All Roles', null));
-        rolesAll.forEach(r => roleBar.appendChild(makeChip(r, r)));
+        const availableForClass = new Set(
+            blueprints
+                .filter(b => b.class === active)
+                .map(b => b.refinedRole || b.role)
+        );
+        GROUPS.forEach(group => {
+            const present = group.roles.filter(r => availableForClass.has(r));
+            if (present.length === 0) return;
+            const title = document.createElement('div');
+            title.className = 'role-group-title';
+            title.textContent = group.label;
+            roleBar.appendChild(title);
+            const wrap = document.createElement('div');
+            wrap.className = 'role-group';
+            present.forEach(r => wrap.appendChild(makeChip(LABELS[r] || r, r)));
+            roleBar.appendChild(wrap);
+        });
     };
     updateChips();
 
@@ -4269,7 +4413,7 @@ async function renderShipyard(selectedStation, cargo) {
 
     const renderList = () => {
         list.innerHTML = '';
-        blueprints.filter(b=>b.class===active && (!activeRole || b.role===activeRole)).forEach(bp => {
+        blueprints.filter(b=>b.class===active && (!activeRole || (b.refinedRole||b.role)===activeRole)).forEach(bp => {
             const reqs = bp.requirements ? bp.requirements : computeReqs(bp);
             const wrap = document.createElement('div');
             wrap.className = 'build-option';
@@ -4283,7 +4427,7 @@ async function renderShipyard(selectedStation, cargo) {
             wrap.innerHTML = `
                 <div class="build-info">
                     <div class="build-name">${bp.name}</div>
-                    <div class="build-description">Class: ${bp.class} • Role: ${bp.role} • Specialized: ${specChips}</div>
+                    <div class="build-description">Class: ${bp.class} • Role: ${(LABELS[bp.refinedRole]||LABELS[bp.role]||bp.refinedRole||bp.role)} • Specialized: ${specChips}</div>
                     <div class="build-reqs"><h4>Core</h4>${reqRows(reqs.core)}<h4>Specialized</h4>${reqRows(reqs.specialized)}</div>
                 </div>
                 <div class="build-cost">

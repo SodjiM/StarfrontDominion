@@ -66,6 +66,93 @@ const SHIP_BLUEPRINTS = [
   { id: 'auric-prospecting-ark', name: 'Auric Prospecting Ark', class: 'capital', role: 'prospecting-ark', specialized: ['Auralite','Quarzon'] }
 ];
 
+// Map detailed roles to simplified/refined categories (UI filter)
+const REFINED_ROLE_MAP = {
+  'stealth-scout': 'scout-recon',
+  'brawler': 'brawler',
+  'sniper': 'sniper-siege',
+  'interceptor': 'interceptor',
+  'assassin': 'stealth-strike',
+  'miner': 'prospector-miner',
+  'ecm': 'ecm-disruption',
+  'torpedo': 'torpedo-missile',
+  'courier': 'logistics',
+  'stealth-strike': 'stealth-strike',
+  'boarding': 'heavy-assault',
+  'miner-raider': 'prospector-miner',
+  'ecm-torpedo': 'torpedo-missile',
+  'escort': 'escort',
+  'siege': 'sniper-siege',
+  'fortress': 'fortress',
+  'gunline': 'sniper-siege',
+  'carrier': 'carrier',
+  'beam-destroyer': 'sniper-siege',
+  'torpedo-siege': 'torpedo-missile',
+  'ecm-fortress': 'ecm-disruption',
+  'logistics': 'logistics',
+  'repair-tender': 'medical-repair',
+  'defensive-carrier': 'carrier',
+  'command-artillery': 'command',
+  'siege-ecm': 'sniper-siege',
+  'logistics-fortress': 'logistics',
+  'freighter': 'logistics',
+  'colony': 'colony-ship',
+  'transport': 'logistics',
+  'medical': 'medical-repair',
+  'deepcore-miner': 'prospector-miner',
+  'gas-harvester': 'gas-harvester',
+  'strip-miner': 'prospector-miner',
+  'mining-command': 'prospector-miner',
+  'salvage': 'salvage',
+  'supercarrier': 'carrier',
+  'dreadnought': 'heavy-assault',
+  'flagship-command': 'flagship',
+  'heavy-shield': 'fortress',
+  'stealth-battleship': 'stealth-strike',
+  'mobile-shipyard': 'logistics',
+  'worldship': 'fortress',
+  'megafreighter': 'logistics',
+  'exploration': 'scout-recon',
+  'fleet-anchor': 'fortress',
+  'planet-cracker': 'sniper-siege',
+  'gas-refinery': 'gas-harvester',
+  'prospecting-ark': 'prospector-miner'
+};
+
+// Group each refined role under a high-level category for UI grouping
+const REFINED_ROLE_GROUP = {
+  'brawler': 'combat',
+  'sniper-siege': 'combat',
+  'interceptor': 'combat',
+  'heavy-assault': 'combat',
+  'stealth-strike': 'combat',
+  'carrier': 'combat',
+
+  'escort': 'support-utility',
+  'command': 'support-utility',
+  'medical-repair': 'support-utility',
+  'logistics': 'support-utility',
+
+  'scout-recon': 'exploration-expansion',
+  'colony-ship': 'exploration-expansion',
+  'prospector-miner': 'exploration-expansion',
+  'gas-harvester': 'exploration-expansion',
+  'salvage': 'exploration-expansion',
+
+  'ecm-disruption': 'specialist',
+  'torpedo-missile': 'specialist',
+  'fortress': 'specialist',
+  'flagship': 'specialist'
+};
+
+function getRefinedRole(originalRole) {
+  return REFINED_ROLE_MAP[originalRole] || originalRole;
+}
+
+function getRefinedGroup(refinedRole) {
+  return REFINED_ROLE_GROUP[refinedRole] || null;
+}
+
 // Core baseline by class
 const CORE_BASELINES = {
   frigate: { 'Ferrite Alloy': 20, 'Crytite': 12, 'Ardanium': 10, 'Vornite': 8, 'Zerothium': 6 },
@@ -162,6 +249,6 @@ function computeAllRequirements(blueprint) {
   return { core: computeCoreRequirements(blueprint), specialized: computeSpecializedRequirements(blueprint) };
 }
 
-module.exports = { SHIP_BLUEPRINTS, computeAllRequirements };
+module.exports = { SHIP_BLUEPRINTS, computeAllRequirements, getRefinedRole, getRefinedGroup };
 
 

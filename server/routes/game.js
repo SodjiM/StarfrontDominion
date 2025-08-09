@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { SystemGenerator } = require('../system-generator');
 const { CargoManager } = require('../cargo-manager');
-const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../blueprints');
+const { SHIP_BLUEPRINTS, computeAllRequirements, getRefinedRole, getRefinedGroup } = require('../blueprints');
 const { HarvestingManager } = require('../harvesting-manager');
 const router = express.Router();
 
@@ -924,7 +924,11 @@ router.get('/:gameId/galaxy-graph', (req, res) => {
 // Ship blueprints listing with computed requirements
 router.get('/blueprints', (req, res) => {
     try {
-        const enriched = SHIP_BLUEPRINTS.map(bp => ({ ...bp, requirements: computeAllRequirements(bp) }));
+        const enriched = SHIP_BLUEPRINTS.map(bp => {
+            const refinedRole = getRefinedRole(bp.role);
+            const refinedGroup = getRefinedGroup(refinedRole);
+            return { ...bp, requirements: computeAllRequirements(bp), refinedRole, refinedGroup };
+        });
         res.json({ blueprints: enriched });
     } catch (e) {
         console.error('Error returning blueprints', e);

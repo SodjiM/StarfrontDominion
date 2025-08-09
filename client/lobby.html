@@ -283,27 +283,84 @@
             hideGameDetails();
         }
 
-        // Show create game modal (placeholder)
+        // Show create game modal (enhanced)
         function showCreateGameModal() {
-            const name = prompt('Enter game name:');
-            if (!name) return;
-            
-            const mode = prompt('Enter game mode (campaign/persistent):');
-            if (!mode || !['campaign', 'persistent'].includes(mode)) {
-                alert('Invalid game mode. Use "campaign" or "persistent"');
-                return;
+            let submitHandler = null;
+            const modal = UI.showModal({
+                title: 'Create New Game',
+                content: `
+                    <form id="createGameForm">
+                        <div style="display:grid; gap:12px;">
+                            <label>
+                                <div style="margin-bottom:6px;">Lobby Name</div>
+                                <input id="cg-name" type="text" class="sf-input" placeholder="Enter lobby name" maxlength="64" />
+                            </label>
+                            <label>
+                                <div style="margin-bottom:6px;">Game Type</div>
+                                <select id="cg-mode" class="sf-select">
+                                    <option value="campaign">Campaign</option>
+                                    <option value="persistent">Persistent Galaxy</option>
+                                </select>
+                            </label>
+                            <div style="margin-top:4px; padding-top:10px; border-top:1px solid var(--border);">
+                                <div style="margin-bottom:6px;">Auto Turn Lock</div>
+                                <select id="cg-turnlock" class="sf-select">
+                                    <option value="1">1 min</option>
+                                    <option value="5">5 min</option>
+                                    <option value="10">10 min</option>
+                                    <option value="15">15 min</option>
+                                    <option value="20">20 min</option>
+                                    <option value="30">30 min</option>
+                                    <option value="60">1 hr</option>
+                                    <option value="180">3 hrs</option>
+                                    <option value="360">6 hrs</option>
+                                    <option value="720">12 hrs</option>
+                                    <option value="1440">24 hrs</option>
+                                    <option value="2880">48 hrs</option>
+                                </select>
+                                <div style="color: var(--muted); font-size: 12px; margin-top:6px;">This setting will be used in a future update.</div>
+                            </div>
+                        </div>
+                    </form>
+                `,
+                actions: [
+                    { text: 'Cancel', style: 'secondary' },
+                    { text: 'Create', style: 'primary', action: () => submitHandler && submitHandler() }
+                ]
+            });
+
+            const nameInput = modal.querySelector('#cg-name');
+            if (nameInput) nameInput.focus();
+
+            // Unified submit handler used by both Enter and Create button
+            submitHandler = () => {
+                const name = document.getElementById('cg-name').value.trim();
+                const mode = document.getElementById('cg-mode').value;
+                const turnLock = parseInt(document.getElementById('cg-turnlock').value, 10);
+                if (!name) {
+                    alert('Please enter a lobby name.');
+                    return false;
+                }
+                createGame(name, mode, turnLock);
+            };
+
+            // Prevent default form submit and use our handler (supports Enter key)
+            const formEl = modal.querySelector('#createGameForm');
+            if (formEl) {
+                formEl.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    if (submitHandler) submitHandler();
+                });
             }
-            
-            createGame(name, mode);
         }
 
         // Create a new game
-        async function createGame(name, mode) {
+        async function createGame(name, mode, turnLockMinutes) {
             try {
                 const response = await fetch('/lobby/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, mode, creatorId: currentUserId })
+                    body: JSON.stringify({ name, mode, creatorId: currentUserId, turnLockMinutes })
                 });
                 
                 const data = await response.json();
