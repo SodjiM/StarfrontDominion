@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { SystemGenerator } = require('../system-generator');
 const { CargoManager } = require('../cargo-manager');
+const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../blueprints');
 const { HarvestingManager } = require('../harvesting-manager');
 const router = express.Router();
 
@@ -920,6 +921,17 @@ router.get('/:gameId/galaxy-graph', (req, res) => {
     });
 });
 
+// Ship blueprints listing with computed requirements
+router.get('/blueprints', (req, res) => {
+    try {
+        const enriched = SHIP_BLUEPRINTS.map(bp => ({ ...bp, requirements: computeAllRequirements(bp) }));
+        res.json({ blueprints: enriched });
+    } catch (e) {
+        console.error('Error returning blueprints', e);
+        res.status(500).json({ error: 'Failed to load blueprints' });
+    }
+});
+
 // Get visible map data for player around a specific position - ASYNCHRONOUS FRIENDLY
 router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
     const { gameId, userId, sectorId, x, y } = req.params;
@@ -1419,14 +1431,13 @@ const STRUCTURE_TYPES = {
 
 // Build ship endpoint
 router.post('/build-ship', (req, res) => {
-    const { stationId, shipType, cost, userId } = req.body;
+    const { stationId, blueprintId, userId } = req.body;
     
-    // Validate ship type
-    if (!SHIP_TYPES[shipType]) {
-        return res.status(400).json({ error: 'Invalid ship type' });
+    // Validate blueprint
+    const blueprint = SHIP_BLUEPRINTS.find(b => b.id === blueprintId);
+    if (!blueprint) {
+        return res.status(400).json({ error: 'Invalid blueprint' });
     }
-    
-    const shipTemplate = SHIP_TYPES[shipType];
     
     // Verify station ownership
     db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
@@ -1440,26 +1451,34 @@ router.post('/build-ship', (req, res) => {
             return res.status(404).json({ error: 'Station not found or not owned by player' });
         }
         
-        // Check and consume resources
-        CargoManager.removeResourceFromCargo(stationId, 'rock', cost, false)
-            .then(result => {
+        // Compute requirements (core + specialized)
+        const reqs = computeAllRequirements(blueprint);
+        const resourceMap = { ...reqs.core, ...reqs.specialized };
+
+        // Atomically consume resources from the building station
+        CargoManager.consumeResourcesAtomic(stationId, resourceMap, false)
+            .then(async (result) => {
                 if (!result.success) {
-                    return res.status(400).json({ error: result.error || 'Insufficient resources' });
+                    return res.status(400).json({ error: 'Insufficient resources', details: result.shortages });
                 }
                 
                 // Create ship adjacent to station
-                const shipName = `${shipTemplate.name} ${Math.floor(Math.random() * 1000)}`;
+                const shipName = `${blueprint.name} ${Math.floor(Math.random() * 1000)}`;
+                // Baseline stats per class (first pass)
+                const classStats = {
+                    frigate: { hp: 60, maxHp: 60, scanRange: 50, movementSpeed: 4, cargoCapacity: 10, harvestRate: 1.0 },
+                    battleship: { hp: 200, maxHp: 200, scanRange: 60, movementSpeed: 3, cargoCapacity: 20, harvestRate: 0.0 },
+                    capital: { hp: 600, maxHp: 600, scanRange: 70, movementSpeed: 2, cargoCapacity: 40, harvestRate: 0.0 }
+                }[blueprint.class] || { hp: 50, maxHp: 50, scanRange: 50, movementSpeed: 3, cargoCapacity: 10, harvestRate: 0.0 };
                 const shipMetaObj = {
                     name: shipName,
-                    hp: shipTemplate.hp,
-                    maxHp: shipTemplate.maxHp,
-                    scanRange: shipTemplate.scanRange,
-                    movementSpeed: shipTemplate.movementSpeed,
-                    cargoCapacity: shipTemplate.cargoCapacity,
-                    harvestRate: shipTemplate.harvestRate,
-                    canMine: shipTemplate.canMine,
-                    canActiveScan: shipTemplate.canActiveScan,
-                    shipType: shipType
+                    ...classStats,
+                    canMine: classStats.harvestRate > 0,
+                    canActiveScan: true,
+                    shipType: blueprint.class,
+                    blueprintId: blueprint.id,
+                    role: blueprint.role,
+                    class: blueprint.class
                 };
                 const shipMeta = JSON.stringify(shipMetaObj);
                 
@@ -1480,12 +1499,13 @@ router.post('/build-ship', (req, res) => {
                         console.log(`🚢 Built ${shipName} (ID: ${shipId}) for user ${userId}`);
                         
                         // Initialize ship cargo
-                        CargoManager.initializeShipCargo(shipId, shipTemplate.cargoCapacity)
+                        CargoManager.initializeShipCargo(shipId, shipMetaObj.cargoCapacity)
                             .then(() => {
                                 res.json({ 
                                     success: true, 
                                     shipName: shipName,
-                                    shipId: shipId
+                                    shipId: shipId,
+                                    consumed: resourceMap
                                 });
                             })
                             .catch(cargoErr => {
@@ -1494,7 +1514,8 @@ router.post('/build-ship', (req, res) => {
                                     success: true, 
                                     shipName: shipName,
                                     shipId: shipId,
-                                    warning: 'Ship created but cargo initialization failed'
+                                    warning: 'Ship created but cargo initialization failed',
+                                    consumed: resourceMap
                                 });
                             });
                     }

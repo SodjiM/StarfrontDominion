@@ -20,6 +20,17 @@ class ResourceNodeGenerator {
         // Derive a deterministic per-object seed from the sector seed and object identity
         const objectSeed = deriveObjectSeed(seed, celestialObject);
         const rng = new SeededRandom(objectSeed);
+        // Attach sector archetype if present (look it up once)
+        if (celestialObject.sector_archetype == null && typeof celestialObject.sector_id === 'number') {
+            await new Promise((resolve) => {
+                db.get('SELECT archetype FROM sectors WHERE id = ?', [celestialObject.sector_id], (err, row) => {
+                    if (!err && row) {
+                        celestialObject.sector_archetype = row.archetype;
+                    }
+                    resolve();
+                });
+            });
+        }
         const nodeConfigs = this.getNodeConfigForCelestialType(celestialObject.celestial_type, celestialObject);
         
         console.log(`🪨 Generating resource nodes for ${celestialObject.celestial_type} at (${celestialObject.x}, ${celestialObject.y})`);
@@ -56,66 +67,31 @@ class ResourceNodeGenerator {
      * Get resource node configuration based on celestial object type
      */
     static getNodeConfigForCelestialType(celestialType, celestialObject) {
-        const configs = {
-            'belt': [
-                {
-                    resourceType: 'rock',
-                    minNodes: 25,
-                    maxNodes: 45,
-                    minAmount: 50,
-                    maxAmount: 200,
-                    sizeDistribution: [70, 25, 5], // % for size 1, 2, 3
-                    placementPattern: 'dense_belt_ring'
-                }
-            ],
-            'nebula': [
-                {
-                    resourceType: 'gas',
-                    minNodes: 12,
-                    maxNodes: 25,
-                    minAmount: 30,
-                    maxAmount: 100,
-                    sizeDistribution: [40, 40, 20],
-                    placementPattern: 'dense_clusters'
-                }
-            ],
-            'star': [
-                {
-                    resourceType: 'energy',
-                    minNodes: 3,
-                    maxNodes: 8,
-                    minAmount: 100,
-                    maxAmount: 300,
-                    sizeDistribution: [60, 30, 10],
-                    placementPattern: 'orbital_safe_zone'
-                }
-            ],
-            'derelict': [
-                {
-                    resourceType: 'salvage',
-                    minNodes: 2,
-                    maxNodes: 6,
-                    minAmount: 20,
-                    maxAmount: 80,
-                    sizeDistribution: [50, 35, 15],
-                    placementPattern: 'internal'
-                }
-            ]
+        // Choose mineral families by celestial type; actual mineral picked per-node for diversity
+        const commonConfig = (minNodes, maxNodes, minAmount, maxAmount, placementPattern) => ({
+            resourceType: '__weighted__',
+            minNodes,
+            maxNodes,
+            minAmount,
+            maxAmount,
+            sizeDistribution: [60, 30, 10],
+            placementPattern
+        });
+
+        const configsByType = {
+            'belt': [commonConfig(25, 45, 50, 200, 'dense_belt_ring')],
+            'nebula': [commonConfig(12, 25, 30, 100, 'dense_clusters')],
+            'star': [commonConfig(3, 8, 100, 300, 'orbital_safe_zone')],
+            'derelict': [commonConfig(2, 6, 20, 80, 'internal')]
         };
-        
-        return configs[celestialType] || [];
+
+        return configsByType[celestialType] || [];
     }
     
     /**
      * Generate a single resource node
      */
     static async generateSingleNode(sectorId, parentObject, config, rng, patternState, attemptIndex = 0) {
-        // Get resource type ID
-        const resourceTypeId = await this.getResourceTypeId(config.resourceType);
-        if (!resourceTypeId) {
-            console.error(`Unknown resource type: ${config.resourceType}`);
-            return;
-        }
         
         // Determine node size based on distribution
         const sizeRoll = rng.random() * 100;
@@ -135,6 +111,14 @@ class ResourceNodeGenerator {
         // Calculate resource amount
         const resourceAmount = rng.randInt(config.minAmount, config.maxAmount);
         
+        // Determine concrete mineral to spawn based on celestial and sector archetype
+        const resourceName = this.pickWeightedMineral(parentObject.celestial_type, parentObject.sector_archetype || null, rng);
+        const resourceTypeId = await this.getResourceTypeId(resourceName);
+        if (!resourceTypeId) {
+            console.warn(`Unknown mineral ${resourceName}, skipping node.`);
+            return false;
+        }
+
         // Create the node
         await this.insertResourceNode(
             sectorId,
@@ -146,8 +130,94 @@ class ResourceNodeGenerator {
             resourceAmount
         );
         
-        console.log(`    ✅ Created ${config.resourceType} node (size ${nodeSize}) at (${position.x}, ${position.y}) with ${resourceAmount} resources`);
+        console.log(`    ✅ Created ${resourceName} node (size ${nodeSize}) at (${position.x}, ${position.y}) with ${resourceAmount} resources`);
         return true;
+    }
+
+    /**
+     * Weighted mineral picker per celestial type and archetype
+     */
+    static pickWeightedMineral(celestialType, archetype, rng) {
+        // Base weights by celestial type
+        /** @type {Record<string, Array<{name:string, w:number}>>} */
+        const base = {
+            belt: [
+                { name: 'Ferrite Alloy', w: 12 },
+                { name: 'Ardanium', w: 8 },
+                { name: 'Vornite', w: 7 },
+                { name: 'Magnetrine', w: 5 },
+                { name: 'Gravium', w: 3 },
+                { name: 'Mythrion', w: 4 },
+                { name: 'Corvexite', w: 3 },
+                { name: 'Starforged Carbon', w: 2 },
+                { name: 'Quarzon', w: 2 },
+                // Legacy fallback to maintain continuity until recipes migrate
+                { name: 'rock', w: 5 }
+            ],
+            nebula: [
+                { name: 'Heliox Ore', w: 9 },
+                { name: 'Kryon Dust', w: 7 },
+                { name: 'Nebryllium', w: 7 },
+                { name: 'Spectrathene', w: 5 },
+                { name: 'Auralite', w: 5 },
+                { name: 'Voidglass', w: 2 },
+                { name: 'Aetherium', w: 2 },
+                { name: 'gas', w: 4 }
+            ],
+            star: [
+                { name: 'Crytite', w: 9 },
+                { name: 'Zerothium', w: 6 },
+                { name: 'Solarite', w: 8 },
+                { name: 'Fluxium', w: 6 },
+                { name: 'Tachytrium', w: 4 },
+                { name: 'Luminite', w: 3 },
+                { name: 'energy', w: 4 }
+            ],
+            derelict: [
+                { name: 'Neurogel', w: 6 },
+                { name: 'Phasegold', w: 4 },
+                { name: 'Aurivex', w: 2 },
+                { name: 'Drakonium', w: 3 },
+                { name: 'Corvexite', w: 3 },
+                { name: 'Quarzon', w: 3 },
+                { name: 'salvage', w: 4 }
+            ]
+        };
+
+        // Fallback to legacy types if unknown celestial
+        if (!base[celestialType]) {
+            const legacy = ['rock', 'gas', 'energy', 'salvage'];
+            return legacy[Math.floor(rng.random() * legacy.length)];
+        }
+
+        // Apply archetype multipliers
+        const mult = (mineral) => {
+            switch (archetype) {
+                case 'resource-rich':
+                    return 1.25;
+                case 'asteroid-heavy':
+                    if (celestialType === 'belt' && ['Ferrite Alloy','Ardanium','Vornite','Magnetrine','Gravium','Starforged Carbon'].includes(mineral)) return 1.6;
+                    return 1.0;
+                case 'nebula':
+                    if (celestialType === 'nebula') return 1.7;
+                    return 0.9;
+                case 'binary-star':
+                    if (celestialType === 'star') return 1.4;
+                    return 1.0;
+                default:
+                    return 1.0;
+            }
+        };
+
+        const candidates = base[celestialType];
+        let total = 0;
+        candidates.forEach(c => total += c.w * mult(c.name));
+        let roll = rng.random() * total;
+        for (const c of candidates) {
+            roll -= c.w * mult(c.name);
+            if (roll <= 0) return c.name;
+        }
+        return candidates[candidates.length - 1].name;
     }
     
     /**

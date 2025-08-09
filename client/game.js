@@ -1270,6 +1270,21 @@ class GameClient {
             ctx.closePath();
             ctx.fill();
             ctx.stroke();
+        } else {
+            // Generic mineral crystal (for the 30-mineral system)
+            ctx.fillStyle = colorHex;
+            ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+            ctx.lineWidth = Math.max(1, size / 16);
+            
+            const r = Math.max(3, size * 0.45);
+            ctx.beginPath();
+            ctx.moveTo(x, y - r);
+            ctx.lineTo(x + r * 0.6, y - r * 0.2);
+            ctx.lineTo(x + r * 0.35, y + r);
+            ctx.lineTo(x - r * 0.6, y + r * 0.2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
         }
         
         ctx.restore();
@@ -4085,67 +4100,7 @@ async function showBuildModal() {
             <div id="ships-tab" class="build-tab-content">
                 <div class="build-section">
                     <h3>🚢 Ship Construction</h3>
-                    <div class="build-options">
-                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🔍 Explorer Ship</div>
-                                <div class="build-description">Basic exploration vessel</div>
-                                <div class="build-stats">
-                                    • Cargo: 10 units<br>
-                                    • Speed: 4 tiles/turn<br>
-                                    • Can mine and scan
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 1 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
-                                        onclick="buildShip('explorer', 1)" 
-                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="build-option ${rockQuantity >= 5 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">⛏️ Mining Vessel</div>
-                                <div class="build-description">Specialized mining ship</div>
-                                <div class="build-stats">
-                                    • Cargo: 20 units<br>
-                                    • Speed: 3 tiles/turn<br>
-                                    • 2x mining speed
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 5 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 5 ? '' : 'disabled'}" 
-                                        onclick="buildShip('mining-vessel', 5)" 
-                                        ${rockQuantity >= 5 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="build-option ${rockQuantity >= 10 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🚚 Logistics Ship</div>
-                                <div class="build-description">Large cargo hauler</div>
-                                <div class="build-stats">
-                                    • Cargo: 50 units<br>
-                                    • Speed: 2 tiles/turn<br>
-                                    • Cannot mine
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 10 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 10 ? '' : 'disabled'}" 
-                                        onclick="buildShip('logistics', 10)" 
-                                        ${rockQuantity >= 10 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+            <div class="build-options" id="shipyard-container"></div>
                 </div>
             </div>
             
@@ -4230,10 +4185,125 @@ async function showBuildModal() {
             className: 'build-modal-container'
         });
 
+        // Inject Shipyard (Frigate/Battleship/Capital tabs)
+        await renderShipyard(selectedStation, cargo);
+
     } catch (error) {
         console.error('Error getting station cargo:', error);
         gameClient.addLogEntry('Failed to access construction bay', 'error');
     }
+}
+
+// Render the Shipyard UI inside the build modal
+async function renderShipyard(selectedStation, cargo) {
+    const container = document.getElementById('shipyard-container');
+    if (!container) return;
+    const haveMap = new Map(cargo.items.map(i => [i.resource_name, i.quantity]));
+
+    // Fetch full blueprint list from server
+    let blueprints = [];
+    try {
+        const resp = await fetch('/game/blueprints');
+        const jd = await resp.json();
+        if (resp.ok) blueprints = jd.blueprints || [];
+    } catch {}
+    const CORE_BASELINES = {
+        frigate: { 'Ferrite Alloy': 20, 'Crytite': 12, 'Ardanium': 10, 'Vornite': 8, 'Zerothium': 6 },
+        battleship: { 'Ferrite Alloy': 120, 'Crytite': 80, 'Ardanium': 60, 'Vornite': 50, 'Zerothium': 40 },
+        capital: { 'Ferrite Alloy': 300, 'Crytite': 200, 'Ardanium': 160, 'Vornite': 140, 'Zerothium': 120 }
+    };
+    const ROLE_CORE_MODIFIERS = {
+        'stealth-scout': { 'Ferrite Alloy': 0.8, 'Vornite': 1.2, 'Zerothium': 1.15, 'Crytite': 1.1, 'Ardanium': 0.9 },
+        'brawler': { 'Ferrite Alloy': 1.2, 'Ardanium': 1.15, 'Zerothium': 0.9, 'Vornite': 0.9 },
+        'siege': { 'Ferrite Alloy': 1.15, 'Crytite': 1.1 },
+        'supercarrier': { 'Ferrite Alloy': 1.2, 'Crytite': 1.2 }
+    };
+    const SPECIALIZED_TOTAL = { frigate: 20, battleship: 100, capital: 300 };
+    const computeReqs = (bp) => {
+        const base = CORE_BASELINES[bp.class];
+        const mod = ROLE_CORE_MODIFIERS[bp.role] || {};
+        const core = Object.fromEntries(Object.entries(base).map(([k,v]) => [k, Math.max(1, Math.round(v * (mod[k]||1)))]));
+        const tot = SPECIALIZED_TOTAL[bp.class] || 0;
+        const n = Math.max(1, bp.specialized.length);
+        const per = Math.max(1, Math.floor(tot / n));
+        const spec = {};
+        bp.specialized.forEach((s,i)=> spec[s] = per + (i < (tot - per*n) ? 1 : 0));
+        return { core, specialized: spec };
+    };
+
+    const tabs = ['frigate','battleship','capital'];
+    const rolesAll = Array.from(new Set(blueprints.map(b=>b.role))).sort();
+    let activeRole = null; // null = all
+    let active = 'frigate';
+    const header = document.createElement('div');
+    header.className = 'build-tabs-shipyard';
+    tabs.forEach(t => {
+        const b = document.createElement('button');
+        b.className = 'sf-btn ' + (active===t ? 'sf-btn-primary' : 'sf-btn-secondary');
+        b.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+        b.onclick = () => { active = t; renderList(); };
+        header.appendChild(b);
+    });
+    // Role chips bar
+    const roleBar = document.createElement('div');
+    roleBar.className = 'role-chips';
+    const makeChip = (label, value) => {
+        const c = document.createElement('button');
+        c.className = 'sf-chip ' + (activeRole===value ? 'active' : '');
+        c.textContent = label;
+        c.onclick = () => { activeRole = (activeRole===value ? null : value); renderList(); updateChips(); };
+        return c;
+    };
+    const updateChips = () => {
+        roleBar.innerHTML = '';
+        roleBar.appendChild(makeChip('All Roles', null));
+        rolesAll.forEach(r => roleBar.appendChild(makeChip(r, r)));
+    };
+    updateChips();
+
+    const list = document.createElement('div');
+    list.className = 'shipyard-list';
+    container.appendChild(header);
+    container.appendChild(roleBar);
+    container.appendChild(list);
+
+    const renderList = () => {
+        list.innerHTML = '';
+        blueprints.filter(b=>b.class===active && (!activeRole || b.role===activeRole)).forEach(bp => {
+            const reqs = bp.requirements ? bp.requirements : computeReqs(bp);
+            const wrap = document.createElement('div');
+            wrap.className = 'build-option';
+            const specChips = bp.specialized.map(s=>`<span class="chip">${s}</span>`).join(' ');
+            const reqRows = (obj) => Object.entries(obj).map(([k,v])=>{
+                const have = haveMap.get(k) || 0;
+                const ok = have >= v;
+                return `<div class="req-row"><span>${k}</span><span>${ok?'✅':'❌'} ${have}/${v}</span></div>`;
+            }).join('');
+            const canBuild = [...Object.entries(reqs.core), ...Object.entries(reqs.specialized)].every(([k,v]) => (haveMap.get(k)||0) >= v);
+            wrap.innerHTML = `
+                <div class="build-info">
+                    <div class="build-name">${bp.name}</div>
+                    <div class="build-description">Class: ${bp.class} • Role: ${bp.role} • Specialized: ${specChips}</div>
+                    <div class="build-reqs"><h4>Core</h4>${reqRows(reqs.core)}<h4>Specialized</h4>${reqRows(reqs.specialized)}</div>
+                </div>
+                <div class="build-cost">
+                    <button class="build-btn ${canBuild?'':'disabled'}" ${canBuild?'':'disabled'}>Build</button>
+                </div>`;
+            wrap.querySelector('button').onclick = async () => {
+                const resp = await fetch('/game/build-ship', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ stationId: selectedStation.id, blueprintId: bp.id, userId: gameClient.userId }) });
+                const jd = await resp.json();
+                if (!resp.ok) {
+                    gameClient.addLogEntry(jd.error || 'Build failed', 'error');
+                } else {
+                    gameClient.addLogEntry(`Built ${jd.shipName}`, 'success');
+                    UI.closeModal();
+                    await gameClient.loadGameState();
+                }
+            };
+            list.appendChild(wrap);
+        });
+    };
+    renderList();
 }
 
 // Switch between build tabs

@@ -210,6 +210,56 @@ class CargoManager {
             return { success: false, error: error.message };
         }
     }
+
+    /**
+     * Atomically consume a map of resources from an object's cargo
+     * @param {number} objectId
+     * @param {Record<string, number>} resourceMap
+     * @param {boolean} useLegacyTable
+     */
+    static async consumeResourcesAtomic(objectId, resourceMap, useLegacyTable = false) {
+        const tableName = useLegacyTable ? 'ship_cargo' : 'object_cargo';
+        const idColumn = useLegacyTable ? 'ship_id' : 'object_id';
+        return new Promise((resolve) => {
+            db.serialize(() => {
+                db.run('BEGIN TRANSACTION');
+                // Verify availability
+                const shortages = [];
+                const getTypeId = (name) => new Promise((res) => {
+                    db.get('SELECT id FROM resource_types WHERE resource_name = ?', [name], (e, row) => res(row?.id || null));
+                });
+                const getQty = (rid) => new Promise((res) => {
+                    db.get(`SELECT quantity FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ?`, [objectId, rid], (e, row) => res(row?.quantity || 0));
+                });
+                (async () => {
+                    const plan = [];
+                    for (const [name, qty] of Object.entries(resourceMap)) {
+                        const rid = await getTypeId(name);
+                        if (!rid) { shortages.push({ resource: name, needed: qty, have: 0 }); continue; }
+                        const have = await getQty(rid);
+                        if (have < qty) shortages.push({ resource: name, needed: qty, have });
+                        plan.push({ rid, qty });
+                    }
+                    if (shortages.length > 0) {
+                        db.run('ROLLBACK');
+                        return resolve({ success: false, shortages });
+                    }
+                    // Deduct
+                    for (const { rid, qty } of plan) {
+                        await new Promise((res, rej) => {
+                            db.run(
+                                `UPDATE ${tableName} SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE ${idColumn} = ? AND resource_type_id = ?`,
+                                [qty, objectId, rid], (err) => err ? rej(err) : res()
+                            );
+                        });
+                        // Cleanup zeros
+                        await new Promise((res) => db.run(`DELETE FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ? AND quantity <= 0`, [objectId, rid], () => res()));
+                    }
+                    db.run('COMMIT', () => resolve({ success: true }));
+                })().catch(err => { console.error('consumeResourcesAtomic error:', err); db.run('ROLLBACK', () => resolve({ success: false, error: 'transaction_failed' })); });
+            });
+        });
+    }
     
     /**
      * Get resource type information
