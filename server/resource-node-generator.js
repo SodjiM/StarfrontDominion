@@ -112,7 +112,7 @@ class ResourceNodeGenerator {
         const resourceAmount = rng.randInt(config.minAmount, config.maxAmount);
         
         // Determine concrete mineral to spawn based on celestial and sector archetype
-        const resourceName = this.pickWeightedMineral(parentObject.celestial_type, parentObject.sector_archetype || null, rng);
+        const resourceName = this.pickWeightedMineral(parentObject.celestial_type, parentObject.sector_archetype || null, rng, parentObject);
         const resourceTypeId = await this.getResourceTypeId(resourceName);
         if (!resourceTypeId) {
             console.warn(`Unknown mineral ${resourceName}, skipping node.`);
@@ -137,7 +137,7 @@ class ResourceNodeGenerator {
     /**
      * Weighted mineral picker per celestial type and archetype
      */
-    static pickWeightedMineral(celestialType, archetype, rng) {
+    static pickWeightedMineral(celestialType, archetype, rng, parentObject) {
         // Base weights by celestial type
         /** @type {Record<string, Array<{name:string, w:number}>>} */
         const base = {
@@ -190,34 +190,43 @@ class ResourceNodeGenerator {
             return legacy[Math.floor(rng.random() * legacy.length)];
         }
 
-        // Apply archetype multipliers
-        const mult = (mineral) => {
-            switch (archetype) {
-                case 'resource-rich':
-                    return 1.25;
-                case 'asteroid-heavy':
-                    if (celestialType === 'belt' && ['Ferrite Alloy','Ardanium','Vornite','Magnetrine','Gravium','Starforged Carbon'].includes(mineral)) return 1.6;
-                    return 1.0;
-                case 'nebula':
-                    if (celestialType === 'nebula') return 1.7;
-                    return 0.9;
-                case 'binary-star':
-                    if (celestialType === 'star') return 1.4;
-                    return 1.0;
-                default:
-                    return 1.0;
-            }
+        // Apply 30-archetype model if present
+        const { getArchetype } = require('./archetypes');
+        const arch = archetype ? getArchetype(archetype) : null;
+
+        // Build weight function: start from base by celestial type
+        const candidates = base[celestialType];
+        if (!candidates) return 'rock';
+
+        // Determine 3 deterministic per-sector extras
+        const extras = pickDeterministicExtrasForSector(parentObject?.sector_id, arch);
+
+        const weightFor = (mineral) => {
+            let w = candidates.find(c => c.name === mineral)?.w || 1;
+            // Core bias
+            if (arch && arch.coreBias[mineral] != null) w *= arch.coreBias[mineral];
+            // Themed fixed specialized minerals get a strong boost
+            if (arch && arch.fixedSpecialized && arch.fixedSpecialized.includes(mineral)) w *= 2.2;
+            // Per-sector extras get a moderate boost
+            if (extras.includes(mineral)) w *= 1.6;
+            return w;
         };
 
-        const candidates = base[celestialType];
-        let total = 0;
-        candidates.forEach(c => total += c.w * mult(c.name));
+        // Compute weighted pick across union of base list and boosted themed minerals
+        // Ensure the 5 cores are present in candidate list for sector-wide availability
+        const ALL_CORES = ['Ferrite Alloy','Crytite','Ardanium','Vornite','Zerothium'];
+        const union = new Map(candidates.map(c => [c.name, c.w]));
+        ALL_CORES.forEach(c => union.set(c, union.get(c) || 2));
+        if (arch) arch.fixedSpecialized.forEach(m => union.set(m, union.get(m) || 2));
+        extras.forEach(m => union.set(m, union.get(m) || 1));
+
+        let total = 0; union.forEach((_, k) => { total += weightFor(k); });
         let roll = rng.random() * total;
-        for (const c of candidates) {
-            roll -= c.w * mult(c.name);
-            if (roll <= 0) return c.name;
+        for (const [name] of union) {
+            roll -= weightFor(name);
+            if (roll <= 0) return name;
         }
-        return candidates[candidates.length - 1].name;
+        return Array.from(union.keys())[0];
     }
     
     /**
@@ -625,3 +634,23 @@ function weightedPick(items, rng) {
 }
 
 module.exports = { ResourceNodeGenerator };
+
+// Helper: deterministic extras per sector based on sector_id and generation_seed
+function pickDeterministicExtrasForSector(sectorId, arch) {
+    const extrasPool = [
+        'Spectrathene','Auralite','Gravium','Fluxium','Corvexite','Voidglass','Heliox Ore','Neurogel','Phasegold','Kryon Dust','Riftstone','Solarite','Mythrion','Drakonium','Aetherium','Tachytrium','Oblivium','Luminite','Cryphos','Nebryllium','Magnetrine','Quarzon','Starforged Carbon','Aurivex'
+    ];
+    // Remove the fixed pair so extras are distinct
+    if (arch) arch.fixedSpecialized.forEach(m => {
+        const i = extrasPool.indexOf(m); if (i >= 0) extrasPool.splice(i,1);
+    });
+    // Use a simple hash on sectorId to pick 3 stable extras
+    const picks = [];
+    let h = (Number(sectorId) * 2654435761) >>> 0;
+    for (let i = 0; i < 3 && extrasPool.length > 0; i++) {
+        h = (h ^ (h >>> 13)) * 1274126177 >>> 0;
+        const idx = h % extrasPool.length;
+        picks.push(extrasPool.splice(idx,1)[0]);
+    }
+    return picks;
+}

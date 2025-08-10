@@ -3,6 +3,7 @@ const db = require('../db');
 const { SystemGenerator } = require('../system-generator');
 const { CargoManager } = require('../cargo-manager');
 const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../blueprints');
+const { SECTOR_ARCHETYPES } = require('../archetypes');
 const { HarvestingManager } = require('../harvesting-manager');
 const router = express.Router();
 
@@ -55,8 +56,8 @@ class GameWorldManager {
         
         // Create sector
         db.run(
-            'INSERT INTO sectors (game_id, owner_id, name) VALUES (?, ?, ?)',
-            [gameId, player.user_id, sectorName],
+            'INSERT INTO sectors (game_id, owner_id, name, archetype) VALUES (?, ?, ?, ?)',
+            [gameId, player.user_id, sectorName, GameWorldManager.pickRandomArchetype(gameId, player.user_id)],
             function(err) {
                 if (err) {
                     console.error('Error creating sector:', err);
@@ -88,7 +89,12 @@ class GameWorldManager {
                 });
             });
             
-            const archetype = sector?.archetype || null;
+            // If archetype not assigned for some reason, assign now and persist
+            let archetype = sector?.archetype || null;
+            if (!archetype) {
+                archetype = GameWorldManager.pickRandomArchetype(gameId, player.user_id);
+                await new Promise((resolve) => db.run('UPDATE sectors SET archetype = ? WHERE id = ?', [archetype, sectorId], () => resolve()));
+            }
             console.log(`🎯 Using archetype: ${archetype || 'standard'} for sector ${sectorId}`);
             
             // Generate the complete solar system
@@ -102,6 +108,15 @@ class GameWorldManager {
             console.error(`❌ Failed to generate sector ${sectorId}:`, error);
             onError(error);
         }
+    }
+
+    // Deterministic-ish random archetype picker using gameId and userId
+    static pickRandomArchetype(gameId, userId) {
+        const archetypes = require('../archetypes').ALL_ARCHETYPES_KEYS;
+        const seed = (Number(gameId) * 9301 + Number(userId) * 49297) % 233280;
+        const r = (seed / 233280);
+        const idx = Math.floor(r * archetypes.length) % archetypes.length;
+        return archetypes[idx];
     }
     
     // Create starting objects for a player
@@ -935,6 +950,16 @@ router.get('/blueprints', (req, res) => {
     }
 });
 
+// System archetypes registry
+router.get('/archetypes', (req, res) => {
+    try {
+        res.json({ archetypes: SECTOR_ARCHETYPES });
+    } catch (e) {
+        console.error('Error returning archetypes', e);
+        res.status(500).json({ error: 'Failed to load archetypes' });
+    }
+});
+
 // Get visible map data for player around a specific position - ASYNCHRONOUS FRIENDLY
 router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
     const { gameId, userId, sectorId, x, y } = req.params;
@@ -974,15 +999,15 @@ router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
 // Player setup route
 router.post('/setup/:gameId', (req, res) => {
     const { gameId } = req.params;
-    const { userId, avatar, colorPrimary, colorSecondary, systemName, archetype } = req.body;
+    const { userId, avatar, colorPrimary, colorSecondary, systemName } = req.body;
     
     console.log(`🎨 Setup request for game ${gameId}, user ${userId}:`, {
-        avatar, colorPrimary, colorSecondary, systemName, archetype
+        avatar, colorPrimary, colorSecondary, systemName
     });
     
     // Validate input
-    if (!userId || !avatar || !colorPrimary || !colorSecondary || !systemName || !archetype) {
-        console.error('❌ Missing required fields:', { userId, avatar, colorPrimary, colorSecondary, systemName, archetype });
+    if (!userId || !avatar || !colorPrimary || !colorSecondary || !systemName) {
+        console.error('❌ Missing required fields:', { userId, avatar, colorPrimary, colorSecondary, systemName });
         return res.status(400).json({ error: 'Missing required setup fields' });
     }
     
@@ -1023,9 +1048,9 @@ router.post('/setup/:gameId', (req, res) => {
                         return res.status(500).json({ error: 'Failed to update player' });
                     }
                     
-                    // Update sector name and archetype
-                    db.run('UPDATE sectors SET name = ?, archetype = ? WHERE game_id = ? AND owner_id = ?',
-                        [systemName, archetype, gameId, userId], function(sectorErr) {
+                    // Update sector name only (archetype is assigned at sector creation)
+                    db.run('UPDATE sectors SET name = ? WHERE game_id = ? AND owner_id = ?',
+                        [systemName, gameId, userId], function(sectorErr) {
                             if (sectorErr) {
                                 console.error('Error updating sector:', sectorErr);
                                 return res.status(500).json({ error: 'Failed to update sector' });

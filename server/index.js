@@ -75,11 +75,18 @@ io.on('connection', (socket) => {
         console.log(`👤 Player ${userId} joined game ${gameId} room`);
         // Update presence timestamp
         if (userId) {
-            db.run('UPDATE users SET last_seen_at = ? WHERE id = ?', [new Date().toISOString(), userId], () => {});
+            const now = new Date().toISOString();
+            db.run('UPDATE users SET last_seen_at = ?, last_activity_at = ? WHERE id = ?', [now, now, userId], () => {});
         }
         
         // Send current game status to newly connected player
         sendGameStatusUpdate(gameId, userId, socket);
+    });
+
+    // Track client activity for idle detection
+    socket.on('client:activity', () => {
+        if (!socket.userId) return;
+        db.run('UPDATE users SET last_activity_at = ? WHERE id = ?', [new Date().toISOString(), socket.userId], () => {});
     });
 
     // Provide players list including lock and online status
@@ -98,7 +105,7 @@ io.on('connection', (socket) => {
             // Players in game
             const players = await new Promise((resolve) => {
                 db.all(
-                    `SELECT gp.user_id as userId, u.username, u.last_seen_at as lastSeenAt, gp.avatar, gp.color_primary as colorPrimary, gp.color_secondary as colorSecondary
+                    `SELECT gp.user_id as userId, u.username, u.last_seen_at as lastSeenAt, u.last_activity_at as lastActivityAt, gp.avatar, gp.color_primary as colorPrimary, gp.color_secondary as colorSecondary
                      FROM game_players gp 
                      JOIN users u ON gp.user_id = u.id 
                      WHERE gp.game_id = ?`,
@@ -136,7 +143,8 @@ io.on('connection', (socket) => {
                 colorSecondary: p.colorSecondary || null,
                 locked: lockedSet.has(p.userId),
                 online: onlineUserIds.has(p.userId),
-                lastSeenAt: p.lastSeenAt || null
+                lastSeenAt: p.lastSeenAt || null,
+                lastActivityAt: p.lastActivityAt || null
             }));
 
             callback && callback({ success: true, currentTurn, players: enriched });

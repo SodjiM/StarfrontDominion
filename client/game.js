@@ -3597,12 +3597,7 @@ class GameClient {
                 <input type="text" id="systemName" class="form-input" placeholder="Enter system name..." maxlength="30" required>
             </div>
 
-            <div class="form-section">
-                <h3>⭐ System Archetype</h3>
-                <div class="archetype-grid" id="archetypeGrid">
-                    ${this.createArchetypeSelector()}
-                </div>
-            </div>
+            
         `;
 
         // Add event listeners after creating the form
@@ -3632,39 +3627,7 @@ class GameClient {
         `).join('');
     }
 
-    // Create archetype selector options
-    createArchetypeSelector() {
-        const archetypes = {
-            'resource-rich': {
-                name: 'Resource Rich',
-                desc: 'Abundant minerals and energy sources',
-                bonus: '+25% resource generation'
-            },
-            'asteroid-heavy': {
-                name: 'Asteroid Belt',
-                desc: 'Dense asteroid fields provide cover',
-                bonus: '+15% stealth, mining opportunities'
-            },
-            'nebula': {
-                name: 'Nebula Cloud',
-                desc: 'Colorful gas clouds affect sensors',
-                bonus: '+20% scan range, -10% accuracy'
-            },
-            'binary-star': {
-                name: 'Binary Star',
-                desc: 'Dual star system with high energy',
-                bonus: '+30% energy output, extreme temperatures'
-            }
-        };
-
-        return Object.entries(archetypes).map(([key, archetype]) => `
-            <div class="archetype-card" data-archetype="${key}">
-                <h4>${archetype.name}</h4>
-                <p>${archetype.desc}</p>
-                <div class="archetype-bonus">${archetype.bonus}</div>
-            </div>
-        `).join('');
-    }
+    // Archetype selection removed; server assigns randomly
 
     // Attach event listeners to setup form elements
     attachSetupEventListeners() {
@@ -3676,13 +3639,7 @@ class GameClient {
             });
         });
 
-        // Archetype selection
-        document.querySelectorAll('.archetype-card').forEach(card => {
-            card.addEventListener('click', () => {
-                document.querySelectorAll('.archetype-card').forEach(c => c.classList.remove('selected'));
-                card.classList.add('selected');
-            });
-        });
+        // Archetype selection removed
 
         // Auto-focus system name input
         const systemNameInput = document.getElementById('systemName');
@@ -3694,7 +3651,7 @@ class GameClient {
     // Submit setup data to server
     async submitSetup() {
         const selectedAvatar = document.querySelector('.avatar-option.selected')?.dataset.avatar;
-        const selectedArchetype = document.querySelector('.archetype-card.selected')?.dataset.archetype;
+        const selectedArchetype = null; // server-assigned
         const primaryColor = document.getElementById('primaryColor')?.value;
         const secondaryColor = document.getElementById('secondaryColor')?.value;
         const systemName = document.getElementById('systemName')?.value?.trim();
@@ -3704,10 +3661,7 @@ class GameClient {
             UI.showAlert('Please select an avatar');
             return false;
         }
-        if (!selectedArchetype) {
-            UI.showAlert('Please select a system archetype');
-            return false;
-        }
+        // No archetype validation; server assigns
         if (!systemName) {
             UI.showAlert('Please enter a system name');
             return false;
@@ -3723,8 +3677,7 @@ class GameClient {
                 avatar: selectedAvatar,
                 colorPrimary: primaryColor,
                 colorSecondary: secondaryColor,
-                systemName: systemName,
-                archetype: selectedArchetype
+                systemName: systemName
             });
 
             const response = await fetch(`/game/setup/${this.gameId}`, {
@@ -3737,8 +3690,7 @@ class GameClient {
                     avatar: selectedAvatar,
                     colorPrimary: primaryColor,
                     colorSecondary: secondaryColor,
-                    systemName: systemName,
-                    archetype: selectedArchetype
+                    systemName: systemName
                 })
             });
 
@@ -3818,7 +3770,7 @@ async function showPlayersModal() {
                                 <div>
                                     <div class=\"asset-name\">${p.username || 'Player ' + p.userId}</div>
                                     <div class=\"asset-position\" style=\"display:flex; gap:10px;\">
-                                        <span title=\"Online status\">${p.online ? '🟢 Online' : '⚪ Offline'}${!p.online && p.lastSeenAt ? ` · seen ${timeAgo(p.lastSeenAt)}` : ''}</span>
+                                        <span title=\"Online status\">${renderPresence(p)}</span>
                                         <span title=\"Turn lock status\">${p.locked ? '🔒 Locked' : '🔓 Unlocked'}</span>
                                     </div>
                                 </div>
@@ -3854,6 +3806,21 @@ let gameClient = null;
 async function initializeGame(gameId) {
     gameClient = new GameClient();
     await gameClient.initialize(gameId);
+    // Start idle heartbeat to report activity for presence
+    try {
+        if (gameClient?.socket) {
+            let lastEvent = Date.now();
+            ['mousemove','keydown','mousedown','touchstart','wheel'].forEach(evt => {
+                window.addEventListener(evt, () => { lastEvent = Date.now(); });
+            });
+            setInterval(() => {
+                // Only send if we had user input in the last 10s to reduce noise
+                if (Date.now() - lastEvent < 10000) {
+                    gameClient.socket.emit('client:activity');
+                }
+            }, 15000);
+        }
+    } catch {}
 }
 
 // Global functions for HTML event handlers
@@ -3929,6 +3896,20 @@ function timeAgo(isoString) {
     } catch (e) {
         return '';
     }
+}
+
+function renderPresence(p){
+    const now = Date.now();
+    const lastSeen = p.lastSeenAt ? new Date(p.lastSeenAt).getTime() : 0;
+    const lastActivity = p.lastActivityAt ? new Date(p.lastActivityAt).getTime() : lastSeen;
+    const idleMs = now - lastActivity;
+    if (p.online) {
+        if (idleMs >= 180000) { // 3 minutes
+            return `🟠 Idle · ${timeAgo(new Date(now - idleMs).toISOString())}`;
+        }
+        return '🟢 Online';
+    }
+    return `⚪ Offline${p.lastSeenAt ? ' · seen ' + timeAgo(p.lastSeenAt) : ''}`;
 }
 
 function setMoveMode() {

@@ -3,6 +3,7 @@
 
 (function() {
   const DATA_URL = 'data/encyclopedia.json';
+  const ARCHETYPES_URL = '/game/archetypes';
   let encyclopediaCache = null;
   let activeCategoryId = null;
   let activeEntryId = null;
@@ -13,12 +14,37 @@
       const resp = await fetch(DATA_URL, { cache: 'no-cache' });
       if (!resp.ok) throw new Error('Failed to load encyclopedia');
       const data = await resp.json();
+
+      // Enrich with live archetypes as an extra category
+      try {
+        const archResp = await fetch(ARCHETYPES_URL, { cache: 'no-cache' });
+        if (archResp.ok) {
+          const { archetypes } = await archResp.json();
+          const entries = (archetypes || []).map(a => ({
+            id: a.key,
+            title: `${a.name}`,
+            icon: '🌀',
+            tags: ['archetype'],
+            summary: `${a.fixedSpecialized?.join(', ') || ''}`,
+            content: formatArchetype(a)
+          }));
+          data.categories.push({ id: 'archetypes', name: 'System Archetypes', icon: '🌀', entries });
+        }
+      } catch (e) { /* ignore live fetch issues */ }
+
       encyclopediaCache = data;
       return data;
     } catch (e) {
       console.error('Encyclopedia load error:', e);
       return { version: '0', categories: [], defaultEntry: null };
     }
+  }
+
+  function formatArchetype(a){
+    const core = a.coreBias || {};
+    const coreLines = Object.entries(core).map(([k,v])=>`- ${k}: x${Number(v).toFixed(2)}`).join('\n');
+    const fixed = (a.fixedSpecialized||[]).join(', ');
+    return `**${a.name}**\n\n${a.description || ''}\n\n**Core Mineral Bias**\n${coreLines}\n\n**Themed Minerals**\n- ${fixed}`;
   }
 
   function renderModalSkeleton() {
