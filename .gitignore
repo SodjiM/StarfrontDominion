@@ -1,3 +1,17 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# SQLite database files
+database.sqlite
+database.sqlite-journal
+database.sqlite-wal
+database.sqlite-shm
+
+# OS
+.DS_Store
+Thumbs.db
+
 # Dependencies
 node_modules/
 npm-debug.log*

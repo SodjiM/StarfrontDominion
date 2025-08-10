@@ -76,11 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_sector_objects_spatial ON sector_objects(sector_i
 -- Index for sector objects by owner (used when finding player units)
 CREATE INDEX IF NOT EXISTS idx_sector_objects_owner ON sector_objects(sector_id, owner_id);
 
--- Index for player visibility lookups (used when getting game state)
-CREATE INDEX IF NOT EXISTS idx_player_visibility_lookup ON player_visibility(game_id, user_id, sector_id);
-
--- Index for player visibility spatial queries
-CREATE INDEX IF NOT EXISTS idx_player_visibility_spatial ON player_visibility(game_id, user_id, sector_id, x, y);
+-- Removed legacy player_visibility indexes. Visibility is handled via object_visibility and stateless computation.
 
 -- Index for movement orders by object and status
 CREATE INDEX IF NOT EXISTS idx_movement_orders_active ON movement_orders(object_id, status);

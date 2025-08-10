@@ -1007,10 +1007,12 @@ function calculateETA(destX, destY, shipId) {
 // Make io available to routes
 app.set('io', io);
 
-// Start server
-server.listen(PORT, () => {
-    console.log(`🌌 Starfront: Dominion server running on http://localhost:${PORT}`);
-    console.log(`🎮 Game client available at http://localhost:${PORT}/`);
-    console.log(`📊 Health check at http://localhost:${PORT}/health`);
-    console.log(`🔌 Socket.IO enabled for real-time gameplay`);
-}); 
+// Start server after DB is initialized
+db.ready.then(() => {
+    server.listen(PORT, () => {
+        console.log(`🌌 Starfront: Dominion server running on http://localhost:${PORT}`);
+        console.log(`🎮 Game client available at http://localhost:${PORT}/`);
+        console.log(`📊 Health check at http://localhost:${PORT}/health`);
+        console.log(`🔌 Socket.IO enabled for real-time gameplay`);
+    });
+});

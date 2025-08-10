@@ -5,6 +5,9 @@ const path = require('path');
 const db = new sqlite3.Database('./database.sqlite');
 
 // Initialize tables sequentially to avoid issues
+let dbReadyResolve;
+const dbReady = new Promise((resolve) => { dbReadyResolve = resolve; });
+
 const initializeDatabase = async () => {
     try {
         // Apply core PRAGMAs for performance and durability
@@ -309,12 +312,16 @@ const initializeDatabase = async () => {
         });
         
         console.log('🎮 Database initialization and migrations complete!');
+        dbReadyResolve();
         
     } catch (error) {
         console.error('❌ Database initialization failed:', error);
+        dbReadyResolve(); // Resolve anyway to avoid hanging; server should still handle errors gracefully
     }
 };
 
 initializeDatabase();
+
+db.ready = dbReady;
 
 module.exports = db; 

@@ -218,7 +218,7 @@ class GameWorldManager {
                                 
                                 console.log(`🚢 Created ship for ${player.username} at (${spawnX + 1}, ${spawnY})`);
                                 
-                                // Initialize visibility around starting position
+                                // Initialize visibility memory around starting position via object-based system
                                 GameWorldManager.initializeVisibility(gameId, player.user_id, sectorId, spawnX, spawnY, onComplete, onError);
                             }
                         );
@@ -228,46 +228,14 @@ class GameWorldManager {
         );
     }
     
-    // Initialize visibility around starting position
+    // Initialize visibility memory around starting position via object-based system
     static initializeVisibility(gameId, userId, sectorId, centerX, centerY, onComplete, onError) {
-        const visibilityRange = 10;
-        let insertCount = 0;
-        let totalInserts = 0;
-        
-        // Count total inserts needed
-        for (let dx = -visibilityRange; dx <= visibilityRange; dx++) {
-            for (let dy = -visibilityRange; dy <= visibilityRange; dy++) {
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                if (distance <= visibilityRange) {
-                    totalInserts++;
-                }
-            }
-        }
-        
-        // Insert visibility data
-        for (let dx = -visibilityRange; dx <= visibilityRange; dx++) {
-            for (let dy = -visibilityRange; dy <= visibilityRange; dy++) {
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                if (distance <= visibilityRange) {
-                    db.run(
-                        'INSERT OR IGNORE INTO player_visibility (game_id, user_id, sector_id, x, y, last_seen_turn, visibility_level) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        [gameId, userId, sectorId, centerX + dx, centerY + dy, 1, 1],
-                        (err) => {
-                            if (err) {
-                                console.error('Error creating visibility:', err);
-                                return onError(err);
-                            }
-                            
-                            insertCount++;
-                            if (insertCount === totalInserts) {
-                                console.log(`👁️ Initialized visibility for player ${userId}`);
-                                onComplete();
-                            }
-                        }
-                    );
-                }
-            }
-        }
+        db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (e, row) => {
+            const turnNumber = row?.turn_number || 1;
+            GameWorldManager.calculatePlayerVision(gameId, userId, turnNumber)
+                .then(() => onComplete())
+                .catch(onError);
+        });
     }
     
     // Initialize turn system
@@ -1219,45 +1187,68 @@ router.get('/:gameId/movement-history/:userId', async (req, res) => {
             );
         });
         
-        // Build query for movement history
+        // Build movement history query without legacy tile visibility
         let historyQuery = `
-            SELECT mh.*, so.owner_id, so.meta, so.type,
-                   pv.visibility_level, pv.last_seen_turn
+            SELECT mh.*, so.owner_id, so.meta, so.type
             FROM movement_history mh
             JOIN sector_objects so ON mh.object_id = so.id
             JOIN sectors s ON so.sector_id = s.id
-            LEFT JOIN player_visibility pv ON (
-                pv.game_id = ? AND pv.user_id = ? AND pv.sector_id = so.sector_id 
-                AND ((pv.x = mh.from_x AND pv.y = mh.from_y) OR (pv.x = mh.to_x AND pv.y = mh.to_y))
-            )
             WHERE mh.game_id = ? 
             AND mh.turn_number > ?
         `;
         
-        let queryParams = [gameId, userId, gameId, currentTurn - turns];
-        
+        let queryParams = [gameId, currentTurn - turns];
+
         // Filter by specific ship if requested  
         if (shipId) {
             historyQuery += ' AND mh.object_id = ?';
             queryParams.push(shipId);
         }
         
-        // Only show movements for owned ships or visible enemy movements
+        // Only show movements for owned ships or visible enemy movements.
+        // Visibility will be checked after fetching using stateless computeCurrentVisibility.
         historyQuery += ` 
-            AND (so.owner_id = ? OR pv.visibility_level > 0)
             ORDER BY mh.turn_number DESC, mh.created_at DESC
         `;
-        queryParams.push(userId);
         
-        const movementHistory = await new Promise((resolve, reject) => {
+        const rawHistory = await new Promise((resolve, reject) => {
             db.all(historyQuery, queryParams, (err, results) => {
                 if (err) reject(err);
                 else resolve(results || []);
             });
         });
         
-        // Process results to group by ship and add metadata
-        const processedHistory = movementHistory.map(movement => {
+        // Compute stateless visibility for the sector of interest per item (batch by sector)
+        // Fetch sectors for the involved movements
+        const objectIds = [...new Set(rawHistory.map(r => r.object_id))];
+        const objectIdToSector = new Map();
+        if (objectIds.length > 0) {
+            await new Promise((resolve) => {
+                const placeholders = objectIds.map(() => '?').join(',');
+                db.all(`SELECT id, sector_id, owner_id, meta, type FROM sector_objects WHERE id IN (${placeholders})`, objectIds, (e2, rows) => {
+                    (rows || []).forEach(r => objectIdToSector.set(r.id, r.sector_id));
+                    resolve();
+                });
+            });
+        }
+        const sectorIds = [...new Set(rawHistory.map(r => objectIdToSector.get(r.object_id)).filter(Boolean))];
+        const sectorIdToVisibleMap = new Map();
+        for (const sid of sectorIds) {
+            const vmap = await GameWorldManager.computeCurrentVisibility(gameId, parseInt(userId), sid).catch(() => new Map());
+            sectorIdToVisibleMap.set(sid, vmap);
+        }
+        
+        // Process results and filter by ownership or visibility
+        const processedHistory = rawHistory
+            .filter(movement => {
+                const isOwned = movement.owner_id === parseInt(userId);
+                if (isOwned) return true;
+                const sectorId = objectIdToSector.get(movement.object_id);
+                const vmap = sectorIdToVisibleMap.get(sectorId) || new Map();
+                // Consider a movement visible if either end tile currently reveals the object
+                return vmap.has(movement.object_id);
+            })
+            .map(movement => {
             const meta = JSON.parse(movement.meta || '{}');
             return {
                 shipId: movement.object_id,
@@ -1269,7 +1260,7 @@ router.get('/:gameId/movement-history/:userId', async (req, res) => {
                 },
                 movementSpeed: movement.movement_speed,
                 isOwned: movement.owner_id === parseInt(userId),
-                isVisible: movement.visibility_level > 0 || movement.owner_id === parseInt(userId),
+                isVisible: true,
                 timestamp: movement.created_at
             };
         });
