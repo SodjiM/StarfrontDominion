@@ -180,8 +180,15 @@
     ensureDefaults(data);
 
     const modal = UI.showModal(renderModalSkeleton());
+    // Widen/tall modal container specifically for encyclopedia
+    const modalContainer = modal.querySelector('.game-modal-container');
+    if (modalContainer) modalContainer.classList.add('encyclopedia-wide');
     const container = modal.querySelector('.game-modal-content');
+    // Disable parent scroll so child panes can scroll independently
+    if (container) container.classList.add('no-scroll');
     const wrapper = container.firstChild; // our skeleton
+    // Make wrapper stretch to container so child panes can use full height
+    if (wrapper && wrapper.style) wrapper.style.height = '100%';
 
     // Render tabs, list, content
     renderTabs(wrapper, data);

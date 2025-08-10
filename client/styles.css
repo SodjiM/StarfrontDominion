@@ -40,20 +40,16 @@ body {
 
 /* Encyclopedia modal */
 .encyclopedia-modal {
-  width: min(1000px, 92vw);
-  max-height: 85vh;
+  width: min(1200px, 96vw);
+  max-height: 88vh;
 }
 .encyclopedia-body {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 320px 1fr;
   gap: 12px;
-  min-height: 520px;
+  min-height: 640px;
 }
-.encyclopedia-sidebar {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
-  gap: 10px;
-}
+.encyclopedia-sidebar { display: grid; grid-template-rows: auto auto 1fr; gap: 10px; overflow: hidden; min-height: 0; }
 .encyclopedia-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -74,20 +70,22 @@ body {
 .encyclopedia-search {
   width: 100%;
 }
-.encyclopedia-list {
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
+.encyclopedia-list { overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; min-height: 0; }
 .encyclopedia-item { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); cursor: pointer; }
 .encyclopedia-item:hover { background: rgba(255,255,255,0.06); }
 .encyclopedia-item.active { background: rgba(100,181,246,0.12); }
-.encyclopedia-content { border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow: auto; }
+.encyclopedia-content { border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow-y: auto; overflow-x: hidden; min-height: 0; }
 .encyclopedia-content h3 { margin: 0 0 8px 0; color: var(--primary); }
 .encyclopedia-content .meta { color: var(--muted); margin-bottom: 10px; }
 
 @media (max-width: 768px) {
   .encyclopedia-body { grid-template-columns: 1fr; }
+}
+
+/* Wider modal frame for encyclopedia (affects the outer container) */
+.game-modal-container.encyclopedia-wide {
+  width: min(1280px, 96vw);
+  max-height: 90vh;
 }
 
 /* Card/panel */
@@ -219,6 +217,16 @@ body {
   padding: 12px 16px;
   border-top: 1px solid var(--border);
 }
+
+/* Allow encyclopedia to manage its own scroll areas */
+.game-modal-content.no-scroll { overflow: hidden; }
+
+/* Ensure inner encyclopedia panes can size to full height within modal content */
+.game-modal-content.no-scroll { height: 100%; }
+.encyclopedia-modal { height: 100%; }
+.encyclopedia-body { height: 100%; }
+.encyclopedia-sidebar { height: 100%; }
+.encyclopedia-content { height: 100%; }
 
 /* Chat */
 #chatMessages { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
