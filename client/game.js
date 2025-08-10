@@ -699,11 +699,20 @@ class GameClient {
         const unit = this.selectedUnit;
         const meta = unit.meta;
 
+        const detailStatuses = this.getUnitStatuses(meta, unit);
+
         detailsContainer.innerHTML = `
             <div class="unit-info">
                 <h3 style="color: #64b5f6; margin-bottom: 15px;">
                     ${this.getUnitIcon(unit.type)} ${meta.name || unit.type}
                 </h3>
+
+                <div class="stat-item">
+                    <span>Status:</span>
+                    <span>
+                        ${detailStatuses.map(s => `<span class=\"chip ${this.getStatusClass(s)}\">${this.getStatusLabel(s)}</span>`).join(' ')}
+                    </span>
+                </div>
                 
                 <div class="stat-item">
                     <span>Position:</span>
@@ -2421,7 +2430,7 @@ class GameClient {
                             </div>
                             <div class="unit-meta">
                                 <span class="chip">${sectorName}</span>
-                                <span class="chip ${status==='moving'?'status-moving':status==='mining'?'status-mining':(status==='docked'?'status-docked':'status-idle')}">${status==='moving'?'➜ Moving':status==='mining'?'⛏️ Mining':status==='docked'?'⚓ Docked':'Idle'}</span>
+                                <span class="chip ${this.getStatusClass(status)}">${this.getStatusLabel(status)}</span>
                                 ${unit.type==='ship' && cargoFill!=null ? `<span class="chip">📦 ${cargoFill}</span>` : ''}
                                 ${eta ? `<span class="chip">⏱️ ETA ${eta}</span>` : ''}
                                 <span class="favorite ${this.isFavoriteUnit(unit.id)?'active':''}" onclick="event.stopPropagation();gameClient.toggleFavoriteUnit(${unit.id});">⭐</span>
@@ -2537,11 +2546,97 @@ class GameClient {
 
     // Helpers for left panel chips
     getUnitStatus(meta, unit) {
-        // Derive status from known fields
-        if (unit.harvestingStatus === 'active' || meta.mining === true) return 'mining';
-        if (unit.movement_path || meta.moving === true) return 'moving';
-        if (meta.docked) return 'docked';
-        return 'idle';
+        // Backwards-compatible single status: top priority from multi-status detector
+        const statuses = this.getUnitStatuses(meta, unit);
+        return statuses[0] || 'idle';
+    }
+
+    // New: return all active statuses in priority order
+    getUnitStatuses(meta, unit) {
+        try {
+            const active = new Set();
+
+            // Normalize meta for safety
+            const m = meta || {};
+
+            // Attacking: client-side intent or server flag
+            if (unit.pendingAttackTarget || m.attacking === true || unit.attackStatus === 'active') {
+                active.add('attacking');
+            }
+
+            // Low fuel: require explicit fields if present
+            if (m.fuel != null && m.maxFuel != null && m.maxFuel > 0) {
+                const fuelPct = m.fuel / m.maxFuel;
+                if (fuelPct <= 0.2) active.add('lowFuel');
+            }
+
+            // Constructing: stations or shipyards
+            if (m.constructing === true || m.building === true || m.buildProgress > 0 || unit.constructionStatus === 'active') {
+                active.add('constructing');
+            }
+
+            // Scanning: transient during active scan
+            if (m.scanningActive === true || unit.scanningStatus === 'active') {
+                active.add('scanning');
+            }
+
+            // Moving
+            if (unit.movementStatus === 'active' || unit.movementActive === true || unit.movement_path || m.moving === true) {
+                active.add('moving');
+            }
+
+            // Mining / harvesting
+            if (unit.harvestingStatus === 'active' || m.mining === true) {
+                active.add('mining');
+            }
+
+            // Docked
+            if (m.docked === true) {
+                active.add('docked');
+            }
+
+            // Stealth
+            if (m.stealthed === true || m.stealth === true || m.cloaked === true) {
+                active.add('stealthed');
+            }
+
+            // Priority order from highest to lowest
+            const priority = ['attacking','lowFuel','constructing','scanning','moving','mining','docked','stealthed'];
+
+            const ordered = priority.filter(k => active.has(k));
+            if (ordered.length === 0) return ['idle'];
+            return ordered;
+        } catch {
+            return ['idle'];
+        }
+    }
+
+    getStatusLabel(statusKey) {
+        switch (statusKey) {
+            case 'attacking': return '⚔️ Attacking';
+            case 'stealthed': return '🕶️ Stealthed';
+            case 'scanning': return '🔍 Scanning';
+            case 'lowFuel': return '⛽ Low Fuel';
+            case 'constructing': return '🛠️ Constructing';
+            case 'moving': return '➜ Moving';
+            case 'mining': return '⛏️ Mining';
+            case 'docked': return '⚓ Docked';
+            default: return 'Idle';
+        }
+    }
+
+    getStatusClass(statusKey) {
+        switch (statusKey) {
+            case 'attacking': return 'status-attacking';
+            case 'stealthed': return 'status-stealthed';
+            case 'scanning': return 'status-scanning';
+            case 'lowFuel': return 'status-lowFuel';
+            case 'constructing': return 'status-constructing';
+            case 'moving': return 'status-moving';
+            case 'mining': return 'status-mining';
+            case 'docked': return 'status-docked';
+            default: return 'status-idle';
+        }
     }
 
     getCargoFill(unit) {
@@ -2860,6 +2955,9 @@ class GameClient {
                 movementPath: movementPath,
                 estimatedTurns: eta
             });
+
+            // Immediately refresh fleet list so the status chip updates
+            this.updateMultiSectorFleet();
         } else {
             this.addLogEntry('Invalid movement destination', 'warning');
         }
@@ -3992,6 +4090,9 @@ async function scanArea() {
     
     try {
         gameClient.addLogEntry('Performing active scan...', 'info');
+        // Show scanning status immediately
+        unit.meta.scanningActive = true;
+        gameClient.updateUnitDetails();
         
         const response = await fetch(`/game/scan/${gameClient.gameId}`, {
             method: 'POST',
@@ -4015,6 +4116,11 @@ async function scanArea() {
                 unit.meta.energy = data.energyRemaining;
                 gameClient.updateUnitDetails(); // Refresh the unit details panel
             }
+            // Clear scanning indicator shortly after
+            setTimeout(() => {
+                unit.meta.scanningActive = false;
+                gameClient.updateUnitDetails();
+            }, 1200);
             
             // Refresh game state to show newly revealed objects
             await gameClient.loadGameState();
@@ -4022,12 +4128,16 @@ async function scanArea() {
         } else {
             gameClient.addLogEntry(`Scan failed: ${data.error}`, 'error');
             UI.showAlert(`Active scan failed: ${data.error}`);
+            unit.meta.scanningActive = false;
+            gameClient.updateUnitDetails();
         }
         
     } catch (error) {
         console.error('Active scan error:', error);
         gameClient.addLogEntry('Active scan connection failed', 'error');
         UI.showAlert('Connection failed. Please try again.');
+        unit.meta.scanningActive = false;
+        gameClient.updateUnitDetails();
     }
 }
 
