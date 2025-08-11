@@ -830,7 +830,7 @@ async function processMovementOrders(gameId, turnNumber) {
 
 // Process a single ship's movement or warp with collision detection
 async function processSingleMovement(order, turnNumber, gameId) {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         // Handle warp orders separately
         if (order.status === 'warp_preparing') {
             return processWarpOrder(order, turnNumber, gameId, resolve, reject);
