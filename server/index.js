@@ -33,6 +33,44 @@ app.use(express.static(path.join(__dirname, '../client')));
 app.use('/auth', authRoutes);
 app.use('/lobby', lobbyRoutes);
 app.use('/game', gameRoutes);
+// Sector trails: always-visible movement history (last N turns)
+app.get('/game/sector/:sectorId/trails', async (req, res) => {
+    const { sectorId } = req.params;
+    const { sinceTurn, maxAge = 10 } = req.query;
+    try {
+        // Determine game_id from sector
+        const sector = await new Promise((resolve) => db.get('SELECT game_id FROM sectors WHERE id = ?', [sectorId], (e, r) => resolve(r)));
+        if (!sector) return res.status(404).json({ error: 'sector_not_found' });
+        const currentTurn = await new Promise((resolve) => db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [sector.game_id], (e, r) => resolve(r?.turn_number || 1)));
+        const since = Number(sinceTurn || currentTurn);
+        const minTurn = Math.max(1, since - (Number(maxAge) - 1));
+        // Fetch movement history for objects in this sector within window
+        const rows = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT mh.object_id as shipId, so.owner_id as ownerId, mh.turn_number as turn,
+                        mh.from_x as fromX, mh.from_y as fromY, mh.to_x as toX, mh.to_y as toY
+                 FROM movement_history mh
+                 JOIN sector_objects so ON so.id = mh.object_id
+                 WHERE so.sector_id = ? AND mh.game_id = ? AND mh.turn_number BETWEEN ? AND ?
+                 ORDER BY mh.turn_number ASC, mh.id ASC`,
+                [sectorId, sector.game_id, minTurn, since],
+                (err, r) => err ? reject(err) : resolve(r || [])
+            );
+        });
+        const segments = rows.map(r => ({
+            shipId: r.shipId,
+            ownerId: r.ownerId,
+            turn: r.turn,
+            type: 'move',
+            from: { x: r.fromX, y: r.fromY },
+            to: { x: r.toX, y: r.toY }
+        }));
+        res.json({ turn: since, maxAge: Number(maxAge), segments });
+    } catch (e) {
+        console.error('trails endpoint error:', e);
+        res.status(500).json({ error: 'server_error' });
+    }
+});
     // Combat logs read API (simple fetch)
     app.get('/combat/logs/:gameId/:turnNumber', (req, res) => {
         const { gameId, turnNumber } = req.params;
@@ -953,6 +991,30 @@ function processWarpOrder(order, turnNumber, gameId, resolve, reject) {
                     
                     console.log(`✨ Ship ${order.object_id} warped to (${order.warp_destination_x}, ${order.warp_destination_y})`);
                     
+                    // Record warp as a movement_history segment for trails
+                    db.run(
+                        `INSERT INTO movement_history 
+                         (object_id, game_id, turn_number, from_x, from_y, to_x, to_y, movement_speed) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            order.object_id,
+                            gameId,
+                            turnNumber,
+                            order.current_x || order.warp_destination_x, // best-effort from state; may be null
+                            order.current_y || order.warp_destination_y,
+                            order.warp_destination_x,
+                            order.warp_destination_y,
+                            0
+                        ],
+                        (historyErr) => {
+                            if (historyErr) {
+                                console.error(`❌ Failed to record warp history for ship ${order.object_id}:`, historyErr);
+                            } else {
+                                console.log(`📜 Recorded warp history: Ship ${order.object_id} to (${order.warp_destination_x},${order.warp_destination_y}) on turn ${turnNumber}`);
+                            }
+                        }
+                    );
+
                     // Delete the warp order (completed)
                     db.run(
                         'DELETE FROM movement_orders WHERE id = ?',

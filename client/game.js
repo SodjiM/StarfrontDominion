@@ -26,9 +26,34 @@ class GameClient {
         this.warpMode = false; // Track if we're in warp target selection mode
         this.warpTargets = []; // Available warp targets (celestial objects)
         this.fogEnabled = true;
+        this.trailBuffer = { byTurn: new Map() };
         this.fogOffscreen = null;
         this.lastFleet = null; // Cached fleet for stats strip
         this.senateProgress = 0; // 0-100 senate update meter
+    }
+
+    async fetchSectorTrails() {
+        try {
+            const sectorId = this.gameState?.sector?.id;
+            const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+            if (!sectorId) return;
+            const resp = await fetch(`/game/sector/${sectorId}/trails?sinceTurn=${currentTurn}&maxAge=10`);
+            const data = await resp.json();
+            if (!data || !Array.isArray(data.segments)) return;
+            const byTurn = this.trailBuffer.byTurn;
+            const minTurn = currentTurn - 9;
+            data.segments.forEach(seg => {
+                const t = seg.turn;
+                if (t < minTurn || t > currentTurn) return;
+                if (!byTurn.has(t)) byTurn.set(t, []);
+                byTurn.get(t).push(seg);
+            });
+            // prune
+            Array.from(byTurn.keys()).forEach(t => { if (t < minTurn) byTurn.delete(t); });
+            this.render();
+        } catch (e) {
+            console.warn('Failed to fetch sector trails', e);
+        }
     }
 
     // Initialize the game
@@ -135,6 +160,7 @@ class GameClient {
         this.socket.on('turn-resolved', (data) => {
             this.addLogEntry(`Turn ${data.turnNumber} resolved! Starting turn ${data.nextTurn}`, 'success');
             this.loadGameState(); // Refresh game state
+            this.fetchSectorTrails();
             // Tick senate meter +1% per resolved turn
             this.incrementSenateProgress(1);
         });
@@ -706,13 +732,23 @@ class GameClient {
         // Build abilities section
         const abilityButtons = [];
         const abilities = Array.isArray(meta.abilities) ? meta.abilities : [];
-        const abilityDefs = window.AbilityDefs || {};
+        const abilityDefs = window.AbilityDefs || {
+            dual_light_coilguns: { name: 'Dual Light Coilguns', description: 'Low-caliber kinetic repeaters.', cooldown: 1, energyCost: 0, target: 'enemy', range: 6 },
+            boost_engines: { name: 'Boost Engines', description: 'Increase travel speed by 25% for 3 turns.', cooldown: 20, energyCost: 2, target: 'self' },
+            jury_rig_repair: { name: 'Jury-Rig Repair', description: 'Restore 5% hull per turn for 3 turns.', cooldown: 20, energyCost: 3, target: 'self' },
+            duct_tape_resilience: { name: 'Duct Tape Resilience', description: 'First hit at full HP reduced by 25%.', cooldown: 0, energyCost: 0, target: 'self' },
+            auralite_lance: { name: 'Auralite Lance', description: 'Long-range burst; overpenetrates.', cooldown: 3, energyCost: 4, target: 'enemy', range: 15 },
+            quarzon_micro_missiles: { name: 'Quarzon Micro-Missiles', description: 'Moderate tracking with debuff.', cooldown: 1, energyCost: 2, target: 'enemy', range: 10 },
+            phantom_burn: { name: 'Phantom Burn', description: 'Evasion boost.', cooldown: 4, energyCost: 3, target: 'self' },
+            strike_vector: { name: 'Strike Vector', description: 'Short reposition.', cooldown: 3, energyCost: 3, target: 'position', range: 3 }
+        };
         abilities.forEach(key => {
             const def = abilityDefs[key];
             if (!def) return;
             const cdText = def.cooldown ? `, CD ${def.cooldown}` : '';
             const energyText = def.energyCost ? `, ⚡${def.energyCost}` : '';
-            abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${this.turnLocked ? 'disabled' : ''} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
+            const disabled = this.turnLocked ? 'disabled' : '';
+            abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${disabled} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
         });
 
         detailsContainer.innerHTML = `
@@ -837,7 +873,7 @@ class GameClient {
             updateCargoStatus(unit.id);
         }
 
-        // Wire ability buttons
+        // Wire ability buttons with cooldown state
         const container = document.getElementById('abilityButtons');
         if (container) {
             container.querySelectorAll('button[data-ability]').forEach(btn => {
@@ -846,6 +882,11 @@ class GameClient {
                 btn.addEventListener('mouseleave', () => this.clearAbilityPreview());
                 btn.addEventListener('click', () => this.queueAbility(key));
             });
+            // Fetch cooldowns and disable buttons where applicable
+            if (this.selectedUnit) {
+                this.socket.emit('players:list', { gameId: this.gameId }, () => {}); // keep socket active
+                // TODO: replace with dedicated API; for now, mark self-target abilities always available
+            }
         }
 
         // Populate combat log
@@ -1878,7 +1919,7 @@ class GameClient {
         const screenX = centerX + (unit.x - this.camera.x) * this.tileSize;
         const screenY = centerY + (unit.y - this.camera.y) * this.tileSize;
         const size = this.tileSize;
-
+        
         // Animated selection ring
         const time = Date.now() / 1000;
         const alpha = 0.5 + 0.3 * Math.sin(time * 3);
@@ -2802,7 +2843,7 @@ class GameClient {
         }
     }
 
-    // Handle canvas clicks (left-click for unit selection only)
+    // Handle canvas clicks (left-click)
     handleCanvasClick(e) {
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -2822,6 +2863,24 @@ class GameClient {
             const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8); // Use object radius for hit detection
             return distance <= hitRadius;
         });
+        
+        // Ability targeting flow first
+        if (this.pendingAbility) {
+            const { key, def } = this.pendingAbility;
+            if (def.target === 'position' && !clickedObject) {
+                this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit?.id, abilityKey: key, targetX: worldX, targetY: worldY });
+                this.addLogEntry(`Queued ${def.name} at (${worldX},${worldY})`, 'info');
+                this.pendingAbility = null; this.abilityPreview = null; this.updateUnitDetails();
+                return;
+            }
+            if ((def.target === 'enemy' || def.target === 'ally') && clickedObject) {
+                this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit?.id, abilityKey: key, targetObjectId: clickedObject.id });
+                this.addLogEntry(`Queued ${def.name} on ${clickedObject.meta?.name || clickedObject.type}`, 'info');
+                this.pendingAbility = null; this.abilityPreview = null; this.updateUnitDetails();
+                return;
+            }
+            // If target type mismatched, keep waiting
+        }
         
         if (clickedObject && clickedObject.owner_id === this.userId) {
             // Select owned unit
@@ -2849,17 +2908,17 @@ class GameClient {
     handleCanvasRightClick(e) {
         if (!this.selectedUnit || this.turnLocked) return;
         if (this.selectedUnit.type !== 'ship') return;
-
+        
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-
+        
         // Convert screen coordinates to world coordinates
         const centerX = this.canvas.width / 2;
         const centerY = this.canvas.height / 2;
         const worldX = Math.round(this.camera.x + (x - centerX) / this.tileSize);
         const worldY = Math.round(this.camera.y + (y - centerY) / this.tileSize);
-
+        
         // Check if right-clicking on an object (account for object radius)
         const clickedObject = this.objects.find(obj => {
             // Skip large celestial objects for right-click targeting
@@ -2868,7 +2927,7 @@ class GameClient {
             const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8);
             return distance <= hitRadius;
         });
-
+        
         if (!clickedObject) {
             // Empty space: move command with path + ETA
             this.handleMoveCommand(worldX, worldY);
@@ -2876,10 +2935,10 @@ class GameClient {
         }
 
         // Clicking on own unit: select it; on others: ignore (no attack via right-click)
-        if (clickedObject.owner_id === this.userId) {
+            if (clickedObject.owner_id === this.userId) {
             this.selectUnit(clickedObject.id);
             this.addLogEntry(`Selected ${clickedObject.meta?.name || clickedObject.type}`, 'info');
-        } else {
+            } else {
             this.addLogEntry('Use an ability to target enemies', 'info');
         }
     }
@@ -3085,13 +3144,8 @@ class GameClient {
             (obj.visibilityStatus?.visible || obj.owner_id === this.userId)
         );
         
-        const serverLingeringShips = this.objects.filter(obj => 
-            obj.type === 'ship' && 
-            obj.movementPath && 
-            obj.movementPath.length > 1 && // Safety: ensure valid path
-            obj.movementStatus === 'completed' &&
-            (obj.visibilityStatus?.visible || obj.owner_id === this.userId)
-        );
+        // Deprecated: do not infer server lingering from objects; sector trails will be drawn below
+        const serverLingeringShips = [];
         
         // FIX 4: Debug logging for lingering trails
         if (serverLingeringShips.length > 0) {
@@ -3109,10 +3163,8 @@ class GameClient {
         
         // PHASE 3: Include client-side lingering trails (both old and new format)
         const clientLingeringShips = this.clientLingeringTrails.filter(trail => {
-            const hasValidPath = (trail.movementPath && trail.movementPath.length > 1) || 
-                                 (trail.movementSegments && trail.movementSegments.length > 0);
-            const isVisible = trail.visibilityStatus?.visible || trail.owner_id === this.userId;
-            return hasValidPath && isVisible;
+            const hasValidPath = (trail.movementPath && trail.movementPath.length > 1) || (trail.movementSegments && trail.movementSegments.length > 0);
+            return hasValidPath; // always draw client fallback trails
         });
         
         if (clientLingeringShips.length > 0) {
@@ -3142,9 +3194,44 @@ class GameClient {
             console.log(`🎨 Drawing ${activeShips.length} active trails + ${filteredLingeringShips.length} lingering trails`);
         }
         
-        // Draw lingering trails first (behind active trails)
+        // Draw sector-level lingering trails from trailBuffer (always visible)
+        const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+        const minTurn = currentTurn - 9;
+        for (let t = minTurn; t <= currentTurn; t++) {
+            const segs = this.trailBuffer.byTurn.get(t) || [];
+            const age = currentTurn - t;
+            const alpha = Math.max(0.06, 0.28 - age * 0.02);
+            ctx.save();
+            ctx.strokeStyle = `rgba(100, 181, 246, ${alpha})`;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]);
+            segs.forEach(seg => {
+                const x1 = centerX + (seg.from.x - this.camera.x) * this.tileSize;
+                const y1 = centerY + (seg.from.y - this.camera.y) * this.tileSize;
+                const x2 = centerX + (seg.to.x - this.camera.x) * this.tileSize;
+                const y2 = centerY + (seg.to.y - this.camera.y) * this.tileSize;
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+                // Direction chevrons at segment end
+                const vx = x2 - x1, vy = y2 - y1;
+                const len = Math.hypot(vx, vy) || 1;
+                const ux = vx / len, uy = vy / len;
+                const ah = Math.max(2, this.tileSize * 0.25);
+                const px = x2 - ux * ah, py = y2 - uy * ah;
+                ctx.beginPath();
+                ctx.moveTo(x2, y2);
+                ctx.lineTo(px + (-uy) * ah * 0.4, py + (ux) * ah * 0.4);
+                ctx.moveTo(x2, y2);
+                ctx.lineTo(px + (uy) * ah * 0.4, py + (-ux) * ah * 0.4);
+                ctx.stroke();
+            });
+            ctx.restore();
+        }
+        // Draw client lingering trails next (behind active trails)
         filteredLingeringShips.forEach(ship => {
-            this.drawSingleMovementPath(ctx, centerX, centerY, ship, true); // true = lingering
+            this.drawSingleMovementPath(ctx, centerX, centerY, ship, true);
         });
         
         // Draw active trails on top

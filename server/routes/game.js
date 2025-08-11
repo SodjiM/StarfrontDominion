@@ -193,6 +193,7 @@ class GameWorldManager {
                             });
                         
                         // Create starting ship adjacent to starbase
+                        const { DEFAULT_ABILITIES } = require('../abilities');
                         const shipMetaObj = {
                             name: `${player.username} Explorer`,
                             hp: 50,
@@ -203,7 +204,12 @@ class GameWorldManager {
                             harvestRate: 1.0,
                             canMine: true,
                             canActiveScan: true,
-                            shipType: 'explorer'
+                            shipType: 'explorer',
+                            // Energy and abilities for explorer starter
+                            energy: 6,
+                            maxEnergy: 6,
+                            energyRegen: 3,
+                            abilities: DEFAULT_ABILITIES.explorer || ['dual_light_coilguns','boost_engines','jury_rig_repair','duct_tape_resilience']
                         };
                         const shipMeta = JSON.stringify(shipMetaObj);
                         
