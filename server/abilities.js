@@ -168,6 +168,18 @@ const Abilities = {
     duration: 3,
     healPercentPerTurn: 0.05
   },
+  survey_scanner: {
+    key: 'survey_scanner',
+    name: 'Survey Scanner',
+    description: 'Double scan range for 3 turns.',
+    type: 'active',
+    target: 'self',
+    cooldown: 6,
+    energyCost: 2,
+    effectKey: 'survey_scanner',
+    duration: 3,
+    scanRangeMultiplier: 2
+  },
   duct_tape_resilience: {
     key: 'duct_tape_resilience',
     name: 'Duct Tape Resilience',
@@ -181,7 +193,7 @@ const DEFAULT_ABILITIES = {
   frigate: ['target_painter'],
   battleship: ['barrage', 'tractor_field'],
   capital: ['aegis_pulse', 'tractor_field'],
-  explorer: ['dual_light_coilguns','boost_engines','jury_rig_repair']
+  explorer: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience']
 };
 
 // Blueprint-specific overrides (example)

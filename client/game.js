@@ -736,6 +736,7 @@ class GameClient {
             dual_light_coilguns: { name: 'Dual Light Coilguns', description: 'Low-caliber kinetic repeaters.', cooldown: 1, energyCost: 0, target: 'enemy', range: 6 },
             boost_engines: { name: 'Boost Engines', description: 'Increase travel speed by 25% for 3 turns.', cooldown: 20, energyCost: 2, target: 'self' },
             jury_rig_repair: { name: 'Jury-Rig Repair', description: 'Restore 5% hull per turn for 3 turns.', cooldown: 20, energyCost: 3, target: 'self' },
+            survey_scanner: { name: 'Survey Scanner', description: 'Double scan range for 3 turns.', cooldown: 6, energyCost: 2, target: 'self' },
             duct_tape_resilience: { name: 'Duct Tape Resilience', description: 'First hit at full HP reduced by 25%.', cooldown: 0, energyCost: 0, target: 'self' },
             auralite_lance: { name: 'Auralite Lance', description: 'Long-range burst; overpenetrates.', cooldown: 3, energyCost: 4, target: 'enemy', range: 15 },
             quarzon_micro_missiles: { name: 'Quarzon Micro-Missiles', description: 'Moderate tracking with debuff.', cooldown: 1, energyCost: 2, target: 'enemy', range: 10 },
@@ -884,8 +885,21 @@ class GameClient {
             });
             // Fetch cooldowns and disable buttons where applicable
             if (this.selectedUnit) {
-                this.socket.emit('players:list', { gameId: this.gameId }, () => {}); // keep socket active
-                // TODO: replace with dedicated API; for now, mark self-target abilities always available
+                fetch(`/game/ability-cooldowns/${this.selectedUnit.id}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const cooldowns = new Map((data.cooldowns || []).map(c => [c.ability_key, c.available_turn]));
+                        const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+                        container.querySelectorAll('button[data-ability]').forEach(btn => {
+                            const key = btn.getAttribute('data-ability');
+                            const available = cooldowns.get(key);
+                            if (available && Number(available) > Number(currentTurn)) {
+                                btn.disabled = true;
+                                btn.classList.add('sf-btn-disabled');
+                                btn.title = (btn.title || '') + ` (Cooldown: ready on turn ${available})`;
+                            }
+                        });
+                    }).catch(()=>{});
             }
         }
 

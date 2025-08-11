@@ -34,6 +34,19 @@ app.use('/auth', authRoutes);
 app.use('/lobby', lobbyRoutes);
 app.use('/game', gameRoutes);
 // Sector trails: always-visible movement history (last N turns)
+// Ability cooldowns endpoint
+app.get('/game/ability-cooldowns/:shipId', async (req, res) => {
+    const { shipId } = req.params;
+    try {
+        const rows = await new Promise((resolve, reject) => {
+            db.all('SELECT ability_key, available_turn FROM ability_cooldowns WHERE ship_id = ?', [shipId], (e, r) => e ? reject(e) : resolve(r || []));
+        });
+        res.json({ shipId: Number(shipId), cooldowns: rows });
+    } catch (e) {
+        console.error('ability-cooldowns error:', e);
+        res.status(500).json({ error: 'server_error' });
+    }
+});
 app.get('/game/sector/:sectorId/trails', async (req, res) => {
     const { sectorId } = req.params;
     const { sinceTurn, maxAge = 10 } = req.query;
@@ -1275,6 +1288,7 @@ async function processAbilityOrders(gameId, turnNumber) {
         if (ability.auraRange) effectData.auraRange = ability.auraRange;
         if (ability.movementBonus) effectData.movementBonus = ability.movementBonus;
         if (ability.healPercentPerTurn) effectData.healPercentPerTurn = ability.healPercentPerTurn;
+        if (ability.scanRangeMultiplier) effectData.scanRangeMultiplier = ability.scanRangeMultiplier;
 
         await new Promise((resolve) => db.run(
             `INSERT INTO ship_status_effects (ship_id, effect_key, magnitude, effect_data, source_object_id, applied_turn, expires_turn)
