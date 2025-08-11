@@ -163,6 +163,11 @@ class GameClient {
             this.fetchSectorTrails();
             // Tick senate meter +1% per resolved turn
             this.incrementSenateProgress(1);
+            setTimeout(() => this.refreshAbilityCooldowns(), 50);
+        });
+
+        this.socket.on('ability-queued', () => {
+            this.refreshAbilityCooldowns();
         });
 
         this.socket.on('warp-confirmed', (data) => {
@@ -731,25 +736,30 @@ class GameClient {
 
         // Build abilities section
         const abilityButtons = [];
+        const passiveChips = [];
         const abilities = Array.isArray(meta.abilities) ? meta.abilities : [];
         const abilityDefs = window.AbilityDefs || {
-            dual_light_coilguns: { name: 'Dual Light Coilguns', description: 'Low-caliber kinetic repeaters.', cooldown: 1, energyCost: 0, target: 'enemy', range: 6 },
-            boost_engines: { name: 'Boost Engines', description: 'Increase travel speed by 25% for 3 turns.', cooldown: 20, energyCost: 2, target: 'self' },
-            jury_rig_repair: { name: 'Jury-Rig Repair', description: 'Restore 5% hull per turn for 3 turns.', cooldown: 20, energyCost: 3, target: 'self' },
-            survey_scanner: { name: 'Survey Scanner', description: 'Double scan range for 3 turns.', cooldown: 6, energyCost: 2, target: 'self' },
-            duct_tape_resilience: { name: 'Duct Tape Resilience', description: 'First hit at full HP reduced by 25%.', cooldown: 0, energyCost: 0, target: 'self' },
-            auralite_lance: { name: 'Auralite Lance', description: 'Long-range burst; overpenetrates.', cooldown: 3, energyCost: 4, target: 'enemy', range: 15 },
-            quarzon_micro_missiles: { name: 'Quarzon Micro-Missiles', description: 'Moderate tracking with debuff.', cooldown: 1, energyCost: 2, target: 'enemy', range: 10 },
-            phantom_burn: { name: 'Phantom Burn', description: 'Evasion boost.', cooldown: 4, energyCost: 3, target: 'self' },
-            strike_vector: { name: 'Strike Vector', description: 'Short reposition.', cooldown: 3, energyCost: 3, target: 'position', range: 3 }
+            dual_light_coilguns: { name: 'Dual Light Coilguns', description: 'Low-caliber kinetic repeaters.', cooldown: 1, energyCost: 0, target: 'enemy', range: 6, type: 'offense' },
+            boost_engines: { name: 'Boost Engines', description: 'Increase travel speed by 25% for 3 turns.', cooldown: 20, energyCost: 2, target: 'self', type: 'active' },
+            jury_rig_repair: { name: 'Jury-Rig Repair', description: 'Restore 5% hull per turn for 3 turns.', cooldown: 20, energyCost: 3, target: 'self', type: 'active' },
+            survey_scanner: { name: 'Survey Scanner', description: 'Double scan range for 3 turns.', cooldown: 6, energyCost: 2, target: 'self', type: 'active' },
+            duct_tape_resilience: { name: 'Duct Tape Resilience', description: 'First hit at full HP reduced by 25%.', cooldown: 0, energyCost: 0, target: 'self', type: 'passive' },
+            auralite_lance: { name: 'Auralite Lance', description: 'Long-range burst; overpenetrates.', cooldown: 3, energyCost: 4, target: 'enemy', range: 15, type: 'offense' },
+            quarzon_micro_missiles: { name: 'Quarzon Micro-Missiles', description: 'Moderate tracking with debuff.', cooldown: 1, energyCost: 2, target: 'enemy', range: 10, type: 'offense' },
+            phantom_burn: { name: 'Phantom Burn', description: 'Evasion boost.', cooldown: 4, energyCost: 3, target: 'self', type: 'active' },
+            strike_vector: { name: 'Strike Vector', description: 'Short reposition.', cooldown: 3, energyCost: 3, target: 'position', range: 3, type: 'active' }
         };
         abilities.forEach(key => {
             const def = abilityDefs[key];
             if (!def) return;
             const cdText = def.cooldown ? `, CD ${def.cooldown}` : '';
             const energyText = def.energyCost ? `, ⚡${def.energyCost}` : '';
-            const disabled = this.turnLocked ? 'disabled' : '';
-            abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${disabled} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
+            if (def.type === 'passive') {
+                passiveChips.push(`<span class="chip" title="${def.description || ''}">${def.name}</span>`);
+            } else {
+                const disabled = this.turnLocked ? 'disabled' : '';
+                abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${disabled} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
+            }
         });
 
         detailsContainer.innerHTML = `
@@ -863,6 +873,7 @@ class GameClient {
                 ${unit.type === 'ship' ? `
                     <div class="panel-title" style="margin:16px 0 0 0;">🛠️ Abilities</div>
                     <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style=\"color:#888\">No abilities</span>'}</div>
+                    ${passiveChips.length ? `<div class="panel-title" style="margin:8px 0 0 0;">✨ Passive Traits</div><div style="display:flex; flex-wrap:wrap; gap:6px;">${passiveChips.join('')}</div>` : ''}
                     <div class="panel-title" style="margin:16px 0 0 0;">📝 Combat Log (Turn ${this.currentTurn || '?'})</div>
                     <div id="combatLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
                 ` : ''}
@@ -912,6 +923,30 @@ class GameClient {
     // Ability preview ring
     previewAbilityRange(abilityKey) { this.abilityPreview = abilityKey; this.render(); }
     clearAbilityPreview() { this.abilityPreview = null; this.render(); }
+
+    // Refresh ability cooldowns on-demand
+    async refreshAbilityCooldowns() {
+        const container = document.getElementById('abilityButtons');
+        if (!container || !this.selectedUnit) return;
+        try {
+            const res = await fetch(`/game/ability-cooldowns/${this.selectedUnit.id}`);
+            const data = await res.json();
+            const cooldowns = new Map((data.cooldowns || []).map(c => [c.ability_key, c.available_turn]));
+            const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+            container.querySelectorAll('button[data-ability]').forEach(btn => {
+                const key = btn.getAttribute('data-ability');
+                const available = cooldowns.get(key);
+                if (available && Number(available) > Number(currentTurn)) {
+                    btn.disabled = true;
+                    btn.classList.add('sf-btn-disabled');
+                    btn.title = (btn.title || '') + ` (Cooldown: ready on turn ${available})`;
+                } else if (!this.turnLocked) {
+                    btn.disabled = false;
+                    btn.classList.remove('sf-btn-disabled');
+                }
+            });
+        } catch {}
+    }
 
     // Render the game map
     render() {
@@ -2888,6 +2923,16 @@ class GameClient {
                 return;
             }
             if ((def.target === 'enemy' || def.target === 'ally') && clickedObject) {
+                // Pre-check range if defined
+                if (def.range && this.selectedUnit) {
+                    const dx = clickedObject.x - this.selectedUnit.x;
+                    const dy = clickedObject.y - this.selectedUnit.y;
+                    const d = Math.hypot(dx, dy);
+                    if (d > def.range) {
+                        this.addLogEntry(`Target out of range for ${def.name}`, 'warning');
+                        return;
+                    }
+                }
                 this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit?.id, abilityKey: key, targetObjectId: clickedObject.id });
                 this.addLogEntry(`Queued ${def.name} on ${clickedObject.meta?.name || clickedObject.type}`, 'info');
                 this.pendingAbility = null; this.abilityPreview = null; this.updateUnitDetails();
