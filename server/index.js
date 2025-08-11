@@ -838,8 +838,15 @@ async function processSingleMovement(order, turnNumber, gameId) {
         
         const movementPath = JSON.parse(order.movement_path || '[]');
         const currentStep = order.current_step || 0;
-        const movementSpeed = order.movement_speed || 1;
+        const baseSpeed = order.movement_speed || 1;
         const meta = JSON.parse(order.meta || '{}');
+        // Apply engine boost effect if present
+        const effects = await new Promise((resolve) => db.all('SELECT * FROM ship_status_effects WHERE ship_id = ? AND (expires_turn IS NULL OR expires_turn >= ?)', [order.object_id, turnNumber], (e, rows) => resolve(rows || [])));
+        let speedMultiplier = 1;
+        for (const eff of effects) {
+            try { const data = eff.effect_data ? JSON.parse(eff.effect_data) : {}; if (data.movementBonus) speedMultiplier += data.movementBonus; } catch {}
+        }
+        const movementSpeed = Math.max(1, Math.floor(baseSpeed * speedMultiplier));
         
         // Calculate how many steps to take this turn
         const stepsToTake = Math.min(movementSpeed, movementPath.length - 1 - currentStep);
@@ -1104,6 +1111,7 @@ async function updateAllPlayersVisibility(gameId, turnNumber) {
                 );
                 
                 try {
+                    // Apply survey scanner effect: double scan range while active
                     await Promise.all(visibilityPromises);
                     const endTime = Date.now();
                     console.log(`👁️ Completed visibility updates for ${players.length} players in ${endTime - startTime}ms (optimized)`);
@@ -1277,42 +1285,66 @@ async function processAbilityOrders(gameId, turnNumber) {
             await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(metaObj), new Date().toISOString(), order.caster_id], () => resolve()));
         }
 
-        // Apply status effect records
-        let effectTargetId = order.target_object_id || order.caster_id;
-        let magnitude = ability.penaltyReduction || ability.selfPenaltyReduction || ability.damageReduction || ability.ignoreSizePenalty ? 1 : null;
-        const effectData = {};
-        if (ability.penaltyReduction) effectData.penaltyReduction = ability.penaltyReduction;
-        if (ability.selfPenaltyReduction) effectData.selfPenaltyReduction = ability.selfPenaltyReduction;
-        if (ability.ignoreSizePenalty) effectData.ignoreSizePenalty = true;
-        if (ability.damageReduction) effectData.damageReduction = ability.damageReduction;
-        if (ability.auraRange) effectData.auraRange = ability.auraRange;
-        if (ability.movementBonus) effectData.movementBonus = ability.movementBonus;
-        if (ability.healPercentPerTurn) effectData.healPercentPerTurn = ability.healPercentPerTurn;
-        if (ability.scanRangeMultiplier) effectData.scanRangeMultiplier = ability.scanRangeMultiplier;
+        if (ability.type === 'offense') {
+            // Enqueue combat order and set cooldown; skip status effects
+            await new Promise((resolve) => db.run('DELETE FROM combat_orders WHERE attacker_id = ? AND game_id = ? AND turn_number = ?', [order.caster_id, gameId, turnNumber], () => resolve()));
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO combat_orders (game_id, turn_number, attacker_id, target_id, weapon_key, desired_range, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [gameId, turnNumber, order.caster_id, order.target_object_id, order.ability_key, null, new Date().toISOString()],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+            const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+            await new Promise((resolve) => db.run(
+                `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+                 ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+                [order.caster_id, order.ability_key, availableTurn],
+                () => resolve()
+            ));
+            await new Promise((resolve) => db.run(
+                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+                 VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
+                [gameId, turnNumber, order.caster_id, order.target_object_id, `${order.ability_key} queued`, JSON.stringify({ weaponKey: order.ability_key })],
+                () => resolve()
+            ));
+        } else {
+            // Apply status effects (if defined) and set cooldown
+            let effectTargetId = order.target_object_id || order.caster_id;
+            let magnitude = ability.penaltyReduction || ability.selfPenaltyReduction || ability.damageReduction || ability.ignoreSizePenalty ? 1 : null;
+            const effectData = {};
+            if (ability.penaltyReduction) effectData.penaltyReduction = ability.penaltyReduction;
+            if (ability.selfPenaltyReduction) effectData.selfPenaltyReduction = ability.selfPenaltyReduction;
+            if (ability.ignoreSizePenalty) effectData.ignoreSizePenalty = true;
+            if (ability.damageReduction) effectData.damageReduction = ability.damageReduction;
+            if (ability.auraRange) effectData.auraRange = ability.auraRange;
+            if (ability.movementBonus) effectData.movementBonus = ability.movementBonus;
+            if (ability.healPercentPerTurn) effectData.healPercentPerTurn = ability.healPercentPerTurn;
+            if (ability.scanRangeMultiplier) effectData.scanRangeMultiplier = ability.scanRangeMultiplier;
 
-        await new Promise((resolve) => db.run(
-            `INSERT INTO ship_status_effects (ship_id, effect_key, magnitude, effect_data, source_object_id, applied_turn, expires_turn)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [effectTargetId, ability.effectKey, magnitude, JSON.stringify(effectData), order.caster_id, turnNumber, turnNumber + (ability.duration || 1)],
-            () => resolve()
-        ));
-
-        // Set cooldown
-        const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
-        await new Promise((resolve) => db.run(
-            `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
-             ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
-            [order.caster_id, order.ability_key, availableTurn],
-            () => resolve()
-        ));
-
-        // Log
-        await new Promise((resolve) => db.run(
-            `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [gameId, turnNumber, order.caster_id, effectTargetId, 'ability', `${order.ability_key} applied`, JSON.stringify({ abilityKey: order.ability_key })],
-            () => resolve()
-        ));
+            if (ability.effectKey) {
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO ship_status_effects (ship_id, effect_key, magnitude, effect_data, source_object_id, applied_turn, expires_turn)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [effectTargetId, ability.effectKey, magnitude, JSON.stringify(effectData), order.caster_id, turnNumber, turnNumber + (ability.duration || 1)],
+                    () => resolve()
+                ));
+            }
+            const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+            await new Promise((resolve) => db.run(
+                `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+                 ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+                [order.caster_id, order.ability_key, availableTurn],
+                () => resolve()
+            ));
+            await new Promise((resolve) => db.run(
+                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+                 VALUES (?, ?, ?, ?, 'ability', ?, ?)`,
+                [gameId, turnNumber, order.caster_id, effectTargetId, `${order.ability_key} applied`, JSON.stringify({ abilityKey: order.ability_key })],
+                () => resolve()
+            ));
+        }
     }
 }
 
@@ -1360,6 +1392,17 @@ async function processCombatOrders(gameId, turnNumber) {
             continue;
         }
 
+        // Hard range enforcement (if weapon defines a range)
+        if (weapon.range && distance > weapon.range) {
+            await new Promise((resolve) => db.run(
+                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+                 VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
+                [gameId, turnNumber, attacker.id, target.id, `Target out of range for ${weaponKey}`, JSON.stringify({ weaponKey, distance, maxRange: weapon.range })],
+                () => resolve()
+            ));
+            continue;
+        }
+
         // Range multiplier (symmetric falloff)
         const rangeMult = CombatConfig.computeRangeMultiplier(distance, weapon.optimal || 1, weapon.falloff || 0.15);
 
@@ -1385,10 +1428,8 @@ async function processCombatOrders(gameId, turnNumber) {
         // Explorer passive hook sets
         const targetAbilities = Array.isArray(tMeta.abilities) ? tMeta.abilities : [];
 
-        // Base damage cadence: honor simple cooldown per attacker/weapon (per-weapon fire every N turns)
+        // Base damage; cooldown is enforced by ability_cooldowns via processAbilityOrders
         let baseDamage = weapon.baseDamage || 0;
-        let weaponCooldown = weapon.cooldown || 1;
-        let weaponReady = (Number(turnNumber) % weaponCooldown) === 0;
         // Enforce PD targeting rules: PD only effective vs small ships; vs larger, diminish hard
         const isPD = (weapon.tags || []).includes('pd');
         const targetIsSmall = (tMeta.class === 'frigate');
@@ -1396,15 +1437,7 @@ async function processCombatOrders(gameId, turnNumber) {
             baseDamage = Math.floor(baseDamage * 0.2); // heavily diminished vs larger
         }
         // PD fires every turn regardless (cd=1), heavy weapons respect cooldown
-        if (!weaponReady) {
-            await new Promise((resolve) => db.run(
-                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
-                 VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
-                [gameId, turnNumber, attacker.id, target.id, `Weapon ${weaponKey} reloading`, JSON.stringify({ weaponKey })],
-                () => resolve()
-            ));
-            continue;
-        }
+        // Do not use turn-modulus cadence here; ability cooldowns already gated firing
         let damage = Math.max(0, Math.round(baseDamage * rangeMult * sizeMult));
 
         // Duct Tape Resilience: first hit at full HP reduced by 25%
@@ -1467,8 +1500,9 @@ async function processCombatOrders(gameId, turnNumber) {
                     // Reconstruct blueprint minimal object to compute requirements
                     const bpClass = tMeta.class;
                     const bpRole = tMeta.role;
-                    const blueprint = { id: blueprintId, class: bpClass, role: bpRole, specialized: [] };
-                    const reqs = computeAllRequirements(blueprint);
+                    const { SHIP_BLUEPRINTS } = require('./blueprints');
+                    const bp = (SHIP_BLUEPRINTS || []).find(b => b.id === blueprintId) || { id: blueprintId, class: bpClass, role: bpRole, specialized: [] };
+                    const reqs = computeAllRequirements(bp);
                     const salvageMap = {};
                     // 30% of core
                     for (const [name, qty] of Object.entries(reqs.core || {})) {
