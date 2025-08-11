@@ -5,6 +5,10 @@ const path = require('path');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const db = require('./db');
+const { Abilities } = require('./abilities');
+const CombatConfig = require('./combat-config');
+const { CargoManager } = require('./cargo-manager');
+const { computeAllRequirements } = require('./blueprints');
 const authRoutes = require('./routes/auth');
 const lobbyRoutes = require('./routes/lobby');
 const { router: gameRoutes, GameWorldManager } = require('./routes/game');
@@ -29,6 +33,18 @@ app.use(express.static(path.join(__dirname, '../client')));
 app.use('/auth', authRoutes);
 app.use('/lobby', lobbyRoutes);
 app.use('/game', gameRoutes);
+    // Combat logs read API (simple fetch)
+    app.get('/combat/logs/:gameId/:turnNumber', (req, res) => {
+        const { gameId, turnNumber } = req.params;
+        db.all(
+            'SELECT * FROM combat_logs WHERE game_id = ? AND turn_number = ? ORDER BY id ASC',
+            [gameId, turnNumber],
+            (err, rows) => {
+                if (err) return res.status(500).json({ error: 'db_error' });
+                res.json({ logs: rows || [] });
+            }
+        );
+    });
 
 // Serve client files
 app.get('/', (req, res) => {
@@ -410,6 +426,61 @@ io.on('connection', (socket) => {
             });
         }
     });
+
+    // Deprecated: attack-target is disabled; use activate-ability for offense
+    socket.on('attack-target', async () => {
+        socket.emit('combat:error', { error: 'Use abilities to attack (activate-ability)' });
+    });
+
+    // Handle ability activations - enqueue for turn resolution
+    socket.on('activate-ability', async (data) => {
+        const { gameId, casterId, abilityKey, targetObjectId, targetX, targetY, params } = data || {};
+        try {
+            if (!gameId || !casterId || !abilityKey) {
+                return socket.emit('ability:error', { error: 'Missing gameId/casterId/abilityKey' });
+            }
+            const ability = Abilities[abilityKey];
+            if (!ability) return socket.emit('ability:error', { error: 'Unknown ability' });
+            const currentTurn = await getCurrentTurnNumber(gameId);
+            // Validate caster ownership
+            const caster = await new Promise((resolve) => {
+                db.get('SELECT id, owner_id, sector_id, x, y, meta FROM sector_objects WHERE id = ?', [casterId], (err, row) => resolve(row));
+            });
+            if (!caster) return socket.emit('ability:error', { error: 'Caster not found' });
+            if (Number(caster.owner_id) !== Number(socket.userId)) return socket.emit('ability:error', { error: 'Caster not owned by player' });
+            // Cooldown check (soft; final check in resolver)
+            const cdRow = await new Promise((resolve) => {
+                db.get('SELECT available_turn FROM ability_cooldowns WHERE ship_id = ? AND ability_key = ?', [casterId, abilityKey], (err, row) => resolve(row));
+            });
+            if (cdRow && Number(cdRow.available_turn) > Number(currentTurn)) {
+                return socket.emit('ability:error', { error: 'Ability on cooldown' });
+            }
+            // Basic target validation shape (offense must include target object)
+            if (ability.type === 'offense' && !targetObjectId) {
+                return socket.emit('ability:error', { error: 'Offensive abilities require a target object' });
+            }
+            if (ability.target === 'position' && (typeof targetX !== 'number' || typeof targetY !== 'number')) {
+                return socket.emit('ability:error', { error: 'Position target required' });
+            }
+            if ((ability.target === 'ally' || ability.target === 'enemy') && !targetObjectId) {
+                return socket.emit('ability:error', { error: 'Target object required' });
+            }
+            // Enqueue ability order (latest wins for turn)
+            await new Promise((resolve) => db.run('DELETE FROM ability_orders WHERE caster_id = ? AND game_id = ? AND turn_number = ?', [casterId, gameId, currentTurn], () => resolve()));
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO ability_orders (game_id, turn_number, caster_id, ability_key, target_object_id, target_x, target_y, params, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [gameId, currentTurn, casterId, abilityKey, targetObjectId || null, targetX || null, targetY || null, params ? JSON.stringify(params) : null, new Date().toISOString()],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+            socket.emit('ability-queued', { casterId, abilityKey, turnNumber: currentTurn });
+        } catch (e) {
+            console.error('Error queuing ability:', e);
+            socket.emit('ability:error', { error: 'Failed to queue ability' });
+        }
+    });
     
     socket.on('stop-harvesting', async (data) => {
         const { gameId, shipId } = data;
@@ -584,7 +655,11 @@ async function resolveTurn(gameId, turnNumber) {
         // 4. Process harvesting operations
         await HarvestingManager.processHarvestingForTurn(gameId, turnNumber);
         
-        // 5. TODO: Handle combat, etc.
+        // 5. Handle abilities then combat
+        await processAbilityOrders(gameId, turnNumber);
+        await processCombatOrders(gameId, turnNumber);
+        await cleanupExpiredEffectsAndWrecks(gameId, turnNumber);
+        await regenerateShipEnergy(gameId, turnNumber);
         
         // Create next turn
         const nextTurn = turnNumber + 1;
@@ -995,6 +1070,353 @@ async function cleanupOldMovementOrders(gameId, currentTurn) {
             }
         );
     });
+}
+
+// Cleanup expired status effects and decay wrecks
+async function cleanupExpiredEffectsAndWrecks(gameId, turnNumber) {
+    // Remove expired effects
+    await new Promise((resolve) => db.run('DELETE FROM ship_status_effects WHERE expires_turn IS NOT NULL AND expires_turn < ?', [turnNumber], () => resolve()));
+    // Decay wrecks: any wreck whose decayTurn <= current turn becomes debris (delete or leave minimal)
+    const wrecks = await new Promise((resolve) => {
+        db.all(
+            `SELECT so.id, so.meta FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.type = 'wreck'`,
+            [gameId],
+            (e, rows) => resolve(rows || [])
+        );
+    });
+    for (const w of wrecks) {
+        try {
+            const meta = JSON.parse(w.meta || '{}');
+            if (meta.decayTurn !== undefined && Number(meta.decayTurn) <= Number(turnNumber)) {
+                // For now: delete wreck and its cargo
+                await new Promise((resolve) => db.run('DELETE FROM object_cargo WHERE object_id = ?', [w.id], () => resolve()));
+                await new Promise((resolve) => db.run('DELETE FROM sector_objects WHERE id = ?', [w.id], () => resolve()));
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO combat_logs (game_id, turn_number, event_type, summary, data)
+                     VALUES (?, ?, 'effect', ?, ?)`,
+                    [gameId, turnNumber, 'Wreck decayed', JSON.stringify({ objectId: w.id })],
+                    () => resolve()
+                ));
+            }
+        } catch {}
+    }
+}
+
+// Regenerate ship energy each turn
+async function regenerateShipEnergy(gameId, turnNumber) {
+    const ships = await new Promise((resolve) => {
+        db.all(
+            `SELECT so.id, so.meta FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.type = 'ship'`,
+            [gameId],
+            (e, rows) => resolve(rows || [])
+        );
+    });
+    for (const ship of ships) {
+        try {
+            const meta = JSON.parse(ship.meta || '{}');
+            const regen = Number(meta.energyRegen || 0);
+            const maxE = Number(meta.maxEnergy || 0);
+            if (regen > 0 && maxE > 0) {
+                const current = Number(meta.energy || 0);
+                const next = Math.min(maxE, current + regen);
+                if (next !== current) {
+                    meta.energy = next;
+                    // Apply repair-over-time
+                    const effects = await new Promise((resolve) => db.all('SELECT * FROM ship_status_effects WHERE ship_id = ? AND (expires_turn IS NULL OR expires_turn >= ?)', [ship.id, turnNumber], (e, rows) => resolve(rows || [])));
+                    const hasRegen = effects.some(eff => {
+                        try { const d = eff.effect_data ? JSON.parse(eff.effect_data) : {}; return eff.effect_key === 'repair_over_time' && d.healPercentPerTurn; } catch { return false; }
+                    });
+                    if (hasRegen && typeof meta.maxHp === 'number' && typeof meta.hp === 'number') {
+                        const healPct = effects.reduce((acc, eff) => {
+                            try { const d = eff.effect_data ? JSON.parse(eff.effect_data) : {}; return acc + (eff.effect_key === 'repair_over_time' ? (d.healPercentPerTurn || 0) : 0); } catch { return acc; }
+                        }, 0);
+                        const heal = Math.max(1, Math.floor((meta.maxHp || 0) * healPct));
+                        meta.hp = Math.min(meta.maxHp, meta.hp + heal);
+                    }
+                    await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(meta), new Date().toISOString(), ship.id], () => resolve()));
+                }
+            }
+        } catch {}
+    }
+}
+
+// Process ability orders: apply status effects and set cooldowns
+async function processAbilityOrders(gameId, turnNumber) {
+    // Fetch latest ability order per caster
+    const orders = await new Promise((resolve, reject) => {
+        db.all(
+            `SELECT ao.* FROM ability_orders ao
+             JOIN sector_objects so ON so.id = ao.caster_id
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND ao.turn_number = ?
+             AND ao.created_at = (
+               SELECT MAX(created_at) FROM ability_orders ao2 WHERE ao2.caster_id = ao.caster_id AND ao2.turn_number = ao.turn_number AND ao2.game_id = ao.game_id
+             )`,
+            [gameId, turnNumber],
+            (err, rows) => err ? reject(err) : resolve(rows || [])
+        );
+    });
+
+    for (const order of orders) {
+        const ability = Abilities[order.ability_key];
+        if (!ability) continue;
+        // Cooldown check; if on CD skip
+        const cdRow = await new Promise((resolve) => db.get('SELECT available_turn FROM ability_cooldowns WHERE ship_id = ? AND ability_key = ?', [order.caster_id, order.ability_key], (e, r) => resolve(r)));
+        if (cdRow && Number(cdRow.available_turn) > Number(turnNumber)) continue;
+
+        // Basic range check if there is a target object
+        let target = null;
+        if (order.target_object_id) {
+            target = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.target_object_id], (e, r) => resolve(r)));
+        }
+        const caster = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+        if (!caster) continue;
+        if (target && caster.sector_id !== target.sector_id) continue;
+        if (ability.range && target) {
+            const dx = (caster.x || 0) - (target.x || 0);
+            const dy = (caster.y || 0) - (target.y || 0);
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist > ability.range) continue;
+        }
+
+        // Energy check and consume for active/offense abilities
+        if (ability.type !== 'passive' && ability.energyCost) {
+            const casterMetaRow = await new Promise((resolve) => db.get('SELECT meta FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+            if (!casterMetaRow) continue;
+            const metaObj = JSON.parse(casterMetaRow.meta || '{}');
+            const currentEnergy = Number(metaObj.energy || 0);
+            if (currentEnergy < ability.energyCost) {
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
+                     VALUES (?, ?, ?, 'ability', ?, ?)`,
+                    [gameId, turnNumber, order.caster_id, `Not enough energy for ${order.ability_key}`, JSON.stringify({ needed: ability.energyCost, have: currentEnergy })],
+                    () => resolve()
+                ));
+                continue;
+            }
+            metaObj.energy = Math.max(0, currentEnergy - ability.energyCost);
+            await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(metaObj), new Date().toISOString(), order.caster_id], () => resolve()));
+        }
+
+        // Apply status effect records
+        let effectTargetId = order.target_object_id || order.caster_id;
+        let magnitude = ability.penaltyReduction || ability.selfPenaltyReduction || ability.damageReduction || ability.ignoreSizePenalty ? 1 : null;
+        const effectData = {};
+        if (ability.penaltyReduction) effectData.penaltyReduction = ability.penaltyReduction;
+        if (ability.selfPenaltyReduction) effectData.selfPenaltyReduction = ability.selfPenaltyReduction;
+        if (ability.ignoreSizePenalty) effectData.ignoreSizePenalty = true;
+        if (ability.damageReduction) effectData.damageReduction = ability.damageReduction;
+        if (ability.auraRange) effectData.auraRange = ability.auraRange;
+        if (ability.movementBonus) effectData.movementBonus = ability.movementBonus;
+        if (ability.healPercentPerTurn) effectData.healPercentPerTurn = ability.healPercentPerTurn;
+
+        await new Promise((resolve) => db.run(
+            `INSERT INTO ship_status_effects (ship_id, effect_key, magnitude, effect_data, source_object_id, applied_turn, expires_turn)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [effectTargetId, ability.effectKey, magnitude, JSON.stringify(effectData), order.caster_id, turnNumber, turnNumber + (ability.duration || 1)],
+            () => resolve()
+        ));
+
+        // Set cooldown
+        const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+        await new Promise((resolve) => db.run(
+            `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+             ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+            [order.caster_id, order.ability_key, availableTurn],
+            () => resolve()
+        ));
+
+        // Log
+        await new Promise((resolve) => db.run(
+            `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [gameId, turnNumber, order.caster_id, effectTargetId, 'ability', `${order.ability_key} applied`, JSON.stringify({ abilityKey: order.ability_key })],
+            () => resolve()
+        ));
+    }
+}
+
+// Process combat orders: compute damage using range falloff then size penalty adjusted by status effects
+async function processCombatOrders(gameId, turnNumber) {
+    const orders = await new Promise((resolve, reject) => {
+        db.all(
+            `SELECT co.* FROM combat_orders co
+             JOIN sector_objects a ON a.id = co.attacker_id
+             JOIN sector_objects t ON t.id = co.target_id
+             JOIN sectors s ON s.id = a.sector_id
+             WHERE s.game_id = ? AND co.turn_number = ?
+             AND co.created_at = (
+               SELECT MAX(created_at) FROM combat_orders co2 WHERE co2.attacker_id = co.attacker_id AND co2.turn_number = co.turn_number AND co2.game_id = co.game_id
+             )`,
+            [gameId, turnNumber],
+            (err, rows) => err ? reject(err) : resolve(rows || [])
+        );
+    });
+
+    for (const order of orders) {
+        const attacker = await new Promise((resolve) => db.get('SELECT id, x, y, meta FROM sector_objects WHERE id = ?', [order.attacker_id], (e, r) => resolve(r)));
+        const target = await new Promise((resolve) => db.get('SELECT id, x, y, meta FROM sector_objects WHERE id = ?', [order.target_id], (e, r) => resolve(r)));
+        if (!attacker || !target) continue;
+
+        const aMeta = JSON.parse(attacker.meta || '{}');
+        const tMeta = JSON.parse(target.meta || '{}');
+        const distance = Math.hypot((attacker.x||0)-(target.x||0), (attacker.y||0)-(target.y||0));
+
+        // Prefer offensive abilities; fallback to class weapon profiles
+        const { Abilities: AB } = require('./abilities');
+        let weapon = null;
+        let weaponKey = null;
+        if (order.weapon_key && AB[order.weapon_key] && AB[order.weapon_key].type === 'offense') {
+            weaponKey = order.weapon_key;
+            weapon = AB[weaponKey];
+        } else {
+            // No offensive ability provided; skip firing
+            await new Promise((resolve) => db.run(
+                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary)
+                 VALUES (?, ?, ?, ?, 'attack', ?)`,
+                [gameId, turnNumber, attacker.id, target.id, 'No offensive ability queued'],
+                () => resolve()
+            ));
+            continue;
+        }
+
+        // Range multiplier (symmetric falloff)
+        const rangeMult = CombatConfig.computeRangeMultiplier(distance, weapon.optimal || 1, weapon.falloff || 0.15);
+
+        // Status effects: accumulate for target and attacker
+        const effects = await new Promise((resolve) => db.all('SELECT * FROM ship_status_effects WHERE ship_id IN (?, ?) AND (expires_turn IS NULL OR expires_turn >= ?)', [target.id, attacker.id, turnNumber], (e, rows) => resolve(rows || [])));
+        const effectCtx = { weaponTags: new Set(weapon.tags || []) };
+        for (const eff of effects) {
+            try {
+                const data = eff.effect_data ? JSON.parse(eff.effect_data) : {};
+                if (eff.ship_id === target.id) {
+                    if (data.ignoreSizePenalty) effectCtx.ignoreSizePenalty = true;
+                    if (typeof data.penaltyReduction === 'number') effectCtx.penaltyReduction = Math.max(effectCtx.penaltyReduction || 0, data.penaltyReduction);
+                }
+                if (eff.ship_id === attacker.id) {
+                    if (typeof data.selfPenaltyReduction === 'number') effectCtx.penaltyReduction = Math.max(effectCtx.penaltyReduction || 0, data.selfPenaltyReduction);
+                }
+            } catch {}
+        }
+
+        // Size penalty (apply after we compute status effects context)
+        const sizeMult = CombatConfig.computeSizePenalty(aMeta.class, tMeta.class, effectCtx);
+
+        // Explorer passive hook sets
+        const targetAbilities = Array.isArray(tMeta.abilities) ? tMeta.abilities : [];
+
+        // Base damage cadence: honor simple cooldown per attacker/weapon (per-weapon fire every N turns)
+        let baseDamage = weapon.baseDamage || 0;
+        let weaponCooldown = weapon.cooldown || 1;
+        let weaponReady = (Number(turnNumber) % weaponCooldown) === 0;
+        // Enforce PD targeting rules: PD only effective vs small ships; vs larger, diminish hard
+        const isPD = (weapon.tags || []).includes('pd');
+        const targetIsSmall = (tMeta.class === 'frigate');
+        if (isPD && !targetIsSmall) {
+            baseDamage = Math.floor(baseDamage * 0.2); // heavily diminished vs larger
+        }
+        // PD fires every turn regardless (cd=1), heavy weapons respect cooldown
+        if (!weaponReady) {
+            await new Promise((resolve) => db.run(
+                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+                 VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
+                [gameId, turnNumber, attacker.id, target.id, `Weapon ${weaponKey} reloading`, JSON.stringify({ weaponKey })],
+                () => resolve()
+            ));
+            continue;
+        }
+        let damage = Math.max(0, Math.round(baseDamage * rangeMult * sizeMult));
+
+        // Duct Tape Resilience: first hit at full HP reduced by 25%
+        if (targetAbilities.includes('duct_tape_resilience') && tMeta.hp === tMeta.maxHp && !tMeta._resilienceConsumed) {
+            damage = Math.floor(damage * 0.75);
+            tMeta._resilienceConsumed = true;
+        }
+
+        if (damage <= 0) {
+            await new Promise((resolve) => db.run(
+                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+                 VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
+                [gameId, turnNumber, attacker.id, target.id, `Attack with ${weaponKey} missed/ineffective`, JSON.stringify({ weaponKey, distance, rangeMult, sizeMult })],
+                () => resolve()
+            ));
+            continue;
+        }
+
+        // Apply HP change
+        const targetHp = typeof tMeta.hp === 'number' ? tMeta.hp : 1;
+        const newHp = targetHp - damage;
+        tMeta.hp = newHp;
+        await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(tMeta), new Date().toISOString(), target.id], () => resolve()));
+
+        // Log attack
+        await new Promise((resolve) => db.run(
+            `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+             VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
+            [gameId, turnNumber, attacker.id, target.id, `Hit for ${damage}`, JSON.stringify({ weaponKey, distance, rangeMult, sizeMult })],
+            () => resolve()
+        ));
+
+        // Handle kill → wreck + loot
+        if (newHp <= 0) {
+            // Convert to wreck object (keep same position/sector)
+            await new Promise((resolve) => db.run('DELETE FROM ship_status_effects WHERE ship_id = ?', [target.id], () => resolve()));
+            const wreckMeta = { name: (tMeta.name || 'Wreck'), type: 'wreck', decayTurn: Number(turnNumber) + 7 };
+            // Mark as wreck by updating type and meta
+            await new Promise((resolve) => db.run('UPDATE sector_objects SET type = ?, meta = ?, updated_at = ? WHERE id = ?', ['wreck', JSON.stringify(wreckMeta), new Date().toISOString(), target.id], () => resolve()));
+            // Loot: move portion of ship cargo into wreck (legacy table -> object_cargo)
+            try {
+                const shipCargo = await CargoManager.getShipCargo(target.id);
+                for (const item of shipCargo.items) {
+                    const roll = 0.6 + Math.random() * 0.2; // 60–80%
+                    const dropQty = Math.max(0, Math.floor(item.quantity * roll));
+                    if (dropQty > 0) {
+                        const resourceName = item.resource_name;
+                        // Remove from ship cargo (legacy) and add to wreck cargo (object_cargo)
+                        await CargoManager.removeResourceFromCargo(target.id, resourceName, dropQty, true);
+                        await CargoManager.addResourceToCargo(target.id, resourceName, dropQty, false);
+                    }
+                }
+            } catch (lootErr) {
+                console.warn('Loot transfer error:', lootErr?.message || lootErr);
+            }
+            // Salvage: add fraction of build cost based on blueprint
+            try {
+                if (tMeta?.blueprintId) {
+                    const blueprintId = tMeta.blueprintId;
+                    // Reconstruct blueprint minimal object to compute requirements
+                    const bpClass = tMeta.class;
+                    const bpRole = tMeta.role;
+                    const blueprint = { id: blueprintId, class: bpClass, role: bpRole, specialized: [] };
+                    const reqs = computeAllRequirements(blueprint);
+                    const salvageMap = {};
+                    // 30% of core
+                    for (const [name, qty] of Object.entries(reqs.core || {})) {
+                        salvageMap[name] = Math.max(1, Math.floor(qty * 0.3));
+                    }
+                    // 20% of specialized
+                    for (const [name, qty] of Object.entries(reqs.specialized || {})) {
+                        salvageMap[name] = (salvageMap[name] || 0) + Math.max(1, Math.floor(qty * 0.2));
+                    }
+                    for (const [resName, qty] of Object.entries(salvageMap)) {
+                        await CargoManager.addResourceToCargo(target.id, resName, qty, false);
+                    }
+                }
+            } catch (salvErr) {
+                console.warn('Salvage generation error:', salvErr?.message || salvErr);
+            }
+            await new Promise((resolve) => db.run(
+                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+                 VALUES (?, ?, ?, ?, 'kill', ?, ?)`,
+                [gameId, turnNumber, attacker.id, target.id, `Destroyed`, JSON.stringify({ weaponKey })],
+                () => resolve()
+            ));
+        }
+    }
 }
 
 // Helper function to calculate ETA for movement

@@ -21,6 +21,7 @@ const initializeDatabase = async () => {
         const gameworldSchema = fs.readFileSync(path.join(__dirname, 'models/gameworld.sql'), 'utf8');
         const celestialSchema = fs.readFileSync(path.join(__dirname, 'models/celestial_objects.sql'), 'utf8');
         const resourceSchema = fs.readFileSync(path.join(__dirname, 'models/resource_system.sql'), 'utf8');
+        const combatSchema = fs.readFileSync(path.join(__dirname, 'models/combat.sql'), 'utf8');
         
         // Execute schemas sequentially using promises
         await new Promise((resolve, reject) => {
@@ -114,14 +115,22 @@ const initializeDatabase = async () => {
                                         } else {
                                             console.log('✅ Celestial objects schema applied');
                                             
-                                            // Apply resource system schema (protect against FK issues on upsert)
+                                            // Apply resource system then combat schema (protect against FK issues on upsert)
                                             db.exec(resourceSchema, (err) => {
                                                 if (err) {
                                                     console.error('Error applying resource system schema:', err);
                                                     reject(err);
                                                 } else {
                                                     console.log('✅ Resource system schema applied');
-                                                    resolve();
+                                                    db.exec(combatSchema, (cerr) => {
+                                                        if (cerr) {
+                                                            console.error('Error applying combat system schema:', cerr);
+                                                            reject(cerr);
+                                                        } else {
+                                                            console.log('✅ Combat system schema applied');
+                                                            resolve();
+                                                        }
+                                                    });
                                                 }
                                             });
                                         }

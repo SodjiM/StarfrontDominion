@@ -15,6 +15,8 @@ class GameClient {
         this.camera = { x: 2500, y: 2500, zoom: 1 };
         this.tileSize = 20;
         this.turnLocked = false;
+        this.abilityPreview = null;
+        this.pendingAbility = null;
         this.objects = [];
         this.units = [];
         this.isFirstLoad = true; // Track if this is the initial game load
@@ -701,6 +703,18 @@ class GameClient {
 
         const detailStatuses = this.getUnitStatuses(meta, unit);
 
+        // Build abilities section
+        const abilityButtons = [];
+        const abilities = Array.isArray(meta.abilities) ? meta.abilities : [];
+        const abilityDefs = window.AbilityDefs || {};
+        abilities.forEach(key => {
+            const def = abilityDefs[key];
+            if (!def) return;
+            const cdText = def.cooldown ? `, CD ${def.cooldown}` : '';
+            const energyText = def.energyCost ? `, ⚡${def.energyCost}` : '';
+            abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${this.turnLocked ? 'disabled' : ''} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
+        });
+
         detailsContainer.innerHTML = `
             <div class="unit-info">
                 <h3 style="color: #64b5f6; margin-bottom: 15px;">
@@ -748,17 +762,10 @@ class GameClient {
                 </div>
                 ` : ''}
                 
-                ${meta.pilots ? `
-                <div class="stat-item">
-                    <span>Pilots Available:</span>
-                    <span>${meta.pilots}</span>
-                </div>
-                ` : ''}
-                
                 ${meta.energy !== undefined ? `
                 <div class="stat-item">
                     <span>⚡ Energy:</span>
-                    <span>${meta.energy}/${meta.maxEnergy || meta.energy}</span>
+                    <span>${meta.energy}/${meta.maxEnergy || meta.energy} (+${meta.energyRegen || 0}/turn)</span>
                 </div>
                 ` : ''}
                 
@@ -816,35 +823,11 @@ class GameClient {
                     </button>
                 ` : ''}
                 
-                ${unit.type === 'starbase' ? `
-                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
-                        📦 Cargo
-                    </button>
-                    <button class="sf-btn sf-btn-secondary" onclick="showBuildModal()" ${this.turnLocked ? 'disabled' : ''}>
-                        🔨 Build
-                    </button>
-                    <button class="sf-btn sf-btn-secondary" onclick="upgradeBase()" ${this.turnLocked ? 'disabled' : ''}>
-                        ⬆️ Upgrade Base
-                    </button>
-                ` : ''}
-                
-                ${unit.type === 'storage-structure' ? `
-                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
-                        📦 Storage
-                    </button>
-                ` : ''}
-                
-                ${unit.type === 'warp-beacon' ? `
-                    <div class="structure-info">
-                        <p>🌌 Warp destination available to all players</p>
-                    </div>
-                ` : ''}
-                
-                ${unit.type === 'interstellar-gate' ? `
-                    <div class="structure-info">
-                        <p>🌀 Gateway to ${unit.meta?.destinationSectorName || 'Unknown Sector'}</p>
-                        <p style="color: #888; font-size: 0.9em;">Available to all players</p>
-                    </div>
+                ${unit.type === 'ship' ? `
+                    <div class="panel-title" style="margin:16px 0 0 0;">🛠️ Abilities</div>
+                    <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style=\"color:#888\">No abilities</span>'}</div>
+                    <div class="panel-title" style="margin:16px 0 0 0;">📝 Combat Log (Turn ${this.currentTurn || '?'})</div>
+                    <div id="combatLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
                 ` : ''}
             </div>
         `;
@@ -853,7 +836,27 @@ class GameClient {
         if (unit && unit.meta && unit.meta.cargoCapacity) {
             updateCargoStatus(unit.id);
         }
+
+        // Wire ability buttons
+        const container = document.getElementById('abilityButtons');
+        if (container) {
+            container.querySelectorAll('button[data-ability]').forEach(btn => {
+                const key = btn.getAttribute('data-ability');
+                btn.addEventListener('mouseenter', () => this.previewAbilityRange(key));
+                btn.addEventListener('mouseleave', () => this.clearAbilityPreview());
+                btn.addEventListener('click', () => this.queueAbility(key));
+            });
+        }
+
+        // Populate combat log
+        if (unit.type === 'ship') {
+            this.loadCombatLog();
+        }
     }
+
+    // Ability preview ring
+    previewAbilityRange(abilityKey) { this.abilityPreview = abilityKey; this.render(); }
+    clearAbilityPreview() { this.abilityPreview = null; this.render(); }
 
     // Render the game map
     render() {
@@ -891,6 +894,41 @@ class GameClient {
 
         // Render mini-map
         this.renderMiniMap();
+    }
+
+    // Queue ability activation
+    queueAbility(abilityKey) {
+        if (!this.selectedUnit || this.turnLocked) return;
+        const def = (window.AbilityDefs || {})[abilityKey];
+        if (!def) return;
+        if (def.target === 'self') {
+            this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit.id, abilityKey });
+            this.addLogEntry(`Queued ${def.name}`, 'info');
+        } else if (def.target === 'position') {
+            // Next click on the map will provide position
+            this.pendingAbility = { key: abilityKey, def };
+            this.addLogEntry(`Select position for ${def.name}`, 'info');
+        } else {
+            // Enemy/ally target
+            this.pendingAbility = { key: abilityKey, def };
+            this.addLogEntry(`Select target for ${def.name}`, 'info');
+        }
+    }
+
+    // Simple combat log fetch
+    async loadCombatLog() {
+        try {
+            const turn = this.currentTurn || 1;
+            const res = await fetch(`/combat/logs/${this.gameId}/${turn}`);
+            const data = await res.json();
+            const logEl = document.getElementById('combatLog');
+            if (!logEl) return;
+            const logs = (data.logs || []).slice(-50).map(l => `<div class=\"log-entry\">${l.summary || l.event_type}</div>`).join('');
+            logEl.innerHTML = logs || '<div class=\"log-entry\">No events this turn</div>';
+        } catch (e) {
+            const logEl = document.getElementById('combatLog');
+            if (logEl) logEl.innerHTML = '<div class=\"log-entry error\">Failed to load combat log</div>';
+        }
     }
 
     // Draw fog of war: dim everything, then punch radial gradients around owned sensors
@@ -1833,23 +1871,35 @@ class GameClient {
         }
     }
 
-    // Draw selection highlight
+    // Draw selection highlight with ability preview ring if present
     drawSelection(ctx, centerX, centerY) {
         if (!this.selectedUnit) return;
-        
-        const screenX = centerX + (this.selectedUnit.x - this.camera.x) * this.tileSize;
-        const screenY = centerY + (this.selectedUnit.y - this.camera.y) * this.tileSize;
+        const unit = this.selectedUnit;
+        const screenX = centerX + (unit.x - this.camera.x) * this.tileSize;
+        const screenY = centerY + (unit.y - this.camera.y) * this.tileSize;
         const size = this.tileSize;
-        
+
         // Animated selection ring
         const time = Date.now() / 1000;
         const alpha = 0.5 + 0.3 * Math.sin(time * 3);
-        
         ctx.strokeStyle = `rgba(255, 193, 7, ${alpha})`;
         ctx.lineWidth = 3;
         ctx.setLineDash([5, 5]);
         ctx.strokeRect(screenX - size/2 - 5, screenY - size/2 - 5, size + 10, size + 10);
         ctx.setLineDash([]);
+
+        // Ability preview ring
+        if (this.abilityPreview && unit?.meta?.abilities?.includes(this.abilityPreview)) {
+            const def = (window.AbilityDefs || {})[this.abilityPreview];
+            if (def && def.range) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+                ctx.lineWidth = 1.5;
+                const radiusPx = def.range * this.tileSize;
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, radiusPx, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
     }
 
     // Render mini-map
@@ -2069,9 +2119,9 @@ class GameClient {
         // Canvas click for selection/movement
         this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
         
-        // Canvas right-click for movement/attack commands
+        // Canvas right-click: keep movement, remove attack
         this.canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault(); // Prevent context menu
+            e.preventDefault();
             this.handleCanvasRightClick(e);
         });
         
@@ -2795,47 +2845,42 @@ class GameClient {
             }
         }
     }
-
-    // Handle canvas right-clicks for movement/attack
+    // Handle canvas right-clicks for movement only (attack removed)
     handleCanvasRightClick(e) {
         if (!this.selectedUnit || this.turnLocked) return;
-        
+        if (this.selectedUnit.type !== 'ship') return;
+
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        
+
         // Convert screen coordinates to world coordinates
         const centerX = this.canvas.width / 2;
         const centerY = this.canvas.height / 2;
         const worldX = Math.round(this.camera.x + (x - centerX) / this.tileSize);
         const worldY = Math.round(this.camera.y + (y - centerY) / this.tileSize);
-        
-        console.log(`Right-clicked world position: (${worldX}, ${worldY}) - checking for move/attack command`);
-        
+
         // Check if right-clicking on an object (account for object radius)
-        // Exclude large celestial objects from right-click targeting to allow movement within them
         const clickedObject = this.objects.find(obj => {
             // Skip large celestial objects for right-click targeting
-            if (this.isCelestialObject(obj) && obj.radius > 50) {
-                return false; // Allow movement through/within large celestial objects
-            }
-            
-            const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
-            const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8); // Use object radius for hit detection
+            if (this.isCelestialObject(obj) && obj.radius > 50) return false;
+            const distance = Math.hypot(obj.x - worldX, obj.y - worldY);
+            const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8);
             return distance <= hitRadius;
         });
-        
-        if (clickedObject) {
-            if (clickedObject.owner_id === this.userId) {
-                // Right-clicked on own unit - show context menu or info
-                this.addLogEntry(`Selected ${clickedObject.meta.name || clickedObject.type}`, 'info');
-            } else {
-                // Right-clicked on enemy/neutral object - attack command
-                this.handleAttackCommand(clickedObject, worldX, worldY);
-            }
-        } else {
-            // Right-clicked on empty space - movement command
+
+        if (!clickedObject) {
+            // Empty space: move command with path + ETA
             this.handleMoveCommand(worldX, worldY);
+            return;
+        }
+
+        // Clicking on own unit: select it; on others: ignore (no attack via right-click)
+        if (clickedObject.owner_id === this.userId) {
+            this.selectUnit(clickedObject.id);
+            this.addLogEntry(`Selected ${clickedObject.meta?.name || clickedObject.type}`, 'info');
+        } else {
+            this.addLogEntry('Use an ability to target enemies', 'info');
         }
     }
 
@@ -2963,51 +3008,7 @@ class GameClient {
         }
     }
 
-    // Handle attack command (right-click on enemy)
-    handleAttackCommand(target, worldX, worldY) {
-        if (!this.selectedUnit || this.selectedUnit.type !== 'ship') {
-            this.addLogEntry('Only ships can attack', 'warning');
-            return;
-        }
-        
-        const distance = Math.sqrt(
-            Math.pow(this.selectedUnit.x - target.x, 2) + 
-            Math.pow(this.selectedUnit.y - target.y, 2)
-        );
-        
-        const attackRange = this.selectedUnit.meta.attackRange || 1;
-        
-        if (distance > attackRange) {
-            // Too far to attack - move into range first
-            this.addLogEntry(`Target out of range. Moving to attack ${target.meta.name || target.type}`, 'warning');
-            
-            // Calculate position just within attack range
-            const dx = target.x - this.selectedUnit.x;
-            const dy = target.y - this.selectedUnit.y;
-            const length = Math.sqrt(dx * dx + dy * dy);
-            const moveToX = Math.round(target.x - (dx / length) * (attackRange * 0.9));
-            const moveToY = Math.round(target.y - (dy / length) * (attackRange * 0.9));
-            
-            // Move into range, then attack next turn
-            this.handleMoveCommand(moveToX, moveToY);
-            
-            // Store attack target for next turn
-            this.selectedUnit.pendingAttackTarget = target.id;
-            
-        } else {
-            // In range - issue attack command
-            this.addLogEntry(`${this.selectedUnit.meta.name} attacking ${target.meta.name || target.type}!`, 'success');
-            
-            // TODO: Send attack command to server
-            this.socket.emit('attack-target', {
-                gameId: this.gameId,
-                attackerId: this.selectedUnit.id,
-                targetId: target.id,
-                attackerPosition: { x: this.selectedUnit.x, y: this.selectedUnit.y },
-                targetPosition: { x: target.x, y: target.y }
-            });
-        }
-    }
+    // Attack flow removed; use ability selection instead
 
     // Handle keyboard input
     handleKeyboard(e) {

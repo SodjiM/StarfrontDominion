@@ -1497,7 +1497,23 @@ router.post('/build-ship', (req, res) => {
                     shipType: blueprint.class,
                     blueprintId: blueprint.id,
                     role: blueprint.role,
-                    class: blueprint.class
+                    class: blueprint.class,
+                    // Energy system (per class baseline)
+                    ...(function(cls){
+                        if (cls === 'frigate') return { energy: 6, maxEnergy: 6, energyRegen: 3 };
+                        if (cls === 'battleship') return { energy: 8, maxEnergy: 8, energyRegen: 2 };
+                        if (cls === 'capital') return { energy: 12, maxEnergy: 12, energyRegen: 2 };
+                        return { energy: 6, maxEnergy: 6, energyRegen: 2 };
+                    })(blueprint.class),
+                    // Defaults for combat integration (no explicit loadouts per instruction)
+                    // Weapon profile inferred by class; abilities by class default
+                    abilities: (function(cls, bp){
+                        if (bp === 'needle-gunship') return ['auralite_lance','quarzon_micro_missiles','phantom_burn','strike_vector'];
+                        if (cls === 'frigate') return ['target_painter'];
+                        if (cls === 'battleship') return ['barrage','tractor_field'];
+                        if (cls === 'capital') return ['aegis_pulse','tractor_field'];
+                        return [];
+                    })(blueprint.class, blueprint.id)
                 };
                 const shipMeta = JSON.stringify(shipMetaObj);
                 
