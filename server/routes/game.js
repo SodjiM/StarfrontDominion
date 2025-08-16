@@ -155,81 +155,87 @@ class GameWorldManager {
                     console.warn(`⚠️ No planets found for ${player.username}, using fallback spawn at (${spawnX}, ${spawnY})`);
                 }
                 
-                // Create starting station at calculated position
+                // Create starting station as an anchored station (planet preferred, sun fallback)
+                const stationClass = planet ? 'planet-station' : 'sun-station';
                 const starbaseMetaObj = {
                     name: `${player.username} Prime Station`,
                     hp: 100,
                     maxHp: 100,
                     scanRange: 200,
-                    pilots: 5,
-                    cargoCapacity: 50 // Starbases have larger cargo capacity than ships
+                    cargoCapacity: 50,
+                    stationClass
                 };
                 const starbaseMeta = JSON.stringify(starbaseMetaObj);
-                
-                db.run(
-                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sectorId, 'station', spawnX, spawnY, player.user_id, starbaseMeta, starbaseMetaObj.scanRange, 0],
-                    function(err) {
-                        if (err) {
-                            console.error('Error creating station:', err);
-                            return onError(err);
-                        }
-                        
-                        const starbaseId = this.lastID;
-                        console.log(`🏭 Created station for ${player.username} at (${spawnX}, ${spawnY})`);
-                        
-                        // Initialize cargo system for the station
-                        CargoManager.initializeObjectCargo(starbaseId, 50)
-                            .then(() => {
-                                console.log(`📦 Initialized cargo system for station ${starbaseId}`);
-                                // Add 25 starting rocks for testing
-                                return CargoManager.addResourceToCargo(starbaseId, 'rock', 25, false);
-                            })
-                            .then(() => {
-                                console.log(`🪨 Added 25 starting rocks to station ${starbaseId}`);
-                            })
-                            .catch(error => {
-                                console.error('Error initializing station cargo or adding rocks:', error);
-                            });
-                        
-                        // Create starting ship adjacent to starbase
-                        const { DEFAULT_ABILITIES } = require('../abilities');
-                        const shipMetaObj = {
-                            name: `${player.username} Explorer`,
-                            hp: 50,
-                            maxHp: 50,
-                            scanRange: 50,
-                            movementSpeed: 4,
-                            cargoCapacity: 10,
-                            harvestRate: 1.0,
-                            canMine: true,
-                            canActiveScan: false,
-                            shipType: 'explorer',
-                            // Energy and abilities for explorer starter
-                            energy: 6,
-                            maxEnergy: 6,
-                            energyRegen: 3,
-                            abilities: DEFAULT_ABILITIES.explorer || ['dual_light_coilguns','boost_engines','jury_rig_repair','duct_tape_resilience']
-                        };
-                        const shipMeta = JSON.stringify(shipMetaObj);
-                        
-                        db.run(
-                            'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                            [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
-                            function(err) {
-                                if (err) {
-                                    console.error('Error creating ship:', err);
-                                    return onError(err);
-                                }
-                                
-                                console.log(`🚢 Created ship for ${player.username} at (${spawnX + 1}, ${spawnY})`);
-                                
-                                // Initialize visibility memory around starting position via object-based system
-                                GameWorldManager.initializeVisibility(gameId, player.user_id, sectorId, spawnX, spawnY, onComplete, onError);
+
+                const insertAnchored = (parentId) => {
+                    db.run(
+                        `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, parent_object_id) VALUES (?, 'station', ?, ?, ?, ?, ?)`,
+                        [sectorId, spawnX, spawnY, player.user_id, starbaseMeta, parentId || null],
+                        function(err) {
+                            if (err) {
+                                console.error('Error creating anchored station:', err);
+                                return onError(err);
                             }
-                        );
-                    }
-                );
+                            const starbaseId = this.lastID;
+                            console.log(`🏭 Created anchored ${stationClass} for ${player.username} at (${spawnX}, ${spawnY}) parent=${parentId || 'none'}`);
+                            
+                            // Initialize cargo system for the station
+                            CargoManager.initializeObjectCargo(starbaseId, 50)
+                                .then(() => {
+                                    return CargoManager.addResourceToCargo(starbaseId, 'rock', 25, false);
+                                })
+                                .catch(error => {
+                                    console.error('Error initializing station cargo or adding rocks:', error);
+                                });
+                            
+                            // Create starting ship adjacent to starbase
+                            const { DEFAULT_ABILITIES } = require('../abilities');
+                            const shipMetaObj = {
+                                name: `${player.username} Explorer`,
+                                hp: 50,
+                                maxHp: 50,
+                                scanRange: 50,
+                                movementSpeed: 4,
+                                cargoCapacity: 10,
+                                harvestRate: 1.0,
+                                canMine: true,
+                                canActiveScan: false,
+                                shipType: 'explorer',
+                                pilotCost: 1,
+                                // Energy and abilities for explorer starter
+                                energy: 6,
+                                maxEnergy: 6,
+                                energyRegen: 3,
+                                abilities: DEFAULT_ABILITIES.explorer || ['dual_light_coilguns','boost_engines','jury_rig_repair','duct_tape_resilience']
+                            };
+                            const shipMeta = JSON.stringify(shipMetaObj);
+                            
+                            db.run(
+                                'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
+                                function(err) {
+                                    if (err) {
+                                        console.error('Error creating ship:', err);
+                                        return onError(err);
+                                    }
+                                    
+                                    console.log(`🚢 Created ship for ${player.username} at (${spawnX + 1}, ${spawnY})`);
+                                    
+                                    // Initialize visibility memory around starting position via object-based system
+                                    GameWorldManager.initializeVisibility(gameId, player.user_id, sectorId, spawnX, spawnY, onComplete, onError);
+                                }
+                            );
+                        }
+                    );
+                };
+
+                if (planet && planet.id) {
+                    insertAnchored(planet.id);
+                } else {
+                    db.get(`SELECT id FROM sector_objects WHERE sector_id = ? AND celestial_type = 'sun' LIMIT 1`, [sectorId], (e2, sunRow) => {
+                        insertAnchored(sunRow && sunRow.id ? sunRow.id : null);
+                    });
+                }
             }
         );
     }
@@ -763,6 +769,75 @@ class GameWorldManager {
     }
 }
 
+// Pilot system helpers
+const PILOT_RESPAWN_TURNS_DEFAULT = 10;
+
+async function getCurrentTurnNumberServer(gameId) {
+    return new Promise((resolve) => db.get(
+        'SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1',
+        [gameId],
+        (e, r) => resolve(r ? r.turn_number : 1)
+    ));
+}
+
+async function computePilotStats(gameId, userId, currentTurn) {
+    // Capacity: base 5 + anchored station bonuses
+    const stationRows = await new Promise((resolve) => {
+        db.all(
+            `SELECT so.meta FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.owner_id = ? AND so.type = 'station'`,
+            [gameId, userId],
+            (e, rows) => resolve(rows || [])
+        );
+    });
+    let capacity = 5;
+    for (const r of stationRows) {
+        try {
+            const meta = JSON.parse(r.meta || '{}');
+            const cls = meta.stationClass;
+            if (cls === 'sun-station') capacity += 10;
+            else if (cls === 'planet-station') capacity += 5;
+            else if (cls === 'moon-station') capacity += 3;
+        } catch {}
+    }
+
+    // Active pilots = sum pilotCost for all owned ships in all sectors of this game
+    const shipRows = await new Promise((resolve) => {
+        db.all(
+            `SELECT so.meta FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.owner_id = ? AND so.type = 'ship'`,
+            [gameId, userId],
+            (e, rows) => resolve(rows || [])
+        );
+    });
+    let active = 0;
+    for (const r of shipRows) {
+        try { const m = JSON.parse(r.meta || '{}'); active += Number(m.pilotCost || 1); } catch { active += 1; }
+    }
+
+    // Dead pilots queue still waiting to respawn
+    const deadRows = await new Promise((resolve) => {
+        db.all(
+            `SELECT respawn_turn as turn, SUM(count) as qty
+             FROM dead_pilots_queue
+             WHERE game_id = ? AND user_id = ? AND respawn_turn > ?
+             GROUP BY respawn_turn ORDER BY respawn_turn ASC`,
+            [gameId, userId, currentTurn],
+            (e, rows) => resolve(rows || [])
+        );
+    });
+    const respawnsByTurn = (deadRows || []).map(r => ({
+        turn: Number(r.turn),
+        turnsLeft: Math.max(0, Number(r.turn) - Number(currentTurn)),
+        count: Number(r.qty || 0)
+    }));
+    const dead = respawnsByTurn.reduce((sum, r) => sum + (r.count || 0), 0);
+    const available = Math.max(0, capacity - active - dead);
+    return { capacity, active, dead, available, respawnsByTurn };
+}
+
 // Start a game (change status from recruiting to active) - ASYNCHRONOUS FRIENDLY
 router.post('/start/:gameId', async (req, res) => {
     const gameId = req.params.gameId;
@@ -856,6 +931,10 @@ router.get('/:gameId/state/:userId', async (req, res) => {
         }
         
         const gameState = await GameWorldManager.getPlayerGameState(gameId, parseInt(userId));
+        try {
+            const currentTurn = gameState?.currentTurn?.turn_number || await getCurrentTurnNumberServer(gameId);
+            gameState.pilotStats = await computePilotStats(gameId, parseInt(userId), currentTurn);
+        } catch (e) { console.warn('pilotStats error:', e?.message || e); }
         res.json(gameState);
         
     } catch (error) {
@@ -873,9 +952,9 @@ router.get('/:gameId/state/:userId/sector/:sectorId', async (req, res) => {
     try {
         // Verify user is in the game
         const membership = await new Promise((resolve, reject) => {
-    db.get(
+            db.get(
                 'SELECT * FROM game_players WHERE game_id = ? AND user_id = ?',
-        [gameId, userId],
+                [gameId, userId],
                 (err, result) => {
                     if (err) reject(err);
                     else resolve(result);
@@ -885,6 +964,10 @@ router.get('/:gameId/state/:userId/sector/:sectorId', async (req, res) => {
         if (!membership) return res.status(403).json({ error: 'Not authorized to view this game' });
 
         const gameState = await GameWorldManager.getPlayerGameState(gameId, parseInt(userId), parseInt(sectorId));
+        try {
+            const currentTurn = gameState?.currentTurn?.turn_number || await getCurrentTurnNumberServer(gameId);
+            gameState.pilotStats = await computePilotStats(gameId, parseInt(userId), currentTurn);
+        } catch (e) { console.warn('pilotStats error:', e?.message || e); }
         res.json(gameState);
     } catch (error) {
         console.error('❌ Get sector state error:', error);
@@ -1410,7 +1493,7 @@ router.post('/build-ship', (req, res) => {
     
     // Verify station ownership (starbase or station)
     db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type IN ("starbase","station")', 
-        [stationId, userId], (err, station) => {
+        [stationId, userId], async (err, station) => {
         if (err) {
             console.error('Error finding station:', err);
             return res.status(500).json({ error: 'Database error' });
@@ -1418,6 +1501,18 @@ router.post('/build-ship', (req, res) => {
         
         if (!station) {
             return res.status(404).json({ error: 'Station not found or not owned by player' });
+        }
+        
+        // Enforce pilot capacity (default pilotCost = 1; later blueprints can add property)
+        try {
+            const currentTurn = await getCurrentTurnNumberServer(station.game_id || (await new Promise(r=>db.get('SELECT game_id FROM sectors WHERE id = ?', [station.sector_id], (e,row)=>r(row?.game_id)))));
+            const stats = await computePilotStats(station.game_id || (await new Promise(r=>db.get('SELECT game_id FROM sectors WHERE id = ?', [station.sector_id], (e,row)=>r(row?.game_id)))), userId, currentTurn);
+            const pilotCost = 1; // blueprint-level override can be added later
+            if ((stats.available || 0) < pilotCost) {
+                return res.status(400).json({ error: 'No available pilots to command a new ship' });
+            }
+        } catch (e) {
+            console.warn('Pilot capacity check failed (continuing with build):', e?.message || e);
         }
         
         // Compute requirements (core + specialized)
@@ -1448,6 +1543,7 @@ router.post('/build-ship', (req, res) => {
                     blueprintId: blueprint.id,
                     role: blueprint.role,
                     class: blueprint.class,
+                    pilotCost: 1,
                     // Energy system (per class baseline)
                     ...(function(cls){
                         if (cls === 'frigate') return { energy: 6, maxEnergy: 6, energyRegen: 3 };
@@ -1752,26 +1848,45 @@ router.post('/deploy-structure', (req, res) => {
 // Build a basic Explorer for testing (1 rock)
 router.post('/build-basic-explorer', (req, res) => {
     const { stationId, userId } = req.body;
-    if (!stationId || !userId) return res.status(400).json({ error: 'Missing stationId or userId' });
-    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', [stationId, userId, 'station'], (err, station) => {
+
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', [stationId, userId, 'station'], async (err, station) => {
         if (err) {
             console.error('Error finding station:', err);
             return res.status(500).json({ error: 'Database error' });
         }
+        
         if (!station) return res.status(404).json({ error: 'Station not found or not owned by player' });
+        
+        // Enforce pilot capacity (pilotCost=1)
+        try {
+            const currentTurn = await getCurrentTurnNumberServer(station.game_id || (await new Promise(r=>db.get('SELECT game_id FROM sectors WHERE id = ?', [station.sector_id], (e,row)=>r(row?.game_id)))));
+            const stats = await computePilotStats(station.game_id || (await new Promise(r=>db.get('SELECT game_id FROM sectors WHERE id = ?', [station.sector_id], (e,row)=>r(row?.game_id)))), userId, currentTurn);
+            if ((stats.available || 0) < 1) {
+                return res.status(400).json({ error: 'No available pilots to command a new ship' });
+            }
+        } catch (e) { console.warn('Pilot capacity check failed (continuing):', e?.message || e); }
+
         CargoManager.removeResourceFromCargo(stationId, 'rock', 1, false)
             .then(result => {
-                if (!result.success) return res.status(400).json({ error: result.error || 'Insufficient rock' });
+                if (!result.success) {
+                    return res.status(400).json({ error: 'Insufficient resources' });
+                }
+
                 const shipMetaObj = {
-                    name: `Explorer ${Math.floor(Math.random() * 1000)}`,
-                    hp: 50, maxHp: 50, scanRange: 50,
-                    movementSpeed: 4, cargoCapacity: 10,
-                    harvestRate: 1.0, canMine: true, canActiveScan: false,
+                    name: 'Explorer',
+                    hp: 50,
+                    maxHp: 50,
+                    scanRange: 50,
+                    movementSpeed: 4,
+                    cargoCapacity: 10,
+                    harvestRate: 1.0,
+                    canMine: true,
+                    canActiveScan: false,
                     shipType: 'explorer',
-                    energy: 6, maxEnergy: 6, energyRegen: 3,
-                    abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience']
+                    pilotCost: 1
                 };
                 const shipMeta = JSON.stringify(shipMetaObj);
+
                 const spawnX = station.x + (Math.random() < 0.5 ? -1 : 1);
                 const spawnY = station.y + (Math.random() < 0.5 ? -1 : 1);
                 db.run(

@@ -587,6 +587,8 @@ class GameClient {
 
         const shipsEl = document.getElementById('shipsChip');
         const stationsEl = document.getElementById('stationsChip');
+        const pilotsEl = document.getElementById('pilotsChip');
+        const pilotsBreakdownEl = document.getElementById('pilotBreakdown');
 
         if (this.lastFleet && Array.isArray(this.lastFleet)) {
             const ships = this.lastFleet.filter(u => u.type === 'ship').length;
@@ -596,6 +598,22 @@ class GameClient {
         } else {
             if (shipsEl) shipsEl.textContent = '…';
             if (stationsEl) stationsEl.textContent = '…';
+        }
+
+        // Pilots display
+        const stats = this.gameState?.pilotStats;
+        if (stats && pilotsEl) {
+            pilotsEl.textContent = `${Math.max(0, stats.available || 0)} / ${stats.capacity || 0}`;
+            if (pilotsBreakdownEl) {
+                const buckets = Array.isArray(stats.respawnsByTurn) ? stats.respawnsByTurn
+                    .slice(0, 3)
+                    .map(b => `${b.turnsLeft}t:${b.count}`)
+                    .join(', ') : '';
+                pilotsBreakdownEl.textContent = `Active ${stats.active || 0} • Dead ${stats.dead || 0}${buckets ? ' • ' + buckets : ''}`;
+            }
+        } else {
+            if (pilotsEl) pilotsEl.textContent = '—';
+            if (pilotsBreakdownEl) pilotsBreakdownEl.textContent = '';
         }
 
         // Senate ring

@@ -109,3 +109,17 @@ CREATE INDEX IF NOT EXISTS idx_movement_history_ship ON movement_history(object_
 
 -- Index for movement history by game and turn (for cleanup and queries)
 CREATE INDEX IF NOT EXISTS idx_movement_history_game_turn ON movement_history(game_id, turn_number); 
+
+-- Pilot system: queue of dead pilots with respawn timers (per game and player)
+CREATE TABLE IF NOT EXISTS dead_pilots_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    count INTEGER NOT NULL DEFAULT 1,
+    respawn_turn INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_pilots_by_turn ON dead_pilots_queue(game_id, user_id, respawn_turn);

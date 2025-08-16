@@ -1568,6 +1568,23 @@ async function processCombatOrders(gameId, turnNumber) {
             const wreckMeta = { name: (tMeta.name || 'Wreck'), type: 'wreck', decayTurn: Number(turnNumber) + 7 };
             // Mark as wreck by updating type and meta
             await new Promise((resolve) => db.run('UPDATE sector_objects SET type = ?, meta = ?, updated_at = ? WHERE id = ?', ['wreck', JSON.stringify(wreckMeta), new Date().toISOString(), target.id], () => resolve()));
+            
+            // Queue dead pilots for respawn
+            try {
+                const pilotCost = Number(tMeta.pilotCost || 1);
+                const gameIdRow = await new Promise((resolve) => db.get('SELECT game_id FROM sectors WHERE id = (SELECT sector_id FROM sector_objects WHERE id = ?)', [target.id], (e, r) => resolve(r)));
+                const gameId = gameIdRow?.game_id;
+                if (gameId && target.owner_id) {
+                    await new Promise((resolve) => db.run(
+                        'INSERT INTO dead_pilots_queue (game_id, user_id, count, respawn_turn) VALUES (?, ?, ?, ?)',
+                        [gameId, target.owner_id, Math.max(1, pilotCost), Number(turnNumber) + 10],
+                        () => resolve()
+                    ));
+                }
+            } catch (e) {
+                console.warn('Failed to enqueue dead pilots:', e?.message || e);
+            }
+            
             // Loot: move portion of ship cargo into wreck (legacy table -> object_cargo)
             try {
                 const shipCargo = await CargoManager.getShipCargo(target.id);
