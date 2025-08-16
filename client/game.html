@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Starfront: Dominion - Game</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         * {
             margin: 0;
@@ -1558,10 +1559,10 @@
         .player-actions { display: flex; gap: 8px; justify-content: flex-end; }
     </style>
 </head>
-<body>
+<body class="text-slate-100">
     <div class="game-container">
         <!-- Top Bar -->
-        <div class="top-bar sf-card">
+        <div class="top-bar sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
             <div class="game-info">
                 <div class="game-title" id="gameTitle">🌌 Starfront: Dominion</div>
                 <div class="turn-status">
@@ -1583,7 +1584,7 @@
         </div>
         
         <!-- Left Panel - Units -->
-        <div class="left-panel sf-card">
+        <div class="left-panel sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
             <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                 <span>🚢 Your Fleet</span>
             </div>
@@ -1615,7 +1616,7 @@
         </div>
         
         <!-- Center Map -->
-        <div class="map-container sf-card">
+        <div class="map-container sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
             <canvas id="gameCanvas"></canvas>
             <div class="map-controls">
                 <button class="map-btn sf-btn sf-btn-secondary" onclick="zoomIn()">🔍+</button>
@@ -1626,7 +1627,7 @@
         </div>
         
         <!-- Right Panel - Selected Unit Info -->
-        <div class="right-panel sf-card">
+        <div class="right-panel sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
             <div class="panel-title">📊 Unit Details</div>
             <div id="unitDetails">
                 <div style="text-align: center; color: #666; padding: 20px;">
@@ -1636,7 +1637,7 @@
         </div>
         
         <!-- PlayerInformation panel at bottom-left, outside ChatNotification -->
-        <div id="playerInformation" class="sf-card player-card" style="grid-area: minimap;">
+        <div id="playerInformation" class="sf-card player-card rounded-2xl border border-white/10 backdrop-blur-xl" style="grid-area: minimap;">
             <div class="player-identity">
                 <div class="avatar-wrap">
                     <img id="playerAvatarMini" src="assets/avatars/explorer.png" alt="avatar" onerror="this.src='assets/avatars/explorer.png'">
@@ -1672,7 +1673,7 @@
         </div>
         
         <!-- Chat/Notification panel to the right -->
-        <div class="chat-notification sf-card" style="grid-area:auto; grid-column: 2 / span 1; min-height:0;">
+        <div class="chat-notification sf-card rounded-2xl border border-white/10 backdrop-blur-xl" style="grid-area:auto; grid-column: 2 / span 1; min-height:0;">
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 100%; min-height: 0;">
                 <div style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
                         <div class="panel-title" style="margin:0;">💬 Chat</div>
