@@ -38,22 +38,6 @@
           "tags": ["ship", "scan"],
           "summary": "Fast scout with strong sensors.",
           "content": "The Explorer is a versatile scouting vessel.\n\n“The Explorer is the ship equivalent of a multitool — it’s not the best knife, not the best screwdriver, and certainly not the best hammer… but in a pinch, it’s something. Built for new captains with shallow pockets and big dreams.”\n\n**Highlights**\n- Scan Range: 50\n- Speed: 4\n- Cargo: 10\n\nUse it to find belts, nebulae, and opportunities."
-        },
-        {
-          "id": "mining-vessel",
-          "title": "Mining Vessel",
-          "icon": "⛏️",
-          "tags": ["ship", "mining"],
-          "summary": "Optimized for resource extraction.",
-          "content": "Mining Vessels gather resources efficiently from nodes.\n\n**Tips**\n- Position in dense hotspots for best yield.\n- Watch cargo capacity and return to station to unload."
-        },
-        {
-          "id": "logistics",
-          "title": "Logistics Ship",
-          "icon": "🚚",
-          "tags": ["ship", "cargo"],
-          "summary": "Specialized hauler for transport.",
-          "content": "Logistics ships move cargo between outposts and bases.\n\nThey shine in team play and persistent economies."
         }
       ]
     },
@@ -114,50 +98,7 @@
       "name": "Ship Blueprints",
       "icon": "🚀",
       "entries": [
-        { "id": "wraith-scout", "title": "Wraith Scout (Frigate)", "icon": "🛸", "tags": ["stealth","scout"], "summary": "Spectrathene, Voidglass.", "content": "Invisible reconnaissance frigate. Ideal for deep recon, warp scouting, and uncovering cloaked ships. Longest scan range in its class; fragile in combat." },
-        { "id": "maul-brawler", "title": "Maul-Class Brawler Frigate (Frigate)", "icon": "🪓", "tags": ["brawler","armor"], "summary": "Starforged Carbon, Oblivium, Corvexite.", "content": "Close-range enforcer. Thick armor and short-range cannons excel at holding chokepoints and smashing light screens; slower and vulnerable to kiting." },
-        { "id": "lance-sniper", "title": "Lance Precision Sniper (Frigate)", "icon": "🎯", "tags": ["sniper"], "summary": "Auralite, Quarzon, Gravium.", "content": "Long-range assassin with a spinal mass driver. Picks off high-value targets from beyond typical ranges; extremely fragile up close." },
-        { "id": "viper-interceptor", "title": "Viper Interceptor (Frigate)", "icon": "⚡", "tags": ["interceptor"], "summary": "Fluxium, Tachytrium.", "content": "Fast pursuit craft to run down couriers and scouts. Deadly alone; folds under focus. Carries EMP torpedoes to disable engines." },
-        { "id": "needle-gunship", "title": "Needle Gunship (Frigate)", "icon": "🗡️", "tags": ["assassin"], "summary": "Auralite, Quarzon.", "content": "Precision alpha-strike platform to delete small ships. Best for surgical strikes; poor in prolonged engagements.\n\nAbilities & Systems:\n- Auralite Lance: Long-range burst (size: frigate), massive single-target damage, overpenetrates for 50% if it kills the first target; cooldown and energy cost.\n- Quarzon Micro-Missiles: Moderate tracking damage with sensor-scrambling shrapnel (−20% accuracy for 2 turns); low energy cost.\n- Phantom Burn: Active evasion/stealth shimmer; +80% evasion vs. turret fire, +50% missile dodge for short duration; energy cost.\n- Strike Vector Insertion: Short micro-warp reposition before/after strike; energy cost.\n\nPlaystyle: Line up the lance, reposition with Strike Vector, then Phantom Burn to escape. Sustained DPS is weak—time your volleys." },
-        { "id": "drill-skiff", "title": "Drill Skiff (Frigate)", "icon": "⛏️", "tags": ["miner"], "summary": "Magnetrine.", "content": "Entry miner with superb maneuverability in belts. Generates early resource advantage; must avoid all combat." },
-        { "id": "shade-ecm", "title": "Shade ECM Frigate (Frigate)", "icon": "📡", "tags": ["ecm"], "summary": "Cryphos, Nebryllium.", "content": "Electronic ghost that blinds targeting and disrupts comms. Flips fights without firing; dies quickly if focused." },
-        { "id": "sting-torpedo", "title": "Sting Torpedo Boat (Frigate)", "icon": "🚀", "tags": ["torpedo"], "summary": "Quarzon, Gravium.", "content": "Hit-and-run siege craft. Torpedoes cripple larger ships; long reloads and fragile hull demand timing." },
-        { "id": "swift-courier", "title": "Swift Courier (Frigate)", "icon": "📦", "tags": ["courier","logistics"], "summary": "Tachytrium, Fluxium.", "content": "Critical logistics runner. Keeps forward fleets supplied. Unarmed—must avoid contact." },
-        { "id": "raven-gunship-scout", "title": "Raven Gunship-Scout (Frigate)", "icon": "🦅", "tags": ["stealth","assault"], "summary": "Spectrathene, Auralite.", "content": "Hybrid scout-striker. Finds and eliminates light ships; less stealthy/lethal than specialists but versatile." },
-        { "id": "jackal-boarder", "title": "Jackal Interceptor-Boarder (Frigate)", "icon": "🪝", "tags": ["boarding","interceptor"], "summary": "Fluxium, Magnetrine.", "content": "Chases and latches for boarding. Terrifying to freighters; struggles vs. escorts." },
-        { "id": "mako-miner-raider", "title": "Mako Miner-Raider (Frigate)", "icon": "🏴‍☠️", "tags": ["miner","raider"], "summary": "Magnetrine, Nebryllium.", "content": "Pirate miner that steals mid-operation. Income and disruption; weaker yield than dedicated miners; ambush-capable." },
-        { "id": "ghost-ecm-torpedo", "title": "Ghost ECM-Torpedo (Frigate)", "icon": "👻", "tags": ["ecm","torpedo"], "summary": "Cryphos, Gravium.", "content": "Ambush predator; cloaks into range and unloads devastating torpedoes. Deadly first strike; vulnerable after." },
-        { "id": "kite-patrol", "title": "Kite Patrol Frigate (Frigate)", "icon": "🛡️", "tags": ["escort"], "summary": "Luminite, Magnetrine.", "content": "Escort and convoy guard; decent defense with some cargo. Protection-focused; weak offense." },
-
-        { "id": "warhammer-siege", "title": "Warhammer Gunline-Siege (Battleship)", "icon": "🏹", "tags": ["siege","gunline"], "summary": "Gravium, Drakonium.", "content": "Long-range planetary/station breaker. Dominates static defenses; weak to swarms/flanks." },
-        { "id": "bulwark-fortress", "title": "Bulwark Fortress (Battleship)", "icon": "🧱", "tags": ["fortress","defense"], "summary": "Oblivium, Luminite.", "content": "Holds chokepoints indefinitely. Excellent deterrent; slow to redeploy." },
-        { "id": "tempest-gunline", "title": "Tempest Gunline (Battleship)", "icon": "🌊", "tags": ["gunline"], "summary": "Quarzon, Drakonium.", "content": "Broadside brawler for long, grinding engagements. Devastating in formation; positioning sensitive." },
-        { "id": "cerberus-carrier", "title": "Cerberus Carrier-Battleship (Battleship)", "icon": "🛩️", "tags": ["carrier"], "summary": "Luminite, Heliox Ore.", "content": "Fighter-launching with strong shields. Projects force; struggles against heavy armor." },
-        { "id": "leviathan-beam", "title": "Leviathan Beam Destroyer (Battleship)", "icon": "🔆", "tags": ["beam","capital-killer"], "summary": "Auralite, Gravium.", "content": "Surgical capital killer. One charged shot swings battles; vulnerable during charge." },
-        { "id": "tidebreaker-dreadnought", "title": "Tidebreaker Torpedo Dreadnought (Battleship)", "icon": "🌊", "tags": ["torpedo","siege"], "summary": "Gravium, Tachytrium.", "content": "Salvo platform that annihilates capitals at range. Needs screens." },
-        { "id": "sentinel-ecm", "title": "Sentinel ECM Fortress (Battleship)", "icon": "📡", "tags": ["ecm","fortress"], "summary": "Cryphos, Nebryllium.", "content": "Battlefield disruptor; strips targeting and coordination. No direct threat alone." },
-        { "id": "harbormaster-logistics", "title": "Harbormaster Logistics Command (Battleship)", "icon": "⚓", "tags": ["logistics"], "summary": "Heliox Ore, Magnetrine.", "content": "Keeps fleets supplied; decisive in long wars. Must be defended." },
-        { "id": "atlas-tender", "title": "Atlas Fleet Tender (Battleship)", "icon": "🔧", "tags": ["repair","logistics"], "summary": "Heliox Ore, Luminite.", "content": "Mobile repair dock; game-changing sustain; defenseless alone." },
-        { "id": "aegis-defensive-carrier", "title": "Aegis Defensive Carrier (Battleship)", "icon": "🛡️", "tags": ["carrier","defense"], "summary": "Luminite, Heliox Ore.", "content": "Hybrid defense + fighter support. Great in attrition; lacks punch." },
-        { "id": "star-marshal", "title": "Star Marshal (Battleship)", "icon": "⭐", "tags": ["command","artillery"], "summary": "Auralite, Quarzon.", "content": "Combines artillery with fleet command buffs; boosts capability with ranged offense." },
-        { "id": "specter-siege", "title": "Specter Siege (Battleship)", "icon": "👻", "tags": ["siege","ecm"], "summary": "Gravium, Nebryllium.", "content": "Long-range destruction + ECM disruption; denies approach and prevents close engagement." },
-        { "id": "iron-anchor", "title": "Iron Anchor (Battleship)", "icon": "🏗️", "tags": ["logistics","fortress"], "summary": "Oblivium, Heliox Ore.", "content": "Immovable logistics stronghold; locks down sectors; high-value target." },
-
-        { "id": "eclipse-supercarrier", "title": "Eclipse Supercarrier (Capital)", "icon": "🛩️", "tags": ["supercarrier"], "summary": "Luminite, Heliox Ore.", "content": "Deploys massive fighter/bomber swarms; dominates control; must be screened." },
-        { "id": "leviathan-dreadnought", "title": "Leviathan Dreadnought (Capital)", "icon": "🐋", "tags": ["dreadnought"], "summary": "Gravium, Oblivium.", "content": "Floating fortress with unmatched broadside; controls sectors; very slow." },
-        { "id": "aurora-flagship", "title": "Aurora Flagship (Capital)", "icon": "🌅", "tags": ["flagship","command"], "summary": "Auralite, Quarzon.", "content": "Fleet-wide command boosts with pinpoint strikes; strategic centerpiece." },
-        { "id": "nemesis-siege-platform", "title": "Nemesis Siege Platform (Capital)", "icon": "🗡️", "tags": ["siege"], "summary": "Gravium, Drakonium.", "content": "Fortification annihilator; ends sieges quickly; needs protection." },
-        { "id": "phalanx-heavy-shield", "title": "Phalanx Heavy Shield Ship (Capital)", "icon": "🛡️", "tags": ["shield"], "summary": "Luminite, Oblivium.", "content": "Creates fleet-sized shield domes; critical in defense; energy-intensive." },
-        { "id": "eclipse-marauder", "title": "Eclipse Marauder (Capital)", "icon": "🕶️", "tags": ["stealth","ecm"], "summary": "Spectrathene, Voidglass.", "content": "Stealth battleship with devastating ambush potential and ECM; high risk if revealed." },
-
-        { "id": "colossus-mobile-shipyard", "title": "Colossus Mobile Shipyard (Capital)", "icon": "⚙️", "tags": ["shipyard","logistics"], "summary": "Magnetrine, Heliox Ore.", "content": "Constructs capitals in deep space; centerpiece of long campaigns; high-value piracy target." },
-        { "id": "oasis-worldship", "title": "Oasis Worldship (Capital)", "icon": "🏙️", "tags": ["trade","politics"], "summary": "Heliox Ore, Quarzon.", "content": "Mobile trade hub and political center; generates wealth while traveling." },
-        { "id": "atlas-prime-megafreighter", "title": "Atlas Prime Megafreighter (Capital)", "icon": "🚛", "tags": ["megafreighter","logistics"], "summary": "Heliox Ore, Tachytrium.", "content": "Moves immense resources between systems; vital to economic dominance." },
-        { "id": "artemis-exploration-carrier", "title": "Artemis Exploration Carrier (Capital)", "icon": "🧭", "tags": ["exploration"], "summary": "Auralite, Heliox Ore.", "content": "Charts deep space and anomalies; opens high-risk, high-reward routes and events." },
-        { "id": "bastion-fleet-anchor", "title": "Bastion Fleet Anchor (Capital)", "icon": "⚓", "tags": ["anchor","defense"], "summary": "Oblivium, Luminite.", "content": "Permanent forward base that locks down sectors." },
-        { "id": "behemoth-planet-cracker", "title": "Behemoth Planet-Cracker (Capital)", "icon": "🪓", "tags": ["industrial"], "summary": "Magnetrine, Drakonium.", "content": "Tears apart moons/planets for resources; massive political and environmental fallout." },
-        { "id": "aether-gas-refinery", "title": "Aether Gas Refinery (Capital)", "icon": "🏭", "tags": ["refinery"], "summary": "Heliox Ore, Tachytrium.", "content": "Refines volatile gases for high-tech fuel; essential for energy-weapon fleets." },
-        { "id": "auric-prospecting-ark", "title": "Auric Prospecting Ark (Capital)", "icon": "🔎", "tags": ["prospecting"], "summary": "Auralite, Quarzon.", "content": "Locates the rarest minerals in the galaxy; major strategic investment." }
+        { "id": "explorer", "title": "Explorer (Frigate)", "icon": "🔍", "tags": ["scout"], "summary": "Spectrathene, Auralite.", "content": "Fast scout with strong sensors and exploration kit." }
       ]
     },
     {

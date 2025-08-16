@@ -30,6 +30,7 @@ class GameClient {
         this.fogOffscreen = null;
         this.lastFleet = null; // Cached fleet for stats strip
         this.senateProgress = 0; // 0-100 senate update meter
+        this.turnCountdownTimer = null;
     }
 
     async fetchSectorTrails() {
@@ -319,6 +320,7 @@ class GameClient {
 
         // Update turn counter
         document.getElementById('turnCounter').textContent = `Turn ${this.gameState.currentTurn.turn_number}`;
+        this.updateTurnCountdown();
         
         // Update game title with sector name
         const gameTitle = document.getElementById('gameTitle');
@@ -495,6 +497,48 @@ class GameClient {
         }
     }
 
+    updateTurnCountdown() {
+        try {
+            const countdownEl = document.getElementById('turnCountdown');
+            if (!countdownEl) return;
+            const autoMin = this.gameState?.autoTurnMinutes;
+            const createdAt = this.gameState?.currentTurn?.created_at;
+            if (typeof autoMin !== 'number' || !createdAt) {
+                countdownEl.style.display = 'none';
+                if (this.turnCountdownTimer) { clearInterval(this.turnCountdownTimer); this.turnCountdownTimer = null; }
+                return;
+            }
+            const dueMs = autoMin * 60 * 1000;
+            // Normalize SQLite timestamp (UTC without timezone) to ISO UTC
+            const createdStr = String(createdAt);
+            const normalized = createdStr.includes('T') ? createdStr : (createdStr.replace(' ', 'T') + 'Z');
+            const createdMs = Date.parse(normalized);
+            if (!Number.isFinite(createdMs) || dueMs <= 0) {
+                countdownEl.style.display = 'none';
+                if (this.turnCountdownTimer) { clearInterval(this.turnCountdownTimer); this.turnCountdownTimer = null; }
+                return;
+            }
+            const tick = () => {
+                const remaining = (createdMs + dueMs) - Date.now();
+                if (remaining <= 0) {
+                    countdownEl.textContent = 'Next in 00:00';
+                } else {
+                    const totalSec = Math.floor(remaining / 1000);
+                    const m = Math.floor(totalSec / 60);
+                    const s = totalSec % 60;
+                    const h = Math.floor(m / 60);
+                    const mm = (h > 0) ? String(m % 60).padStart(2,'0') : String(m).padStart(2,'0');
+                    const ss = String(s).padStart(2,'0');
+                    countdownEl.textContent = h > 0 ? `Next in ${h}:${mm}:${ss}` : `Next in ${mm}:${ss}`;
+                }
+            };
+            countdownEl.style.display = '';
+            if (this.turnCountdownTimer) clearInterval(this.turnCountdownTimer);
+            tick();
+            this.turnCountdownTimer = setInterval(tick, 1000);
+        } catch {}
+    }
+
     // Update player avatar display
     updatePlayerAvatar() {
         const avatarImg = document.getElementById('playerAvatar');
@@ -546,7 +590,7 @@ class GameClient {
 
         if (this.lastFleet && Array.isArray(this.lastFleet)) {
             const ships = this.lastFleet.filter(u => u.type === 'ship').length;
-            const stations = this.lastFleet.filter(u => u.type === 'starbase' || u.type === 'station').length;
+            const stations = this.lastFleet.filter(u => u.type === 'station').length;
             if (shipsEl) shipsEl.textContent = String(ships);
             if (stationsEl) stationsEl.textContent = String(stations);
         } else {
@@ -609,7 +653,7 @@ class GameClient {
         const icons = {
             // Ships and stations
             'ship': '🚢',
-            'starbase': '🏭',
+            'station': '🏭',
             
             // Celestial objects
             'star': '⭐',
@@ -739,16 +783,20 @@ class GameClient {
         const passiveChips = [];
         const abilities = Array.isArray(meta.abilities) ? meta.abilities : [];
         const abilityDefs = window.AbilityDefs || {
+            // Ship: Explorer abilities
             dual_light_coilguns: { name: 'Dual Light Coilguns', description: 'Low-caliber kinetic repeaters.', cooldown: 1, energyCost: 0, target: 'enemy', range: 6, type: 'offense' },
             boost_engines: { name: 'Boost Engines', description: 'Increase travel speed by 25% for 3 turns.', cooldown: 20, energyCost: 2, target: 'self', type: 'active' },
             jury_rig_repair: { name: 'Jury-Rig Repair', description: 'Restore 5% hull per turn for 3 turns.', cooldown: 20, energyCost: 3, target: 'self', type: 'active' },
             survey_scanner: { name: 'Survey Scanner', description: 'Double scan range for 3 turns.', cooldown: 6, energyCost: 2, target: 'self', type: 'active' },
             duct_tape_resilience: { name: 'Duct Tape Resilience', description: 'First hit at full HP reduced by 25%.', cooldown: 0, energyCost: 0, target: 'self', type: 'passive' },
+            //Ship: Needle Gunship abilities
             auralite_lance: { name: 'Auralite Lance', description: 'Long-range burst; overpenetrates.', cooldown: 3, energyCost: 4, target: 'enemy', range: 15, type: 'offense' },
             quarzon_micro_missiles: { name: 'Quarzon Micro-Missiles', description: 'Moderate tracking with debuff.', cooldown: 1, energyCost: 2, target: 'enemy', range: 10, type: 'offense' },
             phantom_burn: { name: 'Phantom Burn', description: 'Evasion boost.', cooldown: 4, energyCost: 3, target: 'self', type: 'active' },
             strike_vector: { name: 'Strike Vector', description: 'Short reposition.', cooldown: 3, energyCost: 3, target: 'position', range: 3, type: 'active' }
         };
+        // Expose globally for render and interaction helpers
+        window.AbilityDefs = window.AbilityDefs || abilityDefs;
         abilities.forEach(key => {
             const def = abilityDefs[key];
             if (!def) return;
@@ -798,14 +846,14 @@ class GameClient {
                 ${meta.scanRange ? `
                 <div class="stat-item">
                     <span>Scan Range:</span>
-                    <span>${meta.scanRange}</span>
+                    <span>${this.getEffectiveScanRange(unit)}</span>
                 </div>
                 ` : ''}
                 
                 ${meta.movementSpeed ? `
                 <div class="stat-item">
                     <span>Movement:</span>
-                    <span>${meta.movementSpeed} tiles/turn</span>
+                    <span>${this.getEffectiveMovementSpeed(unit)} tiles/turn</span>
                 </div>
                 ` : ''}
                 
@@ -816,18 +864,9 @@ class GameClient {
                 </div>
                 ` : ''}
                 
-                ${meta.canActiveScan ? `
-                <div class="stat-item">
-                    <span>🔍 Active Scan Range:</span>
-                    <span>${meta.activeScanRange || meta.scanRange * 2 || 10} tiles</span>
-                </div>
-                <div class="stat-item">
-                    <span>💡 Scan Cost:</span>
-                    <span>${meta.activeScanCost || 1} energy</span>
-                </div>
-                ` : ''}
                 
-                ${unit.type === 'ship' && meta.cargoCapacity ? `
+                
+                ${meta.cargoCapacity ? `
                 <div class="stat-item">
                     <span>📦 Cargo:</span>
                     <span id="cargoStatus">Loading...</span>
@@ -865,8 +904,14 @@ class GameClient {
                     <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
                         📦 Cargo
                     </button>
-                    <button class="sf-btn sf-btn-secondary" onclick="scanArea()" ${this.turnLocked || !meta.canActiveScan ? 'disabled' : ''}>
-                        ${meta.canActiveScan ? '🔍 Active Scan' : '🔍 Scan Area (N/A)'}
+                    
+                ` : ''}
+                ${(unit.type === 'station') ? `
+                    <button class="sf-btn sf-btn-secondary" onclick="showBuildModal()" ${this.turnLocked ? 'disabled' : ''}>
+                        🏗️ Build
+                    </button>
+                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? '' : ''}>
+                        📦 Cargo
                     </button>
                 ` : ''}
                 
@@ -880,7 +925,7 @@ class GameClient {
             </div>
         `;
         
-        // Update cargo status for ships and structures with cargo
+        // Update cargo status for any unit with cargo capacity
         if (unit && unit.meta && unit.meta.cargoCapacity) {
             updateCargoStatus(unit.id);
         }
@@ -948,6 +993,29 @@ class GameClient {
         } catch {}
     }
 
+    // Compute effective movement speed client-side for UI only
+    getEffectiveMovementSpeed(unit) {
+        try {
+            const base = unit?.meta?.movementSpeed || 0;
+            // Static base, modulated by temporary movement boost hint if present
+            const boostMult = (typeof unit?.meta?.movementBoostMultiplier === 'number' && unit.meta.movementBoostMultiplier > 0) ? unit.meta.movementBoostMultiplier : 1;
+            const effective = Math.max(1, Math.floor(base * boostMult));
+            return effective;
+        } catch { return unit?.meta?.movementSpeed || 0; }
+    }
+
+    // Compute effective scan range for display (includes temporary multiplier hints)
+    getEffectiveScanRange(unit) {
+        try {
+            const meta = unit?.meta || {};
+            let range = meta.scanRange || 0;
+            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+                range = Math.ceil(range * meta.scanRangeMultiplier);
+            }
+            return range;
+        } catch { return unit?.meta?.scanRange || 0; }
+    }
+
     // Render the game map
     render() {
         if (!this.canvas || !this.objects) return;
@@ -994,6 +1062,7 @@ class GameClient {
         if (def.target === 'self') {
             this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit.id, abilityKey });
             this.addLogEntry(`Queued ${def.name}`, 'info');
+            console.log(`🧪 Ability queued: key=${abilityKey} name=${def.name} ship=${this.selectedUnit.id}`);
         } else if (def.target === 'position') {
             // Next click on the map will provide position
             this.pendingAbility = { key: abilityKey, def };
@@ -1023,7 +1092,7 @@ class GameClient {
 
     // Draw fog of war: dim everything, then punch radial gradients around owned sensors
     drawFogOfWar(ctx, centerX, centerY) {
-        const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'starbase' || obj.type === 'sensor-tower'));
+        const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'station' || obj.type === 'sensor-tower'));
         if (ownedSensors.length === 0) return;
         const canvas = this.canvas;
         // Create offscreen buffer if needed
@@ -1041,7 +1110,11 @@ class GameClient {
         fctx.globalCompositeOperation = 'destination-out';
         ownedSensors.forEach(sensor => {
             const meta = sensor.meta || {};
-            const scanRange = meta.scanRange || 5;
+            let scanRange = meta.scanRange || 5;
+            // Apply temporary multiplier hint if present (set by server when survey_scanner active)
+            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+                scanRange = Math.ceil(scanRange * meta.scanRangeMultiplier);
+            }
             const screenX = Math.round((sensor.x - this.camera.x) * this.tileSize + centerX);
             const screenY = Math.round((sensor.y - this.camera.y) * this.tileSize + centerY);
             const radiusPx = scanRange * this.tileSize;
@@ -1147,7 +1220,7 @@ class GameClient {
         const isOwned = obj.owner_id === this.userId;
         const visibility = obj.visibilityStatus || { visible: isOwned, dimmed: false };
         const isCelestial = this.isCelestialObject(obj);
-        const isShip = obj.type === 'ship' || obj.type === 'starbase';
+        const isShip = obj.type === 'ship' || obj.type === 'station';
         
         // Calculate actual size based on object radius or default
         let objectRadius = obj.radius || 1;
@@ -2154,7 +2227,7 @@ class GameClient {
         
         // Fog mask on minimap (mirror of main fog)
         if (this.fogEnabled) {
-            const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'starbase' || obj.type === 'sensor-tower'));
+            const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'station' || obj.type === 'sensor-tower'));
             if (ownedSensors.length > 0) {
                 // Base dark overlay
                 ctx.save();
@@ -2163,7 +2236,10 @@ class GameClient {
                 ctx.globalCompositeOperation = 'destination-out';
                 ownedSensors.forEach(sensor => {
                     const meta = sensor.meta || {};
-                    const scanRange = meta.scanRange || 5;
+                    let scanRange = meta.scanRange || 5;
+                    if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+                        scanRange = Math.ceil(scanRange * (meta.scanRangeMultiplier));
+                    }
                     const sx = sensor.x * scaleX;
                     const sy = sensor.y * scaleY;
                     const radius = scanRange * Math.max(scaleX, scaleY);
@@ -2534,7 +2610,7 @@ class GameClient {
                     const meta = unit.meta ? JSON.parse(unit.meta) : {};
                     if (onlyFav && !this.isFavoriteUnit(unit.id)) return false;
                     if (typeFilter !== 'all') {
-                        const t = unit.type === 'ship' ? 'ship' : (unit.type === 'starbase' ? 'starbase' : 'structure');
+                        const t = unit.type === 'ship' ? 'ship' : (unit.type === 'station' ? 'station' : 'structure');
                         if (t !== typeFilter) return false;
                     }
                     const status = this.getUnitStatus(meta, unit);
@@ -2628,7 +2704,7 @@ class GameClient {
     getUnitIcon(unitType) {
         switch (unitType) {
             case 'ship': return '🚢';
-            case 'starbase': return '🏭';
+            case 'station': return '🏭';
             case 'station': return '🛰️';
             case 'storage-structure': return '📦';
             case 'warp-beacon': return '🌌';
@@ -3675,7 +3751,7 @@ class GameClient {
         // Add player-owned structures (starbases, stations, etc.)
         const playerStructures = this.objects.filter(obj => 
             obj.owner_id === this.userId && 
-            (obj.type === 'starbase' || obj.type === 'station') && 
+            (obj.type === 'station') && 
             obj.id !== ship.id // Don't include the ship itself
         );
         targets.push(...playerStructures);
@@ -3721,7 +3797,7 @@ class GameClient {
         } else {
             // Player structures
             switch (target.type) {
-                case 'starbase': return '🏭';
+                case 'station': return '🏭';
                 case 'station': return '🛰️';
                 case 'warp-beacon': return '🌌';
                 case 'storage-structure': return '📦';
@@ -3749,7 +3825,7 @@ class GameClient {
             // Player structures
             if (target.owner_id === this.userId) {
                 switch (target.type) {
-                    case 'starbase': return 'Your Starbase';
+                    case 'station': return 'Your Station';
                     case 'station': return 'Your Station';
                     case 'warp-beacon': return 'Your Warp Beacon';
                     case 'storage-structure': return 'Your Storage';
@@ -4211,82 +4287,7 @@ function setWarpMode() {
     }
 }
 
-async function scanArea() {
-    if (!gameClient || !gameClient.selectedUnit) {
-        gameClient?.addLogEntry('No unit selected for scanning', 'warning');
-        return;
-    }
-    
-    const unit = gameClient.selectedUnit;
-    const meta = unit.meta;
-    
-    // Check if unit can perform active scans
-    if (!meta.canActiveScan) {
-        gameClient.addLogEntry('Selected unit cannot perform active scans', 'warning');
-        UI.showAlert('This unit does not have active scanning capabilities');
-        return;
-    }
-    
-    // Check energy requirements
-    const energyCost = meta.activeScanCost || 1;
-    if (meta.energy !== undefined && meta.energy < energyCost) {
-        gameClient.addLogEntry('Insufficient energy for active scan', 'warning');
-        UI.showAlert(`Active scan requires ${energyCost} energy. Current: ${meta.energy || 0}`);
-        return;
-    }
-    
-    try {
-        gameClient.addLogEntry('Performing active scan...', 'info');
-        // Show scanning status immediately
-        unit.meta.scanningActive = true;
-        gameClient.updateUnitDetails();
-        
-        const response = await fetch(`/game/scan/${gameClient.gameId}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                userId: gameClient.userId,
-                unitId: unit.id,
-                scanType: 'active'
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            gameClient.addLogEntry(`Active scan complete! Revealed ${data.tilesRevealed} new tiles`, 'success');
-            
-            // Update unit energy display
-            if (data.energyRemaining !== undefined) {
-                unit.meta.energy = data.energyRemaining;
-                gameClient.updateUnitDetails(); // Refresh the unit details panel
-            }
-            // Clear scanning indicator shortly after
-            setTimeout(() => {
-                unit.meta.scanningActive = false;
-                gameClient.updateUnitDetails();
-            }, 1200);
-            
-            // Refresh game state to show newly revealed objects
-            await gameClient.loadGameState();
-            
-        } else {
-            gameClient.addLogEntry(`Scan failed: ${data.error}`, 'error');
-            UI.showAlert(`Active scan failed: ${data.error}`);
-            unit.meta.scanningActive = false;
-            gameClient.updateUnitDetails();
-        }
-        
-    } catch (error) {
-        console.error('Active scan error:', error);
-        gameClient.addLogEntry('Active scan connection failed', 'error');
-        UI.showAlert('Connection failed. Please try again.');
-        unit.meta.scanningActive = false;
-        gameClient.updateUnitDetails();
-    }
-}
+// Active scan removed; abilities now drive scanning via buffs like 'survey_scanner'.
 
 // Show build modal with tabbed interface
 async function showBuildModal() {
@@ -4296,7 +4297,7 @@ async function showBuildModal() {
     }
 
     const selectedStation = gameClient.selectedUnit;
-    if (selectedStation.type !== 'starbase') {
+    if (selectedStation.type !== 'station') {
         gameClient.addLogEntry('Only stations can build', 'warning');
         return;
     }
@@ -4340,12 +4341,93 @@ async function showBuildModal() {
                     <h3>🚢 Ship Construction</h3>
             <div class="build-options" id="shipyard-container"></div>
                 </div>
+                <div class="build-section">
+                    <h3>🧪 Test: Quick Ship Builds</h3>
+                    <div class="build-options">
+                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">🔍 Explorer (Test)</div>
+                                <div class="build-description">Basic Explorer ship for testing</div>
+                                <div class="build-stats">
+                                    • Speed: 4 • Scan: 50 • Cargo: 10
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 1 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
+                                        onclick="buildBasicExplorer(1)" 
+                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div id="structures-tab" class="build-tab-content hidden">
                 <div class="build-section">
                     <h3>🏗️ Structure Manufacturing</h3>
                     <div class="build-options">
+                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">☀️ Sun Station</div>
+                                <div class="build-description">Anchors in orbit around a star (one per star)</div>
+                                <div class="build-stats">
+                                    • Cargo: 50 units<br>
+                                    • Must be adjacent to a star<br>
+                                    • One station per star
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 1 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
+                                        onclick="buildStructure('sun-station', 1)" 
+                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">🪐 Planet Station</div>
+                                <div class="build-description">Anchors in orbit around a planet (one per planet)</div>
+                                <div class="build-stats">
+                                    • Cargo: 50 units<br>
+                                    • Must be adjacent to a planet<br>
+                                    • One station per planet
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 1 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
+                                        onclick="buildStructure('planet-station', 1)" 
+                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
+                            <div class="build-info">
+                                <div class="build-name">🌘 Moon Station</div>
+                                <div class="build-description">Anchors in orbit around a moon (one per moon)</div>
+                                <div class="build-stats">
+                                    • Cargo: 50 units<br>
+                                    • Must be adjacent to a moon<br>
+                                    • One station per moon
+                                </div>
+                            </div>
+                            <div class="build-cost">
+                                <div class="cost-item">🪨 1 Rock</div>
+                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
+                                        onclick="buildStructure('moon-station', 1)" 
+                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
+                                    Build
+                                </button>
+                            </div>
+                        </div>
                         <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
                             <div class="build-info">
                                 <div class="build-name">📦 Storage Box</div>
@@ -4535,31 +4617,21 @@ async function renderShipyard(selectedStation, cargo) {
         'supercarrier': { 'Ferrite Alloy': 1.2, 'Crytite': 1.2 }
     };
     const SPECIALIZED_TOTAL = { frigate: 20, battleship: 100, capital: 300 };
-    const computeReqs = (bp) => {
-        const base = CORE_BASELINES[bp.class];
-        const mod = ROLE_CORE_MODIFIERS[bp.role] || {};
-        const core = Object.fromEntries(Object.entries(base).map(([k,v]) => [k, Math.max(1, Math.round(v * (mod[k]||1)))]));
-        const tot = SPECIALIZED_TOTAL[bp.class] || 0;
-        const n = Math.max(1, bp.specialized.length);
-        const per = Math.max(1, Math.floor(tot / n));
-        const spec = {};
-        bp.specialized.forEach((s,i)=> spec[s] = per + (i < (tot - per*n) ? 1 : 0));
-        return { core, specialized: spec };
-    };
+    // Requirements now come from server per blueprint (static). No client-side compute fallback.
 
-    const tabs = ['frigate','battleship','capital'];
+    const tabs = ['frigate'];
     // Build refined role list from server-provided mapping; fallback to original role if missing
     const refinedAll = Array.from(new Set(blueprints.map(b=>b.refinedRole || b.role)));
     // Keep a stable order grouped for UX
     const REFINED_ORDER = [
         // Combat
-        'brawler','sniper-siege','interceptor','heavy-assault','stealth-strike','carrier',
+        'brawler','sniper-siege','interceptor','heavy-assault','stealth-strike',
         // Support & Utility
         'escort','command','medical-repair','logistics',
         // Exploration & Expansion
-        'scout-recon','colony-ship','prospector-miner','gas-harvester','salvage',
+        'scout-recon','prospector-miner','gas-harvester','salvage',
         // Specialist
-        'ecm-disruption','torpedo-missile','fortress','flagship'
+        'ecm-disruption','torpedo-missile'
     ];
     const LABELS = {
         'brawler': 'Brawler',
@@ -4652,10 +4724,9 @@ async function renderShipyard(selectedStation, cargo) {
     const renderList = () => {
         list.innerHTML = '';
         blueprints.filter(b=>b.class===active && (!activeRole || (b.refinedRole||b.role)===activeRole)).forEach(bp => {
-            const reqs = bp.requirements ? bp.requirements : computeReqs(bp);
+            const reqs = bp.requirements ? bp.requirements : { core: {}, specialized: {} };
             const wrap = document.createElement('div');
             wrap.className = 'build-option';
-            const specChips = bp.specialized.map(s=>`<span class="chip">${s}</span>`).join(' ');
             const reqRows = (obj) => Object.entries(obj).map(([k,v])=>{
                 const have = haveMap.get(k) || 0;
                 const ok = have >= v;
@@ -4665,7 +4736,7 @@ async function renderShipyard(selectedStation, cargo) {
             wrap.innerHTML = `
                 <div class="build-info">
                     <div class="build-name">${bp.name}</div>
-                    <div class="build-description">Class: ${bp.class} • Role: ${(LABELS[bp.refinedRole]||LABELS[bp.role]||bp.refinedRole||bp.role)} • Specialized: ${specChips}</div>
+                    <div class="build-description">Class: ${bp.class} • Role: ${(LABELS[bp.refinedRole]||LABELS[bp.role]||bp.refinedRole||bp.role)}</div>
                     <div class="build-reqs"><h4>Core</h4>${reqRows(reqs.core)}<h4>Specialized</h4>${reqRows(reqs.specialized)}</div>
                 </div>
                 <div class="build-cost">
@@ -4774,6 +4845,32 @@ async function buildStructure(structureType, cost) {
     } catch (error) {
         console.error('Error building structure:', error);
         gameClient.addLogEntry('Failed to build structure', 'error');
+    }
+}
+
+// Build a test Explorer for 1 rock
+async function buildBasicExplorer(cost) {
+    if (!gameClient || !gameClient.selectedUnit) {
+        gameClient?.addLogEntry('No station selected', 'warning');
+        return;
+    }
+    try {
+        const response = await fetch('/game/build-basic-explorer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stationId: gameClient.selectedUnit.id, userId: gameClient.userId })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
+            UI.closeModal();
+            await gameClient.loadGameState();
+        } else {
+            gameClient.addLogEntry(data.error || 'Failed to build Explorer', 'error');
+        }
+    } catch (error) {
+        console.error('Error building basic explorer:', error);
+        gameClient.addLogEntry('Failed to build Explorer', 'error');
     }
 }
 
@@ -5770,10 +5867,10 @@ function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
         const isOwned = obj.owner_id === gameClient.userId;
         
         // Ship/station size for full map
-        const size = obj.type === 'starbase' ? 8 : 6;
+        const size = obj.type === 'station' ? 8 : 6;
         
-        if (obj.type === 'starbase') {
-            // Starbase - square
+        if (obj.type === 'station') {
+            // Station - square
             ctx.fillStyle = isOwned ? '#4CAF50' : '#F44336';
             ctx.fillRect(x - size/2, y - size/2, size, size);
         } else {

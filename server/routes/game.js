@@ -155,7 +155,7 @@ class GameWorldManager {
                     console.warn(`⚠️ No planets found for ${player.username}, using fallback spawn at (${spawnX}, ${spawnY})`);
                 }
                 
-                // Create starting starbase at calculated position
+                // Create starting station at calculated position
                 const starbaseMetaObj = {
                     name: `${player.username} Prime Station`,
                     hp: 100,
@@ -168,28 +168,28 @@ class GameWorldManager {
                 
                 db.run(
                     'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sectorId, 'starbase', spawnX, spawnY, player.user_id, starbaseMeta, starbaseMetaObj.scanRange, 0],
+                    [sectorId, 'station', spawnX, spawnY, player.user_id, starbaseMeta, starbaseMetaObj.scanRange, 0],
                     function(err) {
                         if (err) {
-                            console.error('Error creating starbase:', err);
+                            console.error('Error creating station:', err);
                             return onError(err);
                         }
                         
                         const starbaseId = this.lastID;
-                        console.log(`🏭 Created starbase for ${player.username} at (${spawnX}, ${spawnY})`);
+                        console.log(`🏭 Created station for ${player.username} at (${spawnX}, ${spawnY})`);
                         
-                        // Initialize cargo system for the starbase
+                        // Initialize cargo system for the station
                         CargoManager.initializeObjectCargo(starbaseId, 50)
                             .then(() => {
-                                console.log(`📦 Initialized cargo system for starbase ${starbaseId}`);
-                                // Add 5 starting rocks for testing
-                                return CargoManager.addResourceToCargo(starbaseId, 'rock', 5, false);
+                                console.log(`📦 Initialized cargo system for station ${starbaseId}`);
+                                // Add 25 starting rocks for testing
+                                return CargoManager.addResourceToCargo(starbaseId, 'rock', 25, false);
                             })
                             .then(() => {
-                                console.log(`🪨 Added 5 starting rocks to starbase ${starbaseId}`);
+                                console.log(`🪨 Added 25 starting rocks to station ${starbaseId}`);
                             })
                             .catch(error => {
-                                console.error('Error initializing starbase cargo or adding rocks:', error);
+                                console.error('Error initializing station cargo or adding rocks:', error);
                             });
                         
                         // Create starting ship adjacent to starbase
@@ -203,7 +203,7 @@ class GameWorldManager {
                             cargoCapacity: 10,
                             harvestRate: 1.0,
                             canMine: true,
-                            canActiveScan: true,
+                            canActiveScan: false,
                             shipType: 'explorer',
                             // Energy and abilities for explorer starter
                             energy: 6,
@@ -215,7 +215,7 @@ class GameWorldManager {
                         
                         db.run(
                             'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                            [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, shipMetaObj.canActiveScan ? 1 : 0],
+                            [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
                             function(err) {
                                 if (err) {
                                     console.error('Error creating ship:', err);
@@ -270,7 +270,7 @@ class GameWorldManager {
     static async calculatePlayerVision(gameId, userId, turnNumber) {
         return new Promise((resolve, reject) => {
                     db.all(
-                'SELECT id, sector_id, x, y, meta FROM sector_objects WHERE owner_id = ? AND type IN ("ship", "starbase")',
+                'SELECT id, sector_id, x, y, meta FROM sector_objects WHERE owner_id = ? AND type IN ("ship", "station")',
                 [userId],
                         (err, units) => {
                             if (err) return reject(err);
@@ -291,8 +291,17 @@ class GameWorldManager {
                         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
                         const sensors = sectorUnits.map(u => {
                             const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
-                                const scanRange = meta.scanRange || 5;
-                            const detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
+                            let scanRange = meta.scanRange || 5;
+                            let detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
+                            // Apply active survey scanner effect when present (multiplier)
+                            // Read effects directly for this unit
+                            try {
+                                // Synchronous read via db.prepare isn't available here in this style; do a simple multiplier present in meta (fallback).
+                                if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+                                    scanRange = Math.ceil(scanRange * meta.scanRangeMultiplier);
+                                    detailedRange = Math.ceil(detailedRange * meta.scanRangeMultiplier);
+                                }
+                            } catch {}
                             minX = Math.min(minX, u.x - scanRange);
                             maxX = Math.max(maxX, u.x + scanRange);
                             minY = Math.min(minY, u.y - scanRange);
@@ -419,7 +428,7 @@ class GameWorldManager {
         return new Promise((resolve, reject) => {
             // Get all player's vision sources (ships, starbases, sensor-tower if present)
             db.all(
-                'SELECT id, x, y, meta FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND type IN ("ship", "starbase", "sensor-tower")',
+                'SELECT id, x, y, meta FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND type IN ("ship", "station", "sensor-tower")',
                 [sectorId, userId],
                 (err, units) => {
                     if (err) return reject(err);
@@ -429,8 +438,14 @@ class GameWorldManager {
                     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
                     const sensors = units.map(u => {
                         const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
-                        const scanRange = meta.scanRange || 5;
-                        const detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
+                        let scanRange = meta.scanRange || 5;
+                        let detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
+                        try {
+                            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+                                scanRange = Math.ceil(scanRange * meta.scanRangeMultiplier);
+                                detailedRange = Math.ceil(detailedRange * meta.scanRangeMultiplier);
+                            }
+                        } catch {}
                         minX = Math.min(minX, u.x - scanRange);
                         maxX = Math.max(maxX, u.x + scanRange);
                         minY = Math.min(minY, u.y - scanRange);
@@ -520,7 +535,7 @@ class GameWorldManager {
                         .then(visibleMap => {
                             const visibleIds = Array.from(visibleMap.keys());
                             const ownedQuery = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
-                                                    mo.destination_x, mo.destination_y, mo.movement_path, mo.eta_turns, mo.status as movement_status,
+                                                    mo.destination_x, mo.destination_y, mo.movement_path, mo.current_step, mo.movement_speed, mo.eta_turns, mo.status as movement_status,
                                 mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
                                                     ht.id as harvesting_task_id, ht.status as harvesting_status, ht.harvest_rate, ht.total_harvested, rt.resource_name as harvesting_resource
                          FROM sector_objects so
@@ -530,7 +545,7 @@ class GameWorldManager {
                          LEFT JOIN resource_types rt ON rn.resource_type_id = rt.id
                                                WHERE so.sector_id = ? AND so.owner_id = ?`;
                             const nonOwnedVisibleQueryBase = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
-                                                    mo.destination_x, mo.destination_y, mo.movement_path, mo.eta_turns, mo.status as movement_status,
+                                                    mo.destination_x, mo.destination_y, mo.movement_path, mo.current_step, mo.movement_speed, mo.eta_turns, mo.status as movement_status,
                                                     mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
                                                     ht.id as harvesting_task_id, ht.status as harvesting_status, ht.harvest_rate, ht.total_harvested, rt.resource_name as harvesting_resource
                                                FROM sector_objects so
@@ -636,6 +651,14 @@ class GameWorldManager {
                                                 (err, playerData) => {
                                                     if (err) return reject(err);
                                                     
+                                                    // Get auto turn minutes from game settings
+                                                    db.get(
+                                                        'SELECT auto_turn_minutes FROM games WHERE id = ?',
+                                                        [gameId],
+                                                        (err, gameRow) => {
+                                                            if (err) return reject(err);
+                                                            const autoTurnMinutes = (gameRow && gameRow.auto_turn_minutes !== undefined) ? gameRow.auto_turn_minutes : null;
+                                                            
                                                     // Parse meta JSON and determine visibility status for objects
                                                     const parsedObjects = objects.map(obj => {
                                                     let meta;
@@ -662,8 +685,10 @@ class GameWorldManager {
                                                                 plannedDestination: obj.destination_x && obj.destination_y ? 
                                                                     { x: obj.destination_x, y: obj.destination_y } : null,
                                                                 movementETA: obj.eta_turns,
-                                                                movementActive: obj.movement_status === 'active' || obj.movement_status === 'completed',
-                                                                movementStatus: obj.movement_status
+                                                                movementActive: obj.movement_status === 'active',
+                                                                movementStatus: obj.movement_status,
+                                                                currentStep: (obj.current_step !== null && obj.current_step !== undefined) ? obj.current_step : null,
+                                                                baseMovementSpeed: (obj.movement_speed !== null && obj.movement_speed !== undefined) ? obj.movement_speed : null
                                                             };
                                                         }
                                                         
@@ -720,8 +745,11 @@ class GameWorldManager {
                                                         objects: parsedObjects,
                                                         currentTurn: currentTurn || { turn_number: 1, status: 'waiting' },
                                                         turnLocked: lockStatus?.locked || false,
-                                                        playerSetup: playerData || { setup_completed: false }
+                                                        playerSetup: playerData || { setup_completed: false },
+                                                        autoTurnMinutes: autoTurnMinutes
                                                     });
+                                                        }
+                                                    );
                                                 }
                                             );
                                         }
@@ -1041,121 +1069,9 @@ router.post('/setup/:gameId', (req, res) => {
 });
 
 // Active scan route - temporary extended vision
+// Active scan removed in favor of abilities (e.g., survey_scanner). Keep endpoint as no-op for compatibility.
 router.post('/scan/:gameId', (req, res) => {
-    const { gameId } = req.params;
-    const { userId, unitId, scanType = 'active' } = req.body;
-    
-    console.log(`🔍 Active scan request for game ${gameId}, user ${userId}, unit ${unitId}`);
-    
-    // Get the unit being used for scanning
-    db.get(
-        'SELECT so.*, s.id as sector_id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE so.id = ? AND so.owner_id = ? AND s.game_id = ?',
-        [unitId, userId, gameId],
-        (err, unit) => {
-            if (err) {
-                console.error('Error finding unit:', err);
-                return res.status(500).json({ error: 'Database error' });
-            }
-            
-            if (!unit) {
-                return res.status(404).json({ error: 'Unit not found or not owned by player' });
-            }
-            
-            const meta = JSON.parse(unit.meta || '{}');
-            
-            // Check if unit can perform active scans
-            if (!meta.canActiveScan) {
-                return res.status(400).json({ error: 'Unit cannot perform active scans' });
-            }
-            
-            // Check energy/cooldown (if implemented)
-            const activeScanRange = meta.activeScanRange || meta.scanRange * 2 || 10;
-            const energyCost = meta.activeScanCost || 1;
-            
-            if (meta.energy !== undefined && meta.energy < energyCost) {
-                return res.status(400).json({ error: 'Insufficient energy for active scan' });
-            }
-            
-            // Get current turn
-            db.get(
-                'SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1',
-                [gameId],
-                (err, turn) => {
-                    if (err) {
-                        console.error('Error getting current turn:', err);
-                        return res.status(500).json({ error: 'Database error' });
-                    }
-                    
-                    const currentTurn = turn?.turn_number || 1;
-                    
-                    // Create temporary extended vision
-                    const visionTiles = new Set();
-                    const detailedScanTiles = new Set();
-                    
-                    for (let dx = -activeScanRange; dx <= activeScanRange; dx++) {
-                        for (let dy = -activeScanRange; dy <= activeScanRange; dy++) {
-                            const distance = Math.sqrt(dx * dx + dy * dy);
-                            if (distance <= activeScanRange) {
-                                const tileKey = `${unit.x + dx},${unit.y + dy}`;
-                                visionTiles.add(tileKey);
-                                
-                                // Detailed scan for closer range
-                                if (distance <= activeScanRange / 2) {
-                                    detailedScanTiles.add(tileKey);
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Update visibility memory for any objects located on scanned tiles
-                    const tilesArray = Array.from(visionTiles).map(k => k.split(',').map(Number));
-                    db.all(
-                        `SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND (
-                            ${Array(tilesArray.length).fill('(x = ? AND y = ?)').join(' OR ')}
-                        )`,
-                        [unit.sector_id, ...tilesArray.flat()],
-                        (selErr, rows) => {
-                            if (selErr) {
-                                console.error('Error selecting objects for scan:', selErr);
-                                return res.status(500).json({ error: 'Failed to update visibility' });
-                            }
-                            const objects = (rows || []).map(r => ({ object: r, visibilityLevel: detailedScanTiles.has(`${r.x},${r.y}`) ? 2 : 1 }));
-                            GameWorldManager.updateObjectVisibilityMemory(
-                                gameId, userId, unit.sector_id, objects, currentTurn,
-                                () => {
-                            // Optionally reduce unit energy
-                            if (meta.energy !== undefined) {
-                                meta.energy = Math.max(0, meta.energy - energyCost);
-                                
-                                db.run(
-                                    'UPDATE sector_objects SET meta = ? WHERE id = ?',
-                                    [JSON.stringify(meta), unitId],
-                                    (err) => {
-                                        if (err) console.error('Error updating unit energy:', err);
-                                    }
-                                );
-                            }
-                            
-                                    console.log(`✅ Active scan completed: ${objects.length} objects updated in memory`);
-                            res.json({
-                                success: true,
-                                        tilesRevealed: visionTiles.size,
-                                        objectsUpdated: objects.length,
-                                energyRemaining: meta.energy,
-                                        message: `Active scan refreshed visibility`
-                            });
-                        },
-                        (error) => {
-                                    console.error('Error updating visibility memory:', error);
-                            res.status(500).json({ error: 'Failed to update visibility' });
-                                }
-                            );
-                        }
-                    );
-                }
-            );
-        }
-    );
+    return res.status(410).json({ error: 'Active scan has been removed. Use abilities like survey_scanner.' });
 });
 
 // PHASE 1C: Get movement history for accurate trail rendering
@@ -1397,7 +1313,7 @@ const SHIP_TYPES = {
         movementSpeed: 4,
         harvestRate: 1.0,
         canMine: true,
-        canActiveScan: true,
+        canActiveScan: false,
         hp: 50,
         maxHp: 50,
         scanRange: 50
@@ -1451,6 +1367,34 @@ const STRUCTURE_TYPES = {
         deployable: true,
         publicAccess: true,
         requiresSectorSelection: true
+    },
+    // New anchored stations (test cost handled client-side)
+    'sun-station': {
+        name: 'Sun Station',
+        emoji: '☀️',
+        description: 'Anchors in orbit around a star',
+        deployable: true,
+        requiresAnchor: true,
+        anchorType: 'star',
+        cargoCapacity: 50
+    },
+    'planet-station': {
+        name: 'Planet Station',
+        emoji: '🪐',
+        description: 'Anchors in orbit around a planet',
+        deployable: true,
+        requiresAnchor: true,
+        anchorType: 'planet',
+        cargoCapacity: 50
+    },
+    'moon-station': {
+        name: 'Moon Station',
+        emoji: '🌘',
+        description: 'Anchors in orbit around a moon',
+        deployable: true,
+        requiresAnchor: true,
+        anchorType: 'moon',
+        cargoCapacity: 50
     }
 };
 
@@ -1464,9 +1408,9 @@ router.post('/build-ship', (req, res) => {
         return res.status(400).json({ error: 'Invalid blueprint' });
     }
     
-    // Verify station ownership
-    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
-        [stationId, userId, 'starbase'], (err, station) => {
+    // Verify station ownership (starbase or station)
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type IN ("starbase","station")', 
+        [stationId, userId], (err, station) => {
         if (err) {
             console.error('Error finding station:', err);
             return res.status(500).json({ error: 'Database error' });
@@ -1499,7 +1443,7 @@ router.post('/build-ship', (req, res) => {
                     name: shipName,
                     ...classStats,
                     canMine: classStats.harvestRate > 0,
-                    canActiveScan: true,
+                    canActiveScan: false,
                     shipType: blueprint.class,
                     blueprintId: blueprint.id,
                     role: blueprint.role,
@@ -1529,7 +1473,7 @@ router.post('/build-ship', (req, res) => {
                 
                 db.run(
                     'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, shipMetaObj.canActiveScan ? 1 : 0],
+                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
                     function(shipErr) {
                         if (shipErr) {
                             console.error('Error creating ship:', shipErr);
@@ -1580,9 +1524,9 @@ router.post('/build-structure', (req, res) => {
     
     const structureTemplate = STRUCTURE_TYPES[structureType];
     
-    // Verify station ownership
-    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', 
-        [stationId, userId, 'starbase'], (err, station) => {
+    // Verify station ownership (starbase or station)
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type IN ("starbase","station")', 
+        [stationId, userId], (err, station) => {
         if (err) {
             console.error('Error finding station:', err);
             return res.status(500).json({ error: 'Database error' });
@@ -1683,11 +1627,86 @@ router.post('/deploy-structure', (req, res) => {
                     return res.status(400).json({ error: result.error || 'Structure not found in ship cargo' });
                 }
                 
-                // Find adjacent position for deployment
+                // If this is an anchored station, enforce placement rules
+                if (['sun-station','planet-station','moon-station'].includes(structureType)) {
+                    const requiredType = structureTemplate.anchorType;
+                    db.all(
+                        `SELECT id, x, y, radius, type FROM sector_objects WHERE sector_id = ? AND type = ?`,
+                        [ship.sector_id, requiredType],
+                        (objErr, celestialObjects) => {
+                            if (objErr) {
+                                console.error('Error finding celestial objects:', objErr);
+                                return res.status(500).json({ error: 'Database error' });
+                            }
+                            if (!celestialObjects || celestialObjects.length === 0) {
+                                return res.status(400).json({ error: `No ${requiredType} present in this sector` });
+                            }
+                            const candidate = celestialObjects.find(o => {
+                                const dx = ship.x - o.x; const dy = ship.y - o.y;
+                                const dist = Math.sqrt(dx*dx + dy*dy);
+                                return dist <= (o.radius + 1);
+                            });
+                            if (!candidate) {
+                                return res.status(400).json({ error: `Must be adjacent to a ${requiredType} to deploy this station` });
+                            }
+                            // One station per celestial object
+                            db.get(
+                                `SELECT id FROM sector_objects WHERE parent_object_id = ? AND type = 'station' LIMIT 1`,
+                                [candidate.id],
+                                (exErr, existing) => {
+                                    if (exErr) {
+                                        console.error('Error checking existing station:', exErr);
+                                        return res.status(500).json({ error: 'Database error' });
+                                    }
+                                    if (existing) {
+                                        return res.status(400).json({ error: 'This celestial object already has a station anchored' });
+                                    }
+                                    // Place on ring
+                                    let vx = ship.x - candidate.x; let vy = ship.y - candidate.y;
+                                    if (vx === 0 && vy === 0) vx = 1;
+                                    const len = Math.sqrt(vx*vx + vy*vy) || 1;
+                                    const ring = (candidate.radius || 1) + 1;
+                                    const deployX = Math.round(candidate.x + vx/len * ring);
+                                    const deployY = Math.round(candidate.y + vy/len * ring);
+                                    const stationMeta = JSON.stringify({
+                                        name: `${structureTemplate.name} ${Math.floor(Math.random() * 1000)}`,
+                                        stationClass: structureType,
+                                        anchoredToType: requiredType,
+                                        anchoredToId: candidate.id,
+                                        hp: 150,
+                                        maxHp: 150,
+                                        cargoCapacity: structureTemplate.cargoCapacity || 50
+                                    });
+                                    db.run(
+                                        `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, parent_object_id) VALUES (?, 'station', ?, ?, ?, ?, ?)`,
+                                        [ship.sector_id, deployX, deployY, userId, stationMeta, candidate.id],
+                                        function(insertErr) {
+                                            if (insertErr) {
+                                                console.error('Error creating anchored station:', insertErr);
+                                                return res.status(500).json({ error: 'Failed to deploy station' });
+                                            }
+                                            const newStationId = this.lastID;
+                                            CargoManager.initializeObjectCargo(newStationId, structureTemplate.cargoCapacity || 50)
+                                                .then(() => {
+                                                    console.log(`🛰️ Deployed ${structureTemplate.name} (ID: ${newStationId}) anchored to ${requiredType} ${candidate.id} at (${deployX}, ${deployY})`);
+                                                    res.json({ success: true, structureName: structureTemplate.name, structureId: newStationId });
+                                                })
+                                                .catch(cargoErr => {
+                                                    console.error('Error initializing station cargo:', cargoErr);
+                                                    res.json({ success: true, structureName: structureTemplate.name, structureId: newStationId, warning: 'Station deployed but cargo initialization failed' });
+                                                });
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                    return; // stop generic flow
+                }
+                
+                // Generic, non-anchored structures
                 const deployX = ship.x + (Math.random() < 0.5 ? -1 : 1);
                 const deployY = ship.y + (Math.random() < 0.5 ? -1 : 1);
-                
-                // Create structure metadata
                 const structureMeta = JSON.stringify({
                     name: `${structureTemplate.name} ${Math.floor(Math.random() * 1000)}`,
                     structureType: structureType,
@@ -1696,10 +1715,7 @@ router.post('/deploy-structure', (req, res) => {
                     cargoCapacity: structureTemplate.cargoCapacity || 0,
                     publicAccess: structureTemplate.publicAccess || false
                 });
-                
-                // Determine structure type in database
                 const dbStructureType = structureType === 'warp-beacon' ? 'warp-beacon' : 'storage-structure';
-                
                 db.run(
                     'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
                     [ship.sector_id, dbStructureType, deployX, deployY, userId, structureMeta],
@@ -1708,36 +1724,20 @@ router.post('/deploy-structure', (req, res) => {
                             console.error('Error creating structure:', structureErr);
                             return res.status(500).json({ error: 'Failed to deploy structure' });
                         }
-                        
                         const structureId = this.lastID;
                         console.log(`🏗️ Deployed ${structureTemplate.name} (ID: ${structureId}) for user ${userId} at (${deployX}, ${deployY})`);
-                        
-                        // Initialize cargo for storage structures
                         if (structureTemplate.cargoCapacity > 0) {
                             CargoManager.initializeObjectCargo(structureId, structureTemplate.cargoCapacity)
                                 .then(() => {
                                     console.log(`📦 Initialized cargo system for deployed structure ${structureId}`);
-                                    res.json({ 
-                                        success: true, 
-                                        structureName: structureTemplate.name,
-                                        structureId: structureId
-                                    });
+                                    res.json({ success: true, structureName: structureTemplate.name, structureId: structureId });
                                 })
                                 .catch(cargoErr => {
                                     console.error('Error initializing structure cargo:', cargoErr);
-                                    res.json({ 
-                                        success: true, 
-                                        structureName: structureTemplate.name,
-                                        structureId: structureId,
-                                        warning: 'Structure deployed but cargo initialization failed'
-                                    });
+                                    res.json({ success: true, structureName: structureTemplate.name, structureId: structureId, warning: 'Structure deployed but cargo initialization failed' });
                                 });
                         } else {
-                            res.json({ 
-                                success: true, 
-                                structureName: structureTemplate.name,
-                                structureId: structureId
-                            });
+                            res.json({ success: true, structureName: structureTemplate.name, structureId: structureId });
                         }
                     }
                 );
@@ -1745,6 +1745,56 @@ router.post('/deploy-structure', (req, res) => {
             .catch(error => {
                 console.error('Error removing structure from cargo:', error);
                 res.status(500).json({ error: 'Failed to remove structure from cargo' });
+            });
+    });
+});
+
+// Build a basic Explorer for testing (1 rock)
+router.post('/build-basic-explorer', (req, res) => {
+    const { stationId, userId } = req.body;
+    if (!stationId || !userId) return res.status(400).json({ error: 'Missing stationId or userId' });
+    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', [stationId, userId, 'station'], (err, station) => {
+        if (err) {
+            console.error('Error finding station:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        if (!station) return res.status(404).json({ error: 'Station not found or not owned by player' });
+        CargoManager.removeResourceFromCargo(stationId, 'rock', 1, false)
+            .then(result => {
+                if (!result.success) return res.status(400).json({ error: result.error || 'Insufficient rock' });
+                const shipMetaObj = {
+                    name: `Explorer ${Math.floor(Math.random() * 1000)}`,
+                    hp: 50, maxHp: 50, scanRange: 50,
+                    movementSpeed: 4, cargoCapacity: 10,
+                    harvestRate: 1.0, canMine: true, canActiveScan: false,
+                    shipType: 'explorer',
+                    energy: 6, maxEnergy: 6, energyRegen: 3,
+                    abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience']
+                };
+                const shipMeta = JSON.stringify(shipMetaObj);
+                const spawnX = station.x + (Math.random() < 0.5 ? -1 : 1);
+                const spawnY = station.y + (Math.random() < 0.5 ? -1 : 1);
+                db.run(
+                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
+                    function(shipErr) {
+                        if (shipErr) {
+                            console.error('Error creating basic explorer:', shipErr);
+                            return res.status(500).json({ error: 'Failed to create ship' });
+                        }
+                        const shipId = this.lastID;
+                        CargoManager.initializeShipCargo(shipId, shipMetaObj.cargoCapacity)
+                            .then(() => res.json({ success: true, shipName: shipMetaObj.name, shipId }))
+                            .catch(cargoErr => {
+                                console.error('Error initializing ship cargo:', cargoErr);
+                                res.json({ success: true, shipName: shipMetaObj.name, shipId, warning: 'Ship created but cargo initialization failed' });
+                            });
+                    }
+                );
+            })
+            .catch(error => {
+                console.error('Error consuming rock for explorer:', error);
+                res.status(500).json({ error: 'Failed to consume resources' });
             });
     });
 });

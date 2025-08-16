@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const router = express.Router();
 
-// Get all games + highlight games user is in
+// Get all games + highlight games user is in (include current turn for active games)
 router.get('/games/:userId', (req, res) => {
     const userId = req.params.userId;
     db.all('SELECT * FROM games ORDER BY created_at DESC', [], (err, allGames) => {
@@ -10,7 +10,20 @@ router.get('/games/:userId', (req, res) => {
         db.all('SELECT game_id FROM game_players WHERE user_id = ?', [userId], (err2, userGames) => {
             if (err2) return res.status(500).json({ error: 'Failed to fetch user games' });
             const gameIds = (userGames || []).map(g => g.game_id);
-            res.json({ allGames, userGameIds: gameIds });
+            // Attach latest turn_number for active games
+            const enrichTurnPromises = (allGames || []).map(g => new Promise((resolve) => {
+                if (g.status !== 'active') return resolve(g);
+                db.get('SELECT turn_number, created_at FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [g.id], (e, row) => {
+                    if (row) {
+                        resolve({ ...g, current_turn_number: row.turn_number, current_turn_created_at: row.created_at });
+                    } else {
+                        resolve({ ...g, current_turn_number: 1, current_turn_created_at: null });
+                    }
+                });
+            }));
+            Promise.all(enrichTurnPromises).then(enriched => {
+                res.json({ allGames: enriched, userGameIds: gameIds });
+            });
         });
     });
 });
@@ -25,7 +38,10 @@ router.get('/game/:gameId', (req, res) => {
             [gameId],
             (err2, players) => {
                 if (err2) return res.status(500).json({ error: 'Failed to fetch players' });
-                res.json({ ...game, players });
+                // Include latest turn number for active games
+                db.get('SELECT turn_number, created_at FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (e3, trow) => {
+                    res.json({ ...game, players, current_turn_number: trow?.turn_number || null, current_turn_created_at: trow?.created_at || null });
+                });
             }
         );
     });
@@ -53,11 +69,12 @@ router.post('/leave', (req, res) => {
     });
 });
 
-// Create a new game
+// Create a new game (supports auto turn interval)
 router.post('/create', (req, res) => {
-    const { name, mode, creatorId } = req.body;
+    const { name, mode, creatorId, turnLockMinutes } = req.body;
     if (!name || !mode) return res.status(400).json({ error: 'Game name and mode required' });
-    db.run('INSERT INTO games (name, mode, status) VALUES (?, ?, ?)', [name, mode, 'recruiting'], function (err) {
+    const autoTurn = (turnLockMinutes === null || turnLockMinutes === undefined || turnLockMinutes === 'none') ? null : parseInt(turnLockMinutes, 10);
+    db.run('INSERT INTO games (name, mode, status, auto_turn_minutes) VALUES (?, ?, ?, ?)', [name, mode, 'recruiting', autoTurn], function (err) {
         if (err) return res.status(500).json({ error: 'Failed to create game' });
         const gameId = this.lastID;
         if (creatorId) db.run('INSERT INTO game_players (user_id, game_id) VALUES (?, ?)', [creatorId, gameId]);

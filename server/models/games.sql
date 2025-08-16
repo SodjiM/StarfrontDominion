@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS games (
     name TEXT,
     mode TEXT,
     status TEXT, -- 'recruiting', 'active', 'finished'
+    auto_turn_minutes INTEGER DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

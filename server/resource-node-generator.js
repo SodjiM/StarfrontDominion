@@ -405,11 +405,11 @@ class ResourceNodeGenerator {
                         return;
                     }
                     
-                    // Check for collision with ships/starbases (leave navigation paths)
+                    // Check for collision with ships/stations (leave navigation paths)
                     db.get(
                         `SELECT id FROM sector_objects 
                          WHERE sector_id = ? 
-                         AND type IN ('ship', 'starbase')
+                         AND type IN ('ship', 'station')
                          AND ABS(x - ?) <= 3 
                          AND ABS(y - ?) <= 3`,
                         [sectorId, x, y],

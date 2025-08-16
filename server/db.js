@@ -54,6 +54,13 @@ const initializeDatabase = async () => {
                 }
             });
         });
+        // Migrate games.auto_turn_minutes if missing
+        await new Promise((resolve) => {
+            db.run(`ALTER TABLE games ADD COLUMN auto_turn_minutes INTEGER`, (err) => {
+                // ignore if exists
+                resolve();
+            });
+        });
         
         await new Promise((resolve, reject) => {
             db.exec(gameworldSchema, (err) => {

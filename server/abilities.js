@@ -147,14 +147,14 @@ const Abilities = {
   boost_engines: {
     key: 'boost_engines',
     name: 'Boost Engines',
-    description: 'Increase travel speed by 25% for 3 turns.',
+    description: 'Increase travel speed by 100% for 3 turns.',
     type: 'active',
     target: 'self',
     cooldown: 20,
     energyCost: 2,
     effectKey: 'engine_boost',
     duration: 3,
-    movementBonus: 0.25
+    movementBonus: 1.0
   },
   jury_rig_repair: {
     key: 'jury_rig_repair',

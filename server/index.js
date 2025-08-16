@@ -107,6 +107,41 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Background scheduler: auto-advance turns for active games with auto_turn_minutes set
+setInterval(async () => {
+    try {
+        // Find active games with auto turn enabled
+        const games = await new Promise((resolve) => {
+            db.all('SELECT id, auto_turn_minutes FROM games WHERE status = ? AND auto_turn_minutes IS NOT NULL', ['active'], (e, rows) => resolve(rows || []));
+        });
+        const now = Date.now();
+        for (const g of games) {
+            try {
+                const current = await new Promise((resolve) => {
+                    db.get('SELECT turn_number, created_at, status FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [g.id], (e, row) => resolve(row));
+                });
+                if (!current) continue;
+                // Only act on waiting turns
+                if (current.status && current.status !== 'waiting') continue;
+                // Normalize SQLite UTC timestamp to ISO UTC for safe parsing
+                const createdAtMs = current.created_at ? Date.parse((String(current.created_at).includes('T') ? String(current.created_at) : String(current.created_at).replace(' ', 'T') + 'Z')) : null;
+                if (!createdAtMs || !Number.isFinite(createdAtMs)) continue;
+                const dueMs = (g.auto_turn_minutes || 0) * 60 * 1000;
+                if (dueMs <= 0) continue;
+                if (now - createdAtMs >= dueMs) {
+                    // Time window elapsed: resolve the turn even if no locks
+                    console.log(`⏰ Auto-advancing game ${g.id} turn ${current.turn_number} after ${g.auto_turn_minutes} minutes`);
+                    resolveTurn(g.id, current.turn_number);
+                }
+            } catch (inner) {
+                console.warn('Auto-advance scan error for game', g?.id, inner?.message || inner);
+            }
+        }
+    } catch (e) {
+        console.warn('Auto-advance scheduler error:', e?.message || e);
+    }
+}, 60 * 1000);
+
 // Socket.IO connection handling - ASYNCHRONOUS FRIENDLY
 io.on('connection', (socket) => {
     // Basic chat: game-wide, direct messages, and group channels
@@ -487,6 +522,7 @@ io.on('connection', (socket) => {
     socket.on('activate-ability', async (data) => {
         const { gameId, casterId, abilityKey, targetObjectId, targetX, targetY, params } = data || {};
         try {
+            console.log(`🎯 activate-ability request: game=${gameId} caster=${casterId} key=${abilityKey} targetObj=${targetObjectId || 'n/a'} target=(${targetX||'n/a'},${targetY||'n/a'})`);
             if (!gameId || !casterId || !abilityKey) {
                 return socket.emit('ability:error', { error: 'Missing gameId/casterId/abilityKey' });
             }
@@ -526,6 +562,7 @@ io.on('connection', (socket) => {
                     (err) => err ? reject(err) : resolve()
                 );
             });
+            console.log(`🧾 ability order stored: ship=${casterId} key=${abilityKey} turn=${currentTurn}`);
             socket.emit('ability-queued', { casterId, abilityKey, turnNumber: currentTurn });
         } catch (e) {
             console.error('Error queuing ability:', e);
@@ -693,21 +730,28 @@ async function resolveTurn(gameId, turnNumber) {
     
     try {
         // Begin a transaction for atomic resolution
-        await new Promise((resolve, reject) => db.run('BEGIN IMMEDIATE TRANSACTION', (e) => e ? reject(e) : resolve()));
-    // 1. Process movement orders
+        let transactionActive = false;
+        await new Promise((resolve, reject) => db.run('BEGIN IMMEDIATE TRANSACTION', (e) => {
+            if (e) return reject(e);
+            transactionActive = true;
+            resolve();
+        }));
+        // 1. Apply abilities first so effects impact movement and vision this turn
+        await processAbilityOrders(gameId, turnNumber);
+        
+        // 2. Process movement orders (benefits from movement-related effects)
         await processMovementOrders(gameId, turnNumber);
         
-        // 2. Update visibility for all players
+        // 3. Update visibility for all players (benefits from scan-related effects)
         await updateAllPlayersVisibility(gameId, turnNumber);
         
-        // 3. Clean up old completed movement orders (older than 2 turns)
+        // 4. Clean up old completed movement orders (older than 2 turns)
         await cleanupOldMovementOrders(gameId, turnNumber);
         
-        // 4. Process harvesting operations
+        // 5. Process harvesting operations
         await HarvestingManager.processHarvestingForTurn(gameId, turnNumber);
         
-        // 5. Handle abilities then combat
-        await processAbilityOrders(gameId, turnNumber);
+        // 6. Resolve combat
         await processCombatOrders(gameId, turnNumber);
         await cleanupExpiredEffectsAndWrecks(gameId, turnNumber);
         await regenerateShipEnergy(gameId, turnNumber);
@@ -735,8 +779,20 @@ async function resolveTurn(gameId, turnNumber) {
             );
         });
 
-        // Commit the transaction
-        await new Promise((resolve, reject) => db.run('COMMIT', (e) => e ? reject(e) : resolve()));
+        // Commit the transaction (guard for unexpected external rollbacks)
+        if (transactionActive) {
+            try {
+                await new Promise((resolve, reject) => db.run('COMMIT', (e) => e ? reject(e) : resolve()));
+            } catch (commitErr) {
+                // If no active transaction, log and continue (non-fatal)
+                if (!/no transaction is active/i.test(String(commitErr?.message || ''))) {
+                    throw commitErr;
+                } else {
+                    console.warn('⚠️ Commit called without active transaction (continuing):', commitErr?.message || commitErr);
+                }
+            }
+            transactionActive = false;
+        }
         
                         console.log(`✅ Turn ${turnNumber} atomically resolved, starting turn ${nextTurn}`);
                         
@@ -844,9 +900,13 @@ async function processSingleMovement(order, turnNumber, gameId) {
         const effects = await new Promise((resolve) => db.all('SELECT * FROM ship_status_effects WHERE ship_id = ? AND (expires_turn IS NULL OR expires_turn >= ?)', [order.object_id, turnNumber], (e, rows) => resolve(rows || [])));
         let speedMultiplier = 1;
         for (const eff of effects) {
-            try { const data = eff.effect_data ? JSON.parse(eff.effect_data) : {}; if (data.movementBonus) speedMultiplier += data.movementBonus; } catch {}
+            try {
+                const data = eff.effect_data ? JSON.parse(eff.effect_data) : {};
+                if (data.movementBonus) speedMultiplier += data.movementBonus;
+            } catch {}
         }
         const movementSpeed = Math.max(1, Math.floor(baseSpeed * speedMultiplier));
+        console.log(`🧭 Movement calc: ship=${order.object_id} base=${baseSpeed} mult=${speedMultiplier.toFixed(2)} eff=${movementSpeed} turn=${turnNumber}`);
         
         // Calculate how many steps to take this turn
         const stepsToTake = Math.min(movementSpeed, movementPath.length - 1 - currentStep);
@@ -950,6 +1010,7 @@ async function processSingleMovement(order, turnNumber, gameId) {
                             // STAGE A FIX: Calculate remaining ETA after movement
                             const remainingSteps = movementPath.length - 1 - newStep;
                             const newETA = Math.ceil(remainingSteps / movementSpeed);
+                            console.log(`📐 ETA recompute: total=${movementPath.length - 1} currentStep=${newStep} remaining=${remainingSteps} speed=${movementSpeed} eta=${newETA}`);
                             
                             db.run(
                                 'UPDATE movement_orders SET current_step = ?, status = ?, eta_turns = ? WHERE id = ?',
@@ -1220,6 +1281,17 @@ async function regenerateShipEnergy(gameId, turnNumber) {
                         const heal = Math.max(1, Math.floor((meta.maxHp || 0) * healPct));
                         meta.hp = Math.min(meta.maxHp, meta.hp + heal);
                     }
+                    // Clear expired temporary UI hints on tick
+                    try {
+                        if (typeof meta.scanBoostExpires === 'number' && Number(meta.scanBoostExpires) <= Number(turnNumber)) {
+                            delete meta.scanRangeMultiplier;
+                            delete meta.scanBoostExpires;
+                        }
+                        if (typeof meta.movementBoostExpires === 'number' && Number(meta.movementBoostExpires) <= Number(turnNumber)) {
+                            delete meta.movementBoostMultiplier;
+                            delete meta.movementBoostExpires;
+                        }
+                    } catch {}
                     await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(meta), new Date().toISOString(), ship.id], () => resolve()));
                 }
             }
@@ -1330,6 +1402,25 @@ async function processAbilityOrders(gameId, turnNumber) {
                     [effectTargetId, ability.effectKey, magnitude, JSON.stringify(effectData), order.caster_id, turnNumber, turnNumber + (ability.duration || 1)],
                     () => resolve()
                 ));
+
+                // Mirror temporary UI hints into meta for same-turn visibility/UI
+                if (effectTargetId === order.caster_id) {
+                    const casterMetaRow = await new Promise((resolve) => db.get('SELECT meta FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                    if (casterMetaRow) {
+                        try {
+                            const cm = JSON.parse(casterMetaRow.meta || '{}');
+                            if (ability.scanRangeMultiplier) {
+                                cm.scanRangeMultiplier = ability.scanRangeMultiplier;
+                                cm.scanBoostExpires = Number(turnNumber) + (ability.duration || 1);
+                            }
+                            if (ability.movementBonus) {
+                                cm.movementBoostMultiplier = 1 + ability.movementBonus; // e.g., 2.0 for +100%
+                                cm.movementBoostExpires = Number(turnNumber) + (ability.duration || 1);
+                            }
+                            await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(cm), new Date().toISOString(), order.caster_id], () => resolve()));
+                        } catch {}
+                    }
+                }
             }
             const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
             await new Promise((resolve) => db.run(

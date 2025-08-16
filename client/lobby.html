@@ -20,7 +20,7 @@
 <body class="page-fill">
     <div class="container">
         <div class="header sf-card">
-            <div class="title sf-title">🌌 Starfront: Dominion - Lobby</div>
+            <div class="title"><span class="emoji">🌌</span> <span class="sf-title">Starfront: Dominion - Lobby</span></div>
             <div class="user-info">
                 <span id="username">Welcome, Commander</span>
                 <button class="sf-btn sf-btn-secondary" onclick="logout()">Logout</button>
@@ -118,6 +118,7 @@
         function createGameElement(game, isUserGame) {
             const statusClass = `sf-badge sf-badge-${game.status}`;
             const gameClass = `sf-list-item ${isUserGame ? 'user-game' : (game.status !== 'recruiting' ? 'full' : '')}`;
+            const turnBadge = (game.status === 'active' && game.current_turn_number) ? `<span class="sf-badge">Turn ${game.current_turn_number}</span>` : '';
             
             return `
                 <div class="game-item ${gameClass}" onclick="selectGame(${game.id})">
@@ -125,6 +126,7 @@
                     <div class="game-meta">
                         <span>Mode: ${game.mode}</span>
                         <span class="${statusClass}">${game.status.toUpperCase()}</span>
+                        ${turnBadge}
                     </div>
                 </div>
             `;
@@ -168,6 +170,8 @@
                 <div><strong>Mode:</strong> ${game.mode}</div>
                 <div><strong>Status:</strong> ${game.status}</div>
                 <div><strong>Created:</strong> ${new Date(game.created_at).toLocaleString()}</div>
+                ${game.status === 'active' && game.current_turn_number ? `<div><strong>Current Turn:</strong> ${game.current_turn_number}</div>` : ''}
+                ${typeof game.auto_turn_minutes === 'number' ? `<div><strong>Auto Turn:</strong> ${game.auto_turn_minutes} min</div>` : `<div><strong>Auto Turn:</strong> None</div>`}
                 
                 <div class="players-list">
                     <h4>Players (${game.players.length}):</h4>
@@ -305,6 +309,7 @@
                             <div style="margin-top:4px; padding-top:10px; border-top:1px solid var(--border);">
                                 <div style="margin-bottom:6px;">Auto Turn Lock</div>
                                 <select id="cg-turnlock" class="sf-select">
+                                    <option value="none" selected>None</option>
                                     <option value="1">1 min</option>
                                     <option value="5">5 min</option>
                                     <option value="10">10 min</option>
@@ -318,7 +323,7 @@
                                     <option value="1440">24 hrs</option>
                                     <option value="2880">48 hrs</option>
                                 </select>
-                                <div style="color: var(--muted); font-size: 12px; margin-top:6px;">This setting will be used in a future update.</div>
+                                <div style="color: var(--muted); font-size: 12px; margin-top:6px;">If set, the game auto-advances even without locks after the selected time.</div>
                             </div>
                         </div>
                     </form>
@@ -336,7 +341,8 @@
             submitHandler = () => {
                 const name = document.getElementById('cg-name').value.trim();
                 const mode = document.getElementById('cg-mode').value;
-                const turnLock = parseInt(document.getElementById('cg-turnlock').value, 10);
+                const turnLockRaw = document.getElementById('cg-turnlock').value;
+                const turnLock = (turnLockRaw === 'none') ? null : parseInt(turnLockRaw, 10);
                 if (!name) {
                     alert('Please enter a lobby name.');
                     return false;

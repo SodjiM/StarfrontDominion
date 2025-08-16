@@ -100,9 +100,13 @@ body {
 /* Headings */
 .sf-title {
   background: linear-gradient(45deg, var(--primary), var(--primary-2));
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+
+/* Ensure emoji icons keep native color and are not gradient-filled */
+.emoji { -webkit-text-fill-color: initial; background: none; }
 
 /* Buttons */
 .sf-btn {
