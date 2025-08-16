@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Starfront: Dominion</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
       body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display:flex; align-items:center; justify-content:center; min-height: 100vh; }
       .container { max-width: 420px; padding: 24px; margin: 8vh 16px; }
@@ -19,35 +20,47 @@
       .loading { display: none; }
     </style>
 </head>
-<body>
-    <div class="container sf-card">
-        <div style="text-align:center; margin-bottom: 8px;">
+<body class="min-h-screen bg-[#070912] text-slate-100 flex items-center justify-center relative overflow-hidden">
+    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(14,165,233,0.08),transparent_60%),radial-gradient(ellipse_at_bottom_left,rgba(99,102,241,0.08),transparent_55%)]"></div>
+    <style>
+      :root { --stars1: ""; --stars2: ""; --stars3: ""; }
+      .stars:after, .stars:before { content: ""; position: absolute; inset: 0; background-repeat: repeat; }
+      .stars.s1:after { background-image: var(--stars1); animation: twinkle 12s linear infinite; opacity: .4 }
+      .stars.s2:after { background-image: var(--stars2); animation: twinkle 18s linear infinite; opacity: .6 }
+      .stars.s3:after { background-image: var(--stars3); animation: twinkle 24s linear infinite; opacity: .9 }
+      @keyframes twinkle { 0%{ transform: translateY(0)} 50%{ transform: translateY(-10px)} 100%{ transform: translateY(0)} }
+    </style>
+    <div class="stars s1 absolute inset-0"></div>
+    <div class="stars s2 absolute inset-0"></div>
+    <div class="stars s3 absolute inset-0"></div>
+    <div class="container sf-card max-w-md w-full mx-4 my-10 rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-6 sm:p-8 relative z-10">
+        <div class="text-center mb-2">
             <div class="sf-title" style="font-size: 26px; line-height:1; display:inline-flex; align-items:center; gap:8px;">
                 <span class="emoji" aria-hidden="true">🌌</span>
                 <span>Starfront: Dominion</span>
             </div>
         </div>
-        <h1 class="sf-title"><span class="emoji" aria-hidden="true">🌌</span> Login</h1>
+        <h1 class="sf-title text-center text-2xl font-bold">Login</h1>
         
         <form id="loginForm">
             <div class="form-group">
-                <label for="username">Username:</label>
-                <input class="sf-input" type="text" id="username" name="username" required>
+                <label for="username" class="block text-slate-300 mb-1">Username</label>
+                <input class="sf-input w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60" type="text" id="username" name="username" required>
             </div>
             
             <div class="form-group">
-                <label for="password">Password:</label>
-                <input class="sf-input" type="password" id="password" name="password" required>
+                <label for="password" class="block text-slate-300 mb-1">Password</label>
+                <input class="sf-input w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60" type="password" id="password" name="password" required>
             </div>
             
-            <button class="sf-btn sf-btn-primary" type="submit" id="loginBtn">Login</button>
-            <div class="loading" id="loading">🚀 Connecting to the galaxy...</div>
-            <div class="error" id="error"></div>
+            <button class="sf-btn sf-btn-primary w-full inline-flex items-center justify-center rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-4 py-2 font-semibold shadow-lg shadow-cyan-500/30 transition" type="submit" id="loginBtn">Login</button>
+            <div class="loading text-center text-slate-300 mt-2" id="loading">🚀 Connecting to the galaxy...</div>
+            <div class="error text-center text-rose-400 mt-2" id="error"></div>
         </form>
         
-        <div class="back-link">
-            <a href="register.html">Don't have an account? Register</a><br>
-            <a href="index.html">← Back to Main Menu</a>
+        <div class="back-link mt-4 text-center">
+            <a class="text-cyan-300 hover:text-cyan-200" href="register.html">Don't have an account? Register</a><br>
+            <a class="text-cyan-300 hover:text-cyan-200" href="/">← Back to Main Menu</a>
         </div>
     </div>
 
@@ -99,6 +112,34 @@
         
         // Auto-focus username field
         document.getElementById('username').focus();
+    </script>
+    <script>
+      (function(){
+        function generateStars(count){
+          var size = 1200;
+          var cvs = document.createElement('canvas');
+          cvs.width = size; cvs.height = size;
+          var ctx = cvs.getContext('2d');
+          if(!ctx) return '';
+          ctx.fillStyle = 'rgba(255,255,255,0)'; ctx.fillRect(0,0,size,size);
+          for (var i=0;i<count;i++){
+            var x = Math.random()*size;
+            var y = Math.random()*size;
+            var r = Math.random()*1.2 + 0.3;
+            var g = ctx.createRadialGradient(x,y,0,x,y,r*3);
+            var huePick = Math.random() < 0.85 ? 0 : 220;
+            var col = huePick === 0 ? '255,255,255' : '150,200,255';
+            g.addColorStop(0,'rgba('+col+',0.95)');
+            g.addColorStop(1,'rgba('+col+',0.0)');
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x,y,r*3,0,Math.PI*2); ctx.fill();
+          }
+          return 'url('+cvs.toDataURL()+')';
+        }
+        var root = document.documentElement;
+        root.style.setProperty('--stars1', generateStars(80));
+        root.style.setProperty('--stars2', generateStars(60));
+        root.style.setProperty('--stars3', generateStars(40));
+      })();
     </script>
 </body>
 </html> 

@@ -27,6 +27,8 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
+// Serve built React app first (takes precedence over legacy client)
+app.use(express.static(path.join(__dirname, '../web/dist')));
 app.use(express.static(path.join(__dirname, '../client')));
 
 // Routes
@@ -97,8 +99,13 @@ app.get('/game/sector/:sectorId/trails', async (req, res) => {
         );
     });
 
-// Serve client files
+// Serve React landing at root
 app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../web/dist/index.html'));
+});
+
+// Legacy play route -> existing menu/login flow
+app.get('/play', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/index.html'));
 });
 

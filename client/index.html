@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Starfront: Dominion</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
       body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
       .container { text-align: center; max-width: 640px; padding: 40px; margin: 60px 16px; }
@@ -14,17 +15,30 @@
       .version { position: fixed; bottom: 20px; right: 20px; color: #7aa0c4; font-size: 0.9em; }
     </style>
 </head>
-<body>
-    <div class="container sf-card">
-        <h1 class="sf-title">🌌 Starfront: Dominion</h1>
-        <p class="subtitle">A Casual Yet Strategic Turn-Based MMO Space Game</p>
-        <a href="login.html" class="menu-button sf-btn sf-btn-primary">🎮 Login</a>
-        <a href="register.html" class="menu-button sf-btn sf-btn-primary">✨ Register</a>
-        <a href="#" class="menu-button sf-btn sf-btn-secondary" onclick="showSettings()">⚙️ Settings</a>
-        <a href="#" class="menu-button sf-btn sf-btn-secondary" onclick="showAbout()">ℹ️ About</a>
+<body class="min-h-screen bg-[#070912] text-slate-100 relative overflow-hidden">
+    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(14,165,233,0.08),transparent_60%),radial-gradient(ellipse_at_bottom_left,rgba(99,102,241,0.08),transparent_55%)]"></div>
+    <style>
+        :root { --stars1: ""; --stars2: ""; --stars3: ""; }
+        .stars:after, .stars:before { content: ""; position: absolute; inset: 0; background-repeat: repeat; }
+        .stars.s1:after { background-image: var(--stars1); animation: twinkle 12s linear infinite; opacity: .4 }
+        .stars.s2:after { background-image: var(--stars2); animation: twinkle 18s linear infinite; opacity: .6 }
+        .stars.s3:after { background-image: var(--stars3); animation: twinkle 24s linear infinite; opacity: .9 }
+        @keyframes twinkle { 0%{ transform: translateY(0)} 50%{ transform: translateY(-10px)} 100%{ transform: translateY(0)} }
+    </style>
+    <div class="stars s1 absolute inset-0"></div>
+    <div class="stars s2 absolute inset-0"></div>
+    <div class="stars s3 absolute inset-0"></div>
+
+    <div class="container sf-card max-w-xl w-full mx-auto my-16 rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-8 text-center relative z-10">
+        <h1 class="sf-title text-4xl font-extrabold"><span class="emoji" aria-hidden="true">🌌</span> Starfront: Dominion</h1>
+        <p class="subtitle text-slate-300/90 mt-2">A Casual Yet Strategic Turn-Based MMO Space Game</p>
+        <a href="login.html" class="menu-button sf-btn sf-btn-primary inline-flex items-center justify-center rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-5 py-3 font-semibold shadow-lg shadow-cyan-500/30">🎮 Login</a>
+        <a href="register.html" class="menu-button sf-btn sf-btn-primary inline-flex items-center justify-center rounded-2xl bg-cyan-500/80 hover:bg-cyan-400 text-slate-900 px-5 py-3 font-semibold shadow-lg shadow-cyan-500/20">✨ Register</a>
+        <a href="#" class="menu-button sf-btn sf-btn-secondary inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/10 hover:bg-white/15 px-5 py-3" onclick="showSettings()">⚙️ Settings</a>
+        <a href="#" class="menu-button sf-btn sf-btn-secondary inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/10 hover:bg-white/15 px-5 py-3" onclick="showAbout()">ℹ️ About</a>
     </div>
     
-    <div class="version">v1.0.0 Alpha</div>
+    <div class="version text-cyan-300">v1.0.0 Alpha</div>
 
     <script>
         function showSettings() {
@@ -34,6 +48,33 @@
         function showAbout() {
             alert('Starfront: Dominion\n\nA turn-based multiplayer space strategy game where players command fleets, construct starbases, and explore vast sectors of space.\n\nDesigned for friends and families to build alliances, engage in wars, or quietly carve out their own corner of the galaxy.');
         }
+        // Starfield generator
+        (function(){
+            function generateStars(count){
+                var size = 1200;
+                var cvs = document.createElement('canvas');
+                cvs.width = size; cvs.height = size;
+                var ctx = cvs.getContext('2d');
+                if(!ctx) return '';
+                ctx.fillStyle = 'rgba(255,255,255,0)'; ctx.fillRect(0,0,size,size);
+                for (var i=0;i<count;i++){
+                    var x = Math.random()*size;
+                    var y = Math.random()*size;
+                    var r = Math.random()*1.2 + 0.3;
+                    var g = ctx.createRadialGradient(x,y,0,x,y,r*3);
+                    var huePick = Math.random() < 0.85 ? 0 : 220;
+                    var col = huePick === 0 ? '255,255,255' : '150,200,255';
+                    g.addColorStop(0,'rgba('+col+',0.95)');
+                    g.addColorStop(1,'rgba('+col+',0.0)');
+                    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x,y,r*3,0,Math.PI*2); ctx.fill();
+                }
+                return 'url('+cvs.toDataURL()+')';
+            }
+            var root = document.documentElement;
+            root.style.setProperty('--stars1', generateStars(80));
+            root.style.setProperty('--stars2', generateStars(60));
+            root.style.setProperty('--stars3', generateStars(40));
+        })();
     </script>
 </body>
 </html> 

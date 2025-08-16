@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lobby - Starfront: Dominion</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
       body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; }
       .container { max-width: 1220px; margin: 0 auto; }
@@ -17,37 +18,49 @@
       @media (max-width: 768px) { .games-section { grid-template-columns: 1fr; } .header { flex-direction:column; gap:10px; } }
     </style>
 </head>
-<body class="page-fill">
-    <div class="container">
-        <div class="header sf-card">
-            <div class="title"><span class="emoji">🌌</span> <span class="sf-title">Starfront: Dominion - Lobby</span></div>
-            <div class="user-info">
-                <span id="username">Welcome, Commander</span>
-                <button class="sf-btn sf-btn-secondary" onclick="logout()">Logout</button>
+<body class="min-h-screen bg-[#070912] text-slate-100 relative overflow-hidden">
+    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(14,165,233,0.08),transparent_60%),radial-gradient(ellipse_at_bottom_left,rgba(99,102,241,0.08),transparent_55%)]"></div>
+    <style>
+      :root { --stars1: ""; --stars2: ""; --stars3: ""; }
+      .stars:after, .stars:before { content: ""; position: absolute; inset: 0; background-repeat: repeat; }
+      .stars.s1:after { background-image: var(--stars1); animation: twinkle 12s linear infinite; opacity: .4 }
+      .stars.s2:after { background-image: var(--stars2); animation: twinkle 18s linear infinite; opacity: .6 }
+      .stars.s3:after { background-image: var(--stars3); animation: twinkle 24s linear infinite; opacity: .9 }
+      @keyframes twinkle { 0%{ transform: translateY(0)} 50%{ transform: translateY(-10px)} 100%{ transform: translateY(0)} }
+    </style>
+    <div class="stars s1 absolute inset-0"></div>
+    <div class="stars s2 absolute inset-0"></div>
+    <div class="stars s3 absolute inset-0"></div>
+    <div class="container mx-auto px-4 py-6 relative z-10">
+        <div class="header sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4 flex justify-between items-center">
+            <div class="title text-xl font-semibold"><span class="emoji">🌌</span> <span class="sf-title">Starfront: Dominion - Lobby</span></div>
+            <div class="user-info flex items-center gap-3">
+                <span id="username" class="text-slate-300">Welcome, Commander</span>
+                <button class="sf-btn sf-btn-secondary rounded-xl border border-white/10 bg-white/10 px-3 py-1 hover:bg-white/15" onclick="logout()">Logout</button>
             </div>
         </div>
         
-        <div class="games-section">
-            <div class="games-panel sf-card">
-                <h2>💠 Your Games</h2>
-                <div id="userGames" class="loading">Loading your games...</div>
+        <div class="games-section grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+            <div class="games-panel sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4">
+                <h2 class="text-lg font-semibold pb-2 border-b border-white/10">💠 Your Games</h2>
+                <div id="userGames" class="loading text-slate-300">Loading your games...</div>
             </div>
             
-            <div class="games-panel sf-card">
-                <h2>🧩 Available Games</h2>
-                <div id="availableGames" class="loading">Loading available games...</div>
+            <div class="games-panel sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4">
+                <h2 class="text-lg font-semibold pb-2 border-b border-white/10">🧩 Available Games</h2>
+                <div id="availableGames" class="loading text-slate-300">Loading available games...</div>
             </div>
         </div>
         
-        <div class="actions">
-            <button class="sf-btn sf-btn-primary" onclick="showCreateGameModal()">🚀 Create New Game</button>
-            <button class="sf-btn sf-btn-secondary" onclick="refreshGames()">🔄 Refresh</button>
-            <button class="sf-btn sf-btn-secondary" onclick="window.location.href='index.html'">← Main Menu</button>
-            <button class="sf-btn sf-btn-danger" style="margin-left:auto" onclick="clearAllGames()">🗑️ Clear All Games</button>
+        <div class="actions flex gap-3 mt-4">
+            <button class="sf-btn sf-btn-primary rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-4 py-2 font-semibold shadow-lg shadow-cyan-500/30" onclick="showCreateGameModal()">🚀 Create New Game</button>
+            <button class="sf-btn sf-btn-secondary rounded-2xl border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15" onclick="refreshGames()">🔄 Refresh</button>
+            <button class="sf-btn sf-btn-secondary rounded-2xl border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15" onclick="window.location.href='/'">← Main Menu</button>
+            <button class="sf-btn sf-btn-danger rounded-2xl bg-rose-500/80 hover:bg-rose-500 text-white px-4 py-2 ml-auto" onclick="clearAllGames()">🗑️ Clear All Games</button>
         </div>
         
-        <div id="gameDetails" class="game-details sf-card"></div>
-        <div id="error" class="error sf-card" style="display: none;"></div>
+        <div id="gameDetails" class="game-details sf-card mt-6 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4"></div>
+        <div id="error" class="error sf-card mt-4 hidden text-rose-400 text-center"></div>
     </div>
 
     <script src="main.js"></script>
