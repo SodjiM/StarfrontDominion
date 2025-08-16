@@ -216,6 +216,32 @@ const initializeDatabase = async () => {
             resolve();
         });
 
+        // Create chat messages table for persistent chat history
+        await new Promise((resolve, reject) => {
+            console.log('🔧 Ensuring chat_messages table exists...');
+            db.run(
+                `CREATE TABLE IF NOT EXISTS chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id INTEGER NOT NULL,
+                    from_user_id INTEGER NOT NULL,
+                    to_user_id INTEGER,
+                    channel_id INTEGER,
+                    text TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )`,
+                (err) => {
+                    if (err) {
+                        console.error('Error creating chat_messages table:', err);
+                        return reject(err);
+                    }
+                    // Helpful indexes
+                    db.run('CREATE INDEX IF NOT EXISTS idx_chat_public ON chat_messages(game_id, created_at)', () => {});
+                    db.run('CREATE INDEX IF NOT EXISTS idx_chat_dm ON chat_messages(game_id, from_user_id, to_user_id, created_at)', () => {});
+                    resolve();
+                }
+            );
+        });
+
         // Insert sample games
         await new Promise((resolve, reject) => {
             db.run(`INSERT OR IGNORE INTO games (id, name, mode, status) VALUES 

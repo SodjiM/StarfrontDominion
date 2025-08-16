@@ -1677,12 +1677,10 @@
                 <div style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
                         <div class="panel-title" style="margin:0;">💬 Chat</div>
                         <div id="chatMessages" style="overflow:auto; min-height:0; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
-                    <div style="display:grid; grid-template-columns: auto 110px 1fr auto; gap:6px; align-items:center;" onsubmit="return false;">
-                            <select id="chatScope" class="sf-select">
-                                <option value="game">Game</option>
-                                <option value="dm">Direct</option>
+                    <div style="display:grid; grid-template-columns: 160px 1fr auto; gap:6px; align-items:center;" onsubmit="return false;">
+                            <select id="chatRecipient" class="sf-select">
+                                <option value="public">Public</option>
                             </select>
-                            <input id="chatToUserId" class="sf-input" placeholder="User ID (DM)" />
                             <input id="chatInput" class="sf-input" placeholder="Type a message" />
                         <button onclick="sendChat()" class="sf-btn sf-btn-secondary" id="chatSendBtn">Send</button>
                         </div>
@@ -1731,31 +1729,76 @@
             if (!box) return;
             const line = document.createElement('div');
             line.style.margin = '2px 0';
-            const scope = msg.channelId ? `[#${msg.channelId}]` : (msg.toUserId ? `(DM→${msg.toUserId})` : '(Game)');
+            const scope = msg.channelId ? `[#${msg.channelId}]` : (msg.toUserId ? `(DM→${msg.toUserId})` : '(Public)');
             line.textContent = `[${new Date(msg.timestamp).toLocaleTimeString()}] ${scope} ${msg.fromUserId}: ${msg.text}`;
             box.appendChild(line);
             box.scrollTop = box.scrollHeight;
         }
-        function sendChat() {
+        async function populateChatRecipients() {
             if (!window.gameClient || !gameClient.socket) return;
+            try {
+                const data = await new Promise((resolve) => {
+                    gameClient.socket.timeout(4000).emit('players:list', { gameId: gameClient.gameId }, (err, response) => {
+                        if (err) resolve({ success: false, error: 'Timeout' });
+                        else resolve(response);
+                    });
+                });
+                if (!data || !data.success) return;
+                const sel = document.getElementById('chatRecipient');
+                if (!sel) return;
+                // Keep 'Public' and replace the rest
+                sel.innerHTML = '<option value="public">Public</option>' +
+                    (data.players || []).map(p => `<option value="user:${p.userId}">${p.username || ('User '+p.userId)}</option>`).join('');
+            } catch {}
+        }
+        function requestChatHistory() {
+            if (!window.gameClient || !gameClient.socket) return;
+            const sel = document.getElementById('chatRecipient');
+            if (!sel) return;
+            const val = sel.value;
+            const withUserId = val.startsWith('user:') ? Number(val.split(':')[1]) : null;
+            gameClient.socket.emit('chat:history', { gameId: gameClient.gameId, withUserId, limit: 100 }, (resp) => {
+                if (!resp || !resp.success) return;
+                const box = document.getElementById('chatMessages');
+                if (!box) return;
+                box.innerHTML = '';
+                for (const m of resp.messages) appendChat(m);
+            });
+        }
+        function sendChat() {
             const text = document.getElementById('chatInput').value.trim();
             if (!text) return;
-            const scope = document.getElementById('chatScope').value;
-            const toUserId = document.getElementById('chatToUserId').value.trim();
+            const recipient = document.getElementById('chatRecipient').value;
             const payload = { gameId: gameClient.gameId, fromUserId: gameClient.userId, text };
-            if (scope === 'dm' && toUserId) payload.toUserId = Number(toUserId);
-            gameClient.socket.emit('chat:send', payload);
+            if (recipient && recipient.startsWith('user:')) payload.toUserId = Number(recipient.split(':')[1]);
+            // Clear immediately for responsive UX
             document.getElementById('chatInput').value = '';
-            // Optimistic append for game-wide messages
-            if (window.appendChat && scope === 'game') {
-                window.appendChat({ fromUserId: gameClient.userId, text, timestamp: new Date().toISOString() });
-            }
+            // Try to send if socket is available; otherwise retry once after a short delay
+            try {
+                if (gameClient && gameClient.socket) {
+                    gameClient.socket.emit('chat:send', payload);
+                } else {
+                    setTimeout(() => { try { gameClient?.socket?.emit('chat:send', payload); } catch {} }, 500);
+                }
+            } catch {}
+            // Rely on server echo to display; no optimistic append to avoid duplicates
         }
         // Enter to send
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey && document.activeElement === document.getElementById('chatInput')) {
                 e.preventDefault();
                 sendChat();
+            }
+        });
+
+        // Populate chat recipients on load and when socket connects
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => { populateChatRecipients(); requestChatHistory(); }, 600);
+        });
+        // When selection changes, load appropriate history
+        document.addEventListener('change', (e) => {
+            if (e.target && e.target.id === 'chatRecipient') {
+                requestChatHistory();
             }
         });
     </script>

@@ -127,6 +127,11 @@ class GameClient {
         this.socket.on('connect', () => {
             console.log('🔌 Connected to server');
             this.socket.emit('join-game', this.gameId, this.userId);
+            try {
+                // After joining, refresh chat recipients and pull history
+                if (typeof populateChatRecipients === 'function') populateChatRecipients();
+                if (typeof requestChatHistory === 'function') requestChatHistory();
+            } catch {}
         });
 
         this.socket.on('player-locked-turn', (data) => {

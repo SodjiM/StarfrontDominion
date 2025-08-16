@@ -144,27 +144,99 @@ setInterval(async () => {
 
 // Socket.IO connection handling - ASYNCHRONOUS FRIENDLY
 io.on('connection', (socket) => {
-    // Basic chat: game-wide, direct messages, and group channels
-    socket.on('chat:send', (msg) => {
+    // Basic chat: game-wide, direct messages, and group channels (with persistence)
+    socket.on('chat:send', async (msg) => {
         // msg: { gameId, fromUserId, toUserId?, channelId?, text }
         try {
+            const gameId = Number(msg.gameId);
+            const fromUserId = Number(msg.fromUserId || socket.userId);
+            const toUserId = msg.toUserId != null ? Number(msg.toUserId) : null;
+            const channelId = msg.channelId != null ? Number(msg.channelId) : null;
+            const text = String(msg.text || '').slice(0, 500);
+            if (!gameId || !fromUserId || !text) {
+                return socket.emit('chat:error', { message: 'Invalid chat payload' });
+            }
+
+            // Persist
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO chat_messages (game_id, from_user_id, to_user_id, channel_id, text, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [gameId, fromUserId, toUserId, channelId, text, new Date().toISOString()],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+
             const payload = {
-                fromUserId: msg.fromUserId,
-                text: String(msg.text || '').slice(0, 500),
+                fromUserId,
+                text,
                 timestamp: new Date().toISOString(),
-                channelId: msg.channelId || null,
-                toUserId: msg.toUserId || null
+                channelId: channelId || null,
+                toUserId: toUserId || null
             };
-            if (msg.toUserId) {
-                // Direct message: emit only to the recipient if in room
-                io.to(`game-${msg.gameId}`).emit('chat:dm', { ...payload, toUserId: msg.toUserId });
-            } else if (msg.channelId) {
-                io.to(`game-${msg.gameId}`).emit('chat:channel', payload);
+
+            if (toUserId) {
+                // DM: send to sender and recipient only
+                io.to(`user-${fromUserId}`).to(`user-${toUserId}`).emit('chat:dm', { ...payload, toUserId });
+            } else if (channelId) {
+                io.to(`game-${gameId}`).emit('chat:channel', payload);
             } else {
-                io.to(`game-${msg.gameId}`).emit('chat:game', payload);
+                io.to(`game-${gameId}`).emit('chat:game', payload);
             }
         } catch (e) {
+            console.error('chat:send error:', e);
             socket.emit('chat:error', { message: 'Failed to send message' });
+        }
+    });
+
+    // Chat history fetch
+    socket.on('chat:history', async (params, callback) => {
+        try {
+            const gameId = Number(params?.gameId || socket.gameId);
+            const withUserId = params?.withUserId != null ? Number(params.withUserId) : null;
+            const limit = Math.max(1, Math.min(200, Number(params?.limit || 100)));
+            if (!gameId) return callback && callback({ success: false, error: 'Missing gameId' });
+
+            let rows = [];
+            if (withUserId) {
+                const me = Number(socket.userId);
+                rows = await new Promise((resolve, reject) => {
+                    db.all(
+                        `SELECT from_user_id, to_user_id, channel_id, text, created_at
+                         FROM chat_messages
+                         WHERE game_id = ? AND (
+                            (from_user_id = ? AND to_user_id = ?) OR
+                            (from_user_id = ? AND to_user_id = ?)
+                         )
+                         ORDER BY id DESC LIMIT ?`,
+                        [gameId, me, withUserId, withUserId, me, limit],
+                        (err, r) => err ? reject(err) : resolve(r || [])
+                    );
+                });
+            } else {
+                rows = await new Promise((resolve, reject) => {
+                    db.all(
+                        `SELECT from_user_id, to_user_id, channel_id, text, created_at
+                         FROM chat_messages
+                         WHERE game_id = ? AND to_user_id IS NULL
+                         ORDER BY id DESC LIMIT ?`,
+                        [gameId, limit],
+                        (err, r) => err ? reject(err) : resolve(r || [])
+                    );
+                });
+            }
+
+            const messages = rows.reverse().map(r => ({
+                fromUserId: r.from_user_id,
+                toUserId: r.to_user_id || null,
+                channelId: r.channel_id || null,
+                text: r.text,
+                timestamp: r.created_at
+            }));
+            callback && callback({ success: true, messages });
+        } catch (err) {
+            console.error('chat:history error:', err);
+            callback && callback({ success: false, error: 'Failed to fetch history' });
         }
     });
     console.log(`🚀 Player connected: ${socket.id}`);
@@ -174,6 +246,9 @@ io.on('connection', (socket) => {
         socket.join(`game-${gameId}`);
         socket.gameId = gameId;
         socket.userId = userId;
+        if (userId) {
+            socket.join(`user-${userId}`);
+        }
         console.log(`👤 Player ${userId} joined game ${gameId} room`);
         // Update presence timestamp
         if (userId) {
