@@ -188,6 +188,14 @@ class GameClient {
 
             // Prime owner name cache for tooltips
             this.primePlayerNameCache();
+
+            // Ensure our own username is cached immediately for chat display
+            try {
+                const me = (typeof Session !== 'undefined' && typeof Session.getUser === 'function') ? Session.getUser() : null;
+                if (me?.userId && me?.username) {
+                    this.playerNameById.set(Number(me.userId), me.username);
+                }
+            } catch {}
         });
 
         this.socket.on('player-locked-turn', (data) => {
@@ -628,6 +636,8 @@ class GameClient {
         const username = (Session.getUser()?.username) || 'Commander';
         const nameEl = document.getElementById('commanderName');
         if (nameEl) nameEl.textContent = username;
+        // Keep chat/name cache in sync with UI
+        try { if (this.userId) this.playerNameById.set(Number(this.userId), username); } catch {}
 
         // System name subtitle
         const sysEl = document.getElementById('systemNameLabel');

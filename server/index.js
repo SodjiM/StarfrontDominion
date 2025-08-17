@@ -194,6 +194,18 @@ io.on('connection', (socket) => {
                 return socket.emit('chat:error', { message: 'Invalid chat payload' });
             }
 
+            // Resolve usernames for sender/recipient
+            const fromUsername = await new Promise((resolve) => {
+                db.get('SELECT username FROM users WHERE id = ?', [fromUserId], (err, row) => {
+                    resolve(row?.username || null);
+                });
+            });
+            const toUsername = toUserId ? await new Promise((resolve) => {
+                db.get('SELECT username FROM users WHERE id = ?', [toUserId], (err, row) => {
+                    resolve(row?.username || null);
+                });
+            }) : null;
+
             // Persist
             await new Promise((resolve, reject) => {
                 db.run(
@@ -206,10 +218,12 @@ io.on('connection', (socket) => {
 
             const payload = {
                 fromUserId,
+                fromUsername: fromUsername || null,
                 text,
                 timestamp: new Date().toISOString(),
                 channelId: channelId || null,
-                toUserId: toUserId || null
+                toUserId: toUserId || null,
+                toUsername: toUsername || null
             };
 
             if (toUserId) {
@@ -239,13 +253,16 @@ io.on('connection', (socket) => {
                 const me = Number(socket.userId);
                 rows = await new Promise((resolve, reject) => {
                     db.all(
-                        `SELECT from_user_id, to_user_id, channel_id, text, created_at
-                         FROM chat_messages
-                         WHERE game_id = ? AND (
-                            (from_user_id = ? AND to_user_id = ?) OR
-                            (from_user_id = ? AND to_user_id = ?)
+                        `SELECT m.from_user_id, m.to_user_id, m.channel_id, m.text, m.created_at,
+                                fu.username AS from_username, tu.username AS to_username
+                         FROM chat_messages m
+                         LEFT JOIN users fu ON fu.id = m.from_user_id
+                         LEFT JOIN users tu ON tu.id = m.to_user_id
+                         WHERE m.game_id = ? AND (
+                            (m.from_user_id = ? AND m.to_user_id = ?) OR
+                            (m.from_user_id = ? AND m.to_user_id = ?)
                          )
-                         ORDER BY id DESC LIMIT ?`,
+                         ORDER BY m.id DESC LIMIT ?`,
                         [gameId, me, withUserId, withUserId, me, limit],
                         (err, r) => err ? reject(err) : resolve(r || [])
                     );
@@ -253,10 +270,12 @@ io.on('connection', (socket) => {
             } else {
                 rows = await new Promise((resolve, reject) => {
                     db.all(
-                        `SELECT from_user_id, to_user_id, channel_id, text, created_at
-                         FROM chat_messages
-                         WHERE game_id = ? AND to_user_id IS NULL
-                         ORDER BY id DESC LIMIT ?`,
+                        `SELECT m.from_user_id, m.to_user_id, m.channel_id, m.text, m.created_at,
+                                fu.username AS from_username
+                         FROM chat_messages m
+                         LEFT JOIN users fu ON fu.id = m.from_user_id
+                         WHERE m.game_id = ? AND m.to_user_id IS NULL
+                         ORDER BY m.id DESC LIMIT ?`,
                         [gameId, limit],
                         (err, r) => err ? reject(err) : resolve(r || [])
                     );
@@ -265,7 +284,9 @@ io.on('connection', (socket) => {
 
             const messages = rows.reverse().map(r => ({
                 fromUserId: r.from_user_id,
+                fromUsername: r.from_username || null,
                 toUserId: r.to_user_id || null,
+                toUsername: r.to_username || null,
                 channelId: r.channel_id || null,
                 text: r.text,
                 timestamp: r.created_at

@@ -1738,8 +1738,22 @@
                     if (window.gameClient) {
                         const map = gameClient.playerNameById;
                         if (map && map.has(id)) return map.get(id);
-                        if (id === gameClient.userId && typeof Session?.getUser === 'function') {
-                            return Session.getUser()?.username || `Player ${id}`;
+                        if (id === gameClient.userId) {
+                            // Prefer session username for self
+                            if (typeof Session !== 'undefined' && typeof Session.getUser === 'function') {
+                                const me = Session.getUser();
+                                if (me?.username) {
+                                    try { map && gameClient.playerNameById.set(id, me.username); } catch {}
+                                    return me.username;
+                                }
+                            }
+                            // Fallback to commanderName already rendered in UI
+                            const el = document.getElementById('commanderName');
+                            const text = el ? (el.textContent || '').trim() : '';
+                            if (text) {
+                                try { map && gameClient.playerNameById.set(id, text); } catch {}
+                                return text;
+                            }
                         }
                     }
                 } catch {}
@@ -1748,9 +1762,9 @@
 
             const scope = msg.channelId
                 ? `[#${msg.channelId}]`
-                : (msg.toUserId ? `(DM→${resolveName(msg.toUserId)})` : '(Public)');
+                : (msg.toUserId ? `(DM→${msg.toUsername || resolveName(msg.toUserId)})` : '(Public)');
 
-            const fromName = resolveName(msg.fromUserId);
+            const fromName = msg.fromUsername || resolveName(msg.fromUserId);
             line.textContent = `[${new Date(msg.timestamp).toLocaleTimeString()}] ${scope} ${fromName}: ${msg.text}`;
             box.appendChild(line);
             box.scrollTop = box.scrollHeight;
@@ -1823,6 +1837,16 @@
         // Populate chat recipients on load and when socket connects
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => { populateChatRecipients(); requestChatHistory(); }, 600);
+            // Seed chat name cache with our commanderName if available
+            try {
+                if (window.gameClient) {
+                    const el = document.getElementById('commanderName');
+                    const text = el ? (el.textContent || '').trim() : '';
+                    if (text && gameClient.userId) {
+                        gameClient.playerNameById.set(Number(gameClient.userId), text);
+                    }
+                }
+            } catch {}
         });
         // When selection changes, load appropriate history
         document.addEventListener('change', (e) => {
