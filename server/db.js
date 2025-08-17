@@ -242,6 +242,38 @@ const initializeDatabase = async () => {
             );
         });
 
+        // Queued orders table for multi-turn order sequencing
+        await new Promise((resolve, reject) => {
+            console.log('🔧 Ensuring queued_orders table exists...');
+            db.run(
+                `CREATE TABLE IF NOT EXISTS queued_orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_id INTEGER NOT NULL,
+                    ship_id INTEGER NOT NULL,
+                    sequence_index INTEGER NOT NULL,
+                    order_type TEXT NOT NULL, -- 'move' | 'warp' | 'harvest_start' | 'harvest_stop'
+                    payload TEXT, -- JSON blob
+                    not_before_turn INTEGER,
+                    status TEXT DEFAULT 'queued', -- 'queued','consumed','cancelled','skipped'
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (game_id) REFERENCES games(id),
+                    FOREIGN KEY (ship_id) REFERENCES sector_objects(id)
+                )`,
+                (err) => {
+                    if (err) {
+                        console.error('Error creating queued_orders table:', err);
+                        return reject(err);
+                    }
+                    // Helpful indexes
+                    db.run('CREATE INDEX IF NOT EXISTS idx_qorders_ship_status ON queued_orders(ship_id, status)', () => {});
+                    db.run('CREATE INDEX IF NOT EXISTS idx_qorders_game_ship_seq ON queued_orders(game_id, ship_id, sequence_index)', () => {});
+                    db.run('CREATE INDEX IF NOT EXISTS idx_qorders_notbefore ON queued_orders(game_id, not_before_turn)', () => {});
+                    console.log('✅ queued_orders table ready');
+                    resolve();
+                }
+            );
+        });
+
         // Insert sample games
         await new Promise((resolve, reject) => {
             db.run(`INSERT OR IGNORE INTO games (id, name, mode, status) VALUES 

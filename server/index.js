@@ -14,6 +14,31 @@ const lobbyRoutes = require('./routes/lobby');
 const { router: gameRoutes, GameWorldManager } = require('./routes/game');
 const { HarvestingManager } = require('./harvesting-manager');
 
+// Queued orders configuration
+const MAX_QUEUED_ORDERS_PER_SHIP = 5;
+
+// Utility: simple Bresenham line for tile path
+function computePathBresenham(x0, y0, x1, y1) {
+    const path = [];
+    let ix = Math.round(Number(x0) || 0);
+    let iy = Math.round(Number(y0) || 0);
+    const tx = Math.round(Number(x1) || 0);
+    const ty = Math.round(Number(y1) || 0);
+    const dx = Math.abs(tx - ix);
+    const dy = Math.abs(ty - iy);
+    const sx = ix < tx ? 1 : -1;
+    const sy = iy < ty ? 1 : -1;
+    let err = dx - dy;
+    while (true) {
+        path.push({ x: ix, y: iy });
+        if (ix === tx && iy === ty) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; ix += sx; }
+        if (e2 < dx) { err += dx; iy += sy; }
+    }
+    return path;
+}
+
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
@@ -600,6 +625,73 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Queue management: add a queued order
+    socket.on('queue-order', async (data, callback) => {
+        try {
+            const { gameId, shipId, orderType, payload, notBeforeTurn } = data || {};
+            if (!gameId || !shipId || !orderType) return callback && callback({ success: false, error: 'missing_fields' });
+            // Enforce ownership
+            const ship = await new Promise((resolve) => db.get('SELECT owner_id FROM sector_objects WHERE id = ?', [shipId], (e, r) => resolve(r)));
+            if (!ship || Number(ship.owner_id) !== Number(socket.userId)) return callback && callback({ success: false, error: 'not_owner' });
+            // Enforce queue length limit
+            const queuedCount = await new Promise((resolve) => db.get('SELECT COUNT(1) as c FROM queued_orders WHERE ship_id = ? AND status = "queued"', [shipId], (e, r) => resolve(r?.c || 0)));
+            if (queuedCount >= MAX_QUEUED_ORDERS_PER_SHIP) return callback && callback({ success: false, error: 'queue_full' });
+            // Determine next sequence index
+            const seqRow = await new Promise((resolve) => db.get('SELECT COALESCE(MAX(sequence_index), 0) as maxSeq FROM queued_orders WHERE ship_id = ?', [shipId], (e, r) => resolve(r)));
+            const nextSeq = Number(seqRow?.maxSeq || 0) + 1;
+            await new Promise((resolve, reject) => db.run(
+                `INSERT INTO queued_orders (game_id, ship_id, sequence_index, order_type, payload, not_before_turn, status, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
+                [gameId, shipId, nextSeq, String(orderType), payload ? JSON.stringify(payload) : null, (typeof notBeforeTurn === 'number' ? notBeforeTurn : null), new Date().toISOString()],
+                (err) => err ? reject(err) : resolve()
+            ));
+            callback && callback({ success: true });
+            io.to(`game-${gameId}`).emit('queue:updated', { shipId });
+        } catch (e) {
+            callback && callback({ success: false, error: 'server_error' });
+        }
+    });
+
+    socket.on('queue:list', async (data, callback) => {
+        try {
+            const { gameId, shipId } = data || {};
+            if (!gameId || !shipId) return callback && callback({ success: false, error: 'missing_fields' });
+            const rows = await new Promise((resolve) => db.all(
+                `SELECT id, sequence_index, order_type, payload, not_before_turn, status
+                 FROM queued_orders WHERE game_id = ? AND ship_id = ? AND status = 'queued'
+                 ORDER BY sequence_index ASC, id ASC`,
+                [gameId, shipId],
+                (e, r) => resolve(r || [])
+            ));
+            callback && callback({ success: true, orders: rows });
+        } catch {
+            callback && callback({ success: false, error: 'server_error' });
+        }
+    });
+
+    socket.on('queue:clear', async (data, callback) => {
+        try {
+            const { gameId, shipId } = data || {};
+            if (!gameId || !shipId) return callback && callback({ success: false, error: 'missing_fields' });
+            await new Promise((resolve) => db.run(`UPDATE queued_orders SET status = 'cancelled' WHERE game_id = ? AND ship_id = ? AND status = 'queued'`, [gameId, shipId], () => resolve()));
+            callback && callback({ success: true });
+            io.to(`game-${gameId}`).emit('queue:updated', { shipId });
+        } catch {
+            callback && callback({ success: false, error: 'server_error' });
+        }
+    });
+
+    socket.on('queue:remove', async (data, callback) => {
+        try {
+            const { gameId, shipId, id } = data || {};
+            if (!gameId || !shipId || !id) return callback && callback({ success: false, error: 'missing_fields' });
+            await new Promise((resolve) => db.run(`UPDATE queued_orders SET status = 'cancelled' WHERE id = ? AND game_id = ? AND ship_id = ? AND status = 'queued'`, [id, gameId, shipId], () => resolve()));
+            callback && callback({ success: true });
+            io.to(`game-${gameId}`).emit('queue:updated', { shipId });
+        } catch {
+            callback && callback({ success: false, error: 'server_error' });
+        }
+    });
     // Deprecated: attack-target is disabled; use activate-ability for offense
     socket.on('attack-target', async () => {
         socket.emit('combat:error', { error: 'Use abilities to attack (activate-ability)' });
@@ -843,6 +935,10 @@ async function resolveTurn(gameId, turnNumber) {
         await cleanupExpiredEffectsAndWrecks(gameId, turnNumber);
         await regenerateShipEnergy(gameId, turnNumber);
         
+        // 6.5. Materialize next queued orders for idle ships into the upcoming turn
+        // This creates at most one active order per ship for the next turn
+        await materializeQueuedOrders(gameId, turnNumber + 1);
+
         // Create next turn
         const nextTurn = turnNumber + 1;
         
@@ -1233,6 +1329,120 @@ function processWarpOrder(order, turnNumber, gameId, resolve, reject) {
             status: 'warp_error',
             message: 'Unknown warp phase'
         });
+    }
+}
+
+// Materialize one queued order per idle ship for the upcoming turn
+async function materializeQueuedOrders(gameId, upcomingTurn) {
+    // Find ships in this game that are not currently moving/warping or harvesting
+    const ships = await new Promise((resolve) => {
+        db.all(
+            `SELECT so.id as ship_id, so.sector_id, so.x, so.y
+             FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.type = 'ship'`,
+            [gameId],
+            (err, rows) => resolve(rows || [])
+        );
+    });
+
+    for (const ship of ships) {
+        try {
+            // Skip if ship has active movement/warp
+            const activeMove = await new Promise((resolve) => db.get(
+                `SELECT id FROM movement_orders WHERE object_id = ? AND status IN ('active','warp_preparing') ORDER BY created_at DESC LIMIT 1`,
+                [ship.ship_id],
+                (e, r) => resolve(r)
+            ));
+            if (activeMove) continue;
+
+            // Skip if ship is harvesting
+            const harvesting = await new Promise((resolve) => db.get(
+                `SELECT id FROM harvesting_tasks WHERE ship_id = ? AND status IN ('active','paused')`,
+                [ship.ship_id],
+                (e, r) => resolve(r)
+            ));
+            if (harvesting) continue;
+
+            // Get the next queued order for this ship
+            const q = await new Promise((resolve) => db.get(
+                `SELECT * FROM queued_orders 
+                 WHERE game_id = ? AND ship_id = ? AND status = 'queued'
+                 AND (not_before_turn IS NULL OR not_before_turn <= ?)
+                 ORDER BY sequence_index ASC, id ASC LIMIT 1`,
+                [gameId, ship.ship_id, upcomingTurn],
+                (e, r) => resolve(r)
+            ));
+            if (!q) continue;
+
+            // Parse payload
+            let payload = {};
+            try { payload = q.payload ? JSON.parse(q.payload) : {}; } catch {}
+
+            if (q.order_type === 'move') {
+                // Compute path from current to destination
+                const dest = payload?.destination || payload; // support {destination:{x,y}} or {x,y}
+                if (!dest || typeof dest.x !== 'number' || typeof dest.y !== 'number') {
+                    await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], () => resolve()));
+                    continue;
+                }
+                const movementPath = computePathBresenham(ship.x, ship.y, dest.x, dest.y);
+                if (movementPath.length <= 1) {
+                    await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], () => resolve()));
+                    continue;
+                }
+                // Fetch movement speed from ship meta
+                const metaRow = await new Promise((resolve) => db.get('SELECT meta FROM sector_objects WHERE id = ?', [ship.ship_id], (e, r) => resolve(r)));
+                const metaObj = (() => { try { return JSON.parse(metaRow?.meta || '{}'); } catch { return {}; } })();
+                const baseSpeed = Number(metaObj.movementSpeed || 1);
+                const eta = Math.ceil((movementPath.length - 1) / Math.max(1, baseSpeed));
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO movement_orders (object_id, destination_x, destination_y, movement_speed, eta_turns, movement_path, current_step, status, created_at)
+                         VALUES (?, ?, ?, ?, ?, ?, 0, 'active', ?)`,
+                        [ship.ship_id, dest.x, dest.y, baseSpeed, eta, JSON.stringify(movementPath), new Date().toISOString()],
+                        (err) => err ? reject(err) : resolve()
+                    );
+                });
+                await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], () => resolve()));
+            } else if (q.order_type === 'warp') {
+                const dest = payload?.destination || {};
+                if (typeof dest.x !== 'number' || typeof dest.y !== 'number') {
+                    await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], () => resolve()));
+                    continue;
+                }
+                // Insert warp_preparing order
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO movement_orders (object_id, warp_target_id, warp_destination_x, warp_destination_y, warp_phase, warp_preparation_turns, status, created_at)
+                         VALUES (?, ?, ?, ?, 'preparing', 0, 'warp_preparing', ?)`,
+                        [ship.ship_id, payload?.targetId || null, dest.x, dest.y, new Date().toISOString()],
+                        (err) => err ? reject(err) : resolve()
+                    );
+                });
+                await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], () => resolve()));
+            } else if (q.order_type === 'harvest_start') {
+                const nodeId = Number(payload?.nodeId);
+                if (!nodeId) {
+                    await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], () => resolve()));
+                    continue;
+                }
+                // Try to start harvesting; if not adjacent, skip in v1
+                const currentTurn = upcomingTurn;
+                const result = await HarvestingManager.startHarvesting(ship.ship_id, nodeId, currentTurn);
+                if (result?.success) {
+                    await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], () => resolve()));
+                } else {
+                    await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], () => resolve()));
+                }
+            } else if (q.order_type === 'harvest_stop') {
+                await HarvestingManager.stopHarvesting(ship.ship_id).catch(() => {});
+                await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], () => resolve()));
+            }
+        } catch (e) {
+            // Non-fatal per ship
+            console.warn('materializeQueuedOrders error for ship', ship.ship_id, e?.message || e);
+        }
     }
 }
 

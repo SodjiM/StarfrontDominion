@@ -724,9 +724,10 @@ class GameWorldManager {
                                                         return {
                                                             ...obj,
                                                             meta,
-                                                        ...movementData,
-                                                        ...warpData,
-                                                        ...harvestingData,
+                                                            ...movementData,
+                                                            ...warpData,
+                                                            ...harvestingData,
+                                                            queuedOrders: null,
                                                             sectorInfo: {
                                                                 name: sector.name,
                                                                 archetype: sector.archetype,

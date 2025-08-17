@@ -33,6 +33,7 @@ class GameClient {
         this.lastFleet = null; // Cached fleet for stats strip
         this.senateProgress = 0; // 0-100 senate update meter
         this.turnCountdownTimer = null;
+        this.queueMode = false; // If true, right-clicking queues orders
     }
 
     async fetchSectorTrails() {
@@ -2337,6 +2338,7 @@ class GameClient {
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+        document.addEventListener('keyup', (e) => this.handleKeyUp(e));
     }
 
     // Create tooltip overlay element for map hover
@@ -3214,6 +3216,22 @@ class GameClient {
         console.log(`📍 PHASE 3: Movement path calculated from CURRENT position (${this.selectedUnit.x},${this.selectedUnit.y}) to (${worldX},${worldY})`);
         
         if (movementPath.length > 1) {
+            // If queue mode, enqueue instead of immediate move
+            if (this.queueMode) {
+                this.socket.emit('queue-order', {
+                    gameId: this.gameId,
+                    shipId: this.selectedUnit.id,
+                    orderType: 'move',
+                    payload: { destination: { x: worldX, y: worldY } }
+                }, (resp) => {
+                    if (resp && resp.success) {
+                        this.addLogEntry(`Queued: Move to (${worldX}, ${worldY})`, 'info');
+                    } else {
+                        this.addLogEntry(`Failed to queue move: ${resp?.error || 'error'}`, 'error');
+                    }
+                });
+                return;
+            }
             const eta = this.calculateETA(movementPath, this.selectedUnit.meta.movementSpeed || 1);
             
             // PHASE 2: Create accurate lingering trail from actual movement history
@@ -3326,6 +3344,9 @@ class GameClient {
             case 'Escape':
                 // Do not clear selection with Escape anymore to keep selection persistent
                 break;
+            case 'Shift':
+                this.queueMode = true;
+                break;
                 
             case '1':
             case '2':
@@ -3337,6 +3358,12 @@ class GameClient {
                     this.selectUnit(this.units[unitIndex].id);
                 }
                 break;
+        }
+    }
+
+    handleKeyUp(e) {
+        if (e.key === 'Shift') {
+            this.queueMode = false;
         }
     }
 
@@ -3752,19 +3779,35 @@ class GameClient {
     executeWarpOrder(target) {
         console.log(`🌌 Initiating warp from (${this.selectedUnit.x},${this.selectedUnit.y}) to ${target.meta.name} at (${target.x},${target.y})`);
         
-        // Send warp order to server
-        this.socket.emit('warp-ship', {
-            gameId: this.gameId,
-            shipId: this.selectedUnit.id,
-            targetId: target.id,
-            targetX: target.x,
-            targetY: target.y,
-            shipName: this.selectedUnit.meta.name,
-            targetName: target.meta.name
-        });
-        
-        this.addLogEntry(`${this.selectedUnit.meta.name} engaging warp drive. Target: ${target.meta.name}`, 'success');
-        return true; // Close modal
+        if (this.queueMode) {
+            this.socket.emit('queue-order', {
+                gameId: this.gameId,
+                shipId: this.selectedUnit.id,
+                orderType: 'warp',
+                payload: { targetId: target.id, destination: { x: target.x, y: target.y }, targetName: target.meta.name }
+            }, (resp) => {
+                if (resp && resp.success) {
+                    this.addLogEntry(`Queued: Warp to ${target.meta.name}`, 'success');
+                } else {
+                    this.addLogEntry(`Failed to queue warp: ${resp?.error || 'error'}`, 'error');
+                }
+            });
+            return true;
+        } else {
+            // Send warp order to server immediately
+            this.socket.emit('warp-ship', {
+                gameId: this.gameId,
+                shipId: this.selectedUnit.id,
+                targetId: target.id,
+                targetX: target.x,
+                targetY: target.y,
+                shipName: this.selectedUnit.meta.name,
+                targetName: target.meta.name
+            });
+            
+            this.addLogEntry(`${this.selectedUnit.meta.name} engaging warp drive. Target: ${target.meta.name}`, 'success');
+            return true; // Close modal
+        }
     }
     
     // Enter warp target selection mode - show popup menu
@@ -5329,13 +5372,27 @@ async function showResourceSelection(shipId) {
 }
 
 function startMining(shipId, resourceNodeId, resourceName) {
-    gameClient.socket.emit('start-harvesting', {
-        gameId: gameClient.gameId,
-        shipId: shipId,
-        resourceNodeId: resourceNodeId
-    });
-    
-    gameClient.addLogEntry(`Starting to mine ${resourceName}...`, 'info');
+    if (gameClient.queueMode) {
+        gameClient.socket.emit('queue-order', {
+            gameId: gameClient.gameId,
+            shipId: shipId,
+            orderType: 'harvest_start',
+            payload: { nodeId: resourceNodeId }
+        }, (resp) => {
+            if (resp && resp.success) {
+                gameClient.addLogEntry(`Queued: Start mining ${resourceName}`, 'info');
+            } else {
+                gameClient.addLogEntry(`Failed to queue mining: ${resp?.error || 'error'}`, 'error');
+            }
+        });
+    } else {
+        gameClient.socket.emit('start-harvesting', {
+            gameId: gameClient.gameId,
+            shipId: shipId,
+            resourceNodeId: resourceNodeId
+        });
+        gameClient.addLogEntry(`Starting to mine ${resourceName}...`, 'info');
+    }
 }
 
 async function showCargo() {
