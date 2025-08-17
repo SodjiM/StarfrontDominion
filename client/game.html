@@ -1699,6 +1699,11 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script>
+      // Dev mode initializer: set to '1' to enable client dev features
+      // You can flip this at runtime in the console as well: window.SF_DEV_MODE = true
+      window.SF_DEV_MODE = (localStorage.getItem('SF_DEV_MODE') === '1');
+    </script>
     <script src="main.js"></script>
     <script src="encyclopedia.js"></script>
     <script src="game.js"></script>

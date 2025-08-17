@@ -59,7 +59,7 @@ class HarvestingManager {
             }
             
             // Calculate harvest rate (base rate * ship modifier * node difficulty)
-            const harvestRate = this.calculateHarvestRate(ship, resourceNode);
+            const harvestRate = await this.calculateHarvestRate(ship, resourceNode);
             
             // Create harvesting task
             const taskId = await this.createHarvestingTask(shipId, resourceNodeId, currentTurn, harvestRate);
@@ -262,11 +262,32 @@ class HarvestingManager {
     /**
      * Calculate harvest rate based on ship and node properties
      */
-    static calculateHarvestRate(ship, resourceNode) {
+    static async calculateHarvestRate(ship, resourceNode) {
         const shipMeta = JSON.parse(ship.meta || '{}');
         const nodeMeta = JSON.parse(resourceNode.meta || '{}');
         
-        const baseRate = shipMeta.harvestRate || 1.0;
+        let baseRate = shipMeta.harvestRate || 1.0;
+        // Rotary Mining Lasers ramping bonus: if ship has ability and same node as last turn, ramp up to +5/turn
+        try {
+            const hasRotary = Array.isArray(shipMeta.abilities) && shipMeta.abilities.includes('rotary_mining_lasers');
+            if (hasRotary) {
+                const lastNodeId = shipMeta.lastHarvestNodeId;
+                const ramp = Number(shipMeta.harvestRamp || 0);
+                const sameNode = lastNodeId && Number(lastNodeId) === Number(resourceNode.id);
+                const nextRamp = sameNode ? Math.min(5, ramp + 1) : 1; // start at +1, cap +5
+                baseRate += nextRamp;
+                // Persist ramp context on the ship meta
+                const newMeta = { ...shipMeta, lastHarvestNodeId: resourceNode.id, harvestRamp: nextRamp };
+                await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(newMeta), ship.id], () => resolve()));
+            } else {
+                // Clear ramp if no ability
+                if (shipMeta.harvestRamp || shipMeta.lastHarvestNodeId) {
+                    const newMeta = { ...shipMeta };
+                    delete newMeta.harvestRamp; delete newMeta.lastHarvestNodeId;
+                    await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(newMeta), ship.id], () => resolve()));
+                }
+            }
+        } catch {}
         const difficulty = nodeMeta.difficulty || resourceNode.harvest_difficulty || 1.0;
         
         return Math.max(0.1, baseRate * difficulty);

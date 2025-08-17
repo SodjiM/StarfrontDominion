@@ -215,22 +215,54 @@ const Abilities = {
     shortDescription: 'Passive: reduced first-hit damage.',
     longDescription: 'After a full repair, the next incoming hit deals 25% less damage.',
     type: 'passive'
+  },
+
+  // Drill Skiff Abilities
+  rotary_mining_lasers: {
+    key: 'rotary_mining_lasers',
+    name: 'Rotary Mining Lasers',
+    description: 'Harvests 1 mineral/turn from a node, ramping +1 each turn up to +5/turn while continuously mining.',
+    shortDescription: 'Ramping harvest (up to +5/turn).',
+    longDescription: 'While actively harvesting a resource node, gathers 1 unit per turn and increases by +1 each consecutive turn (max +5/turn). Bonus resets when not harvesting.',
+    type: 'passive'
+  },
+  microthruster_shift: {
+    key: 'microthruster_shift',
+    name: 'Microthruster Shift',
+    description: 'Perform a rapid strafe move up to 2 tiles.',
+    shortDescription: 'Strafe up to 2 tiles.',
+    longDescription: 'Fires directional microthrusters to laterally reposition up to 2 tiles. Cooldown: 5 turns.',
+    type: 'active',
+    target: 'position',
+    range: 2,
+    cooldown: 5,
+    energyCost: 1
+  },
+  emergency_discharge_vent: {
+    key: 'emergency_discharge_vent',
+    name: 'Emergency Discharge Vent',
+    description: 'Jettisons all carried minerals into a can (10 HP, interactable by anyone) and gains +3 speed and +50% evasion for 1 turn.',
+    shortDescription: 'Dump cargo; gain +3 speed, +50% evasion (1 turn).',
+    longDescription: 'Immediately jettisons all carried minerals into a deployable cargo can (10 HP) that any player can transfer to/from or destroy. Grants +3 movement and +50% evasion for 1 turn. Cooldown: 4 turns.',
+    type: 'active',
+    target: 'self',
+    cooldown: 4,
+    energyCost: 2,
+    effectKey: 'emergency_discharge_buff',
+    duration: 1
+  },
+  solo_miners_instinct: {
+    key: 'solo_miners_instinct',
+    name: "Solo Miner's Instinct",
+    description: 'If no allies within 5 tiles: +1 movement, +25% scan range, +10% evasion.',
+    shortDescription: 'Alone: +move, +scan, +evasion.',
+    longDescription: 'Passive bonuses when operating alone (no allied ships within 5 tiles): +1 movement, +25% scan range, +10% evasion. Disables near allies or in formation.',
+    type: 'passive'
   }
 };
 
-/** Default per-class ability sets (can be refined per blueprint later) */
-const DEFAULT_ABILITIES = {
-  frigate: ['target_painter'],
-  battleship: ['barrage', 'tractor_field'],
-  capital: ['aegis_pulse', 'tractor_field'],
-  explorer: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience']
-};
+// (Deprecated) DEFAULT_ABILITIES removed; blueprints now define abilities per ship
 
-// Blueprint-specific overrides (example)
-const BLUEPRINT_ABILITIES = {
-  'needle-gunship': ['auralite_lance', 'quarzon_micro_missiles', 'phantom_burn', 'strike_vector']
-};
-
-module.exports = { Abilities, DEFAULT_ABILITIES, BLUEPRINT_ABILITIES };
+module.exports = { Abilities };
 
 

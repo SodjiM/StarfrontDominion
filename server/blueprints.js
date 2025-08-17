@@ -188,6 +188,36 @@ const SHIP_BLUEPRINTS = [
     prereqs: [],
     version: 1
   }
+  ,
+  {
+    id: 'drill-skiff',
+    name: 'Drill Skiff',
+    class: 'frigate',
+    role: 'prospector-miner',
+    refinedRole: 'prospector-miner',
+    refinedGroup: 'exploration-expansion',
+    emoji: '⛏️',
+    uiOrder: 40,
+    shortDescription: 'Agile early-game asteroid harvester.',
+    longDescription: 'The Drill Skiff excels at rapid prospecting runs: zip into belts, dig fast, and slip away if threatened. Most profitable miner early, but fragile and prefers to work alone.',
+    requirements: {
+      core:        { 'Ferrite Alloy': 20, 'Crytite': 12, 'Ardanium': 10, 'Vornite': 8, 'Zerothium': 6 },
+      specialized: { 'Magnetrine': 15 }
+    },
+    hp: 35,
+    maxHp: 35,
+    movementSpeed: 5,
+    scanRange: 45,
+    cargoCapacity: 25,
+    harvestRate: 1.0,
+    abilities: ['rotary_mining_lasers','microthruster_shift','emergency_discharge_vent','solo_miners_instinct'],
+    tags: ['miner','agile'],
+    buildTimeTurns: 1,
+    upkeep: {},
+    tier: 1,
+    prereqs: [],
+    version: 1
+  }
 ];
 
 // Optionally export a resolved view for callers that want merged stats

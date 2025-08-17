@@ -3,6 +3,7 @@ const db = require('../db');
 const { SystemGenerator } = require('../system-generator');
 const { CargoManager } = require('../cargo-manager');
 const { SHIP_BLUEPRINTS, computeAllRequirements, resolveBlueprint } = require('../blueprints');
+const { Abilities } = require('../abilities');
 const { SECTOR_ARCHETYPES } = require('../archetypes');
 const { HarvestingManager } = require('../harvesting-manager');
 const router = express.Router();
@@ -171,29 +172,27 @@ class GameWorldManager {
 
                 // Helper: create starter ship and initialize visibility after station placement
                 const proceedAfterStation = (starbaseId) => {
-                    const { DEFAULT_ABILITIES } = require('../abilities');
-                    const shipMetaObj = {
-                        name: `${player.username} Explorer`,
-                        hp: 50,
-                        maxHp: 50,
+                    const { SHIP_BLUEPRINTS, resolveBlueprint } = require('../blueprints');
+                    const explorer = (SHIP_BLUEPRINTS || []).find(b => b.id === 'explorer');
+                    const resolved = explorer ? resolveBlueprint(explorer) : {
+                        class: 'frigate',
                         scanRange: 50,
                         movementSpeed: 4,
                         cargoCapacity: 10,
                         harvestRate: 1.0,
-                        canMine: true,
-                        canActiveScan: false,
-                        shipType: 'explorer',
-                        pilotCost: 1,
-                        energy: 6,
-                        maxEnergy: 6,
-                        energyRegen: 3,
-                        abilities: DEFAULT_ABILITIES.explorer || ['dual_light_coilguns','boost_engines','jury_rig_repair','duct_tape_resilience']
+                        abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience']
+                    };
+                    const shipMetaObj = {
+                        name: `${player.username} Explorer`,
+                        ...resolved,
+                        shipType: resolved.class,
+                        blueprintId: resolved.id || 'explorer'
                     };
                     const shipMeta = JSON.stringify(shipMetaObj);
 
                     db.run(
                         'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
+                        [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, shipMetaObj.canActiveScan ? 1 : 0],
                         function(err) {
                             if (err) {
                                 console.error('Error creating ship:', err);
@@ -1093,14 +1092,59 @@ router.get('/system/:sectorId/facts', (req, res) => {
 // Ship blueprints listing with computed requirements
 router.get('/blueprints', (req, res) => {
     try {
-        const enriched = SHIP_BLUEPRINTS.map(bp => ({
-            ...bp,
-            requirements: computeAllRequirements(bp)
-        }));
+        const enriched = SHIP_BLUEPRINTS.map(bp => {
+            const resolved = resolveBlueprint(bp);
+            const abilitiesMeta = (resolved.abilities || []).filter(k => !!Abilities[k]).map(key => {
+                const a = Abilities[key];
+                return {
+                    key,
+                    name: a.name,
+                    type: a.type,
+                    target: a.target || 'self',
+                    cooldown: a.cooldown || 0,
+                    range: a.range || null,
+                    energyCost: a.energyCost || 0,
+                    shortDescription: a.shortDescription || a.description || null,
+                    longDescription: a.longDescription || null
+                };
+            });
+            return {
+                ...bp,
+                abilities: resolved.abilities || [],
+                abilitiesMeta,
+                requirements: computeAllRequirements(bp)
+            };
+        });
         res.json({ blueprints: enriched });
     } catch (e) {
         console.error('Error returning blueprints', e);
         res.status(500).json({ error: 'Failed to load blueprints' });
+    }
+});
+
+// Abilities registry (for client UI)
+router.get('/abilities', (req, res) => {
+    try {
+        const abilities = {};
+        Object.keys(Abilities || {}).forEach((key) => {
+            const a = Abilities[key] || {};
+            abilities[key] = {
+                key: a.key || key,
+                name: a.name || key,
+                description: a.description || null,
+                shortDescription: a.shortDescription || null,
+                longDescription: a.longDescription || null,
+                type: a.type || 'active',
+                target: a.target || 'self',
+                cooldown: a.cooldown || 0,
+                range: a.range || null,
+                energyCost: a.energyCost || 0
+            };
+        });
+        res.json({ abilities });
+    } catch (e) {
+        console.error('Error returning abilities', e);
+        res.status(500).json({ error: 'Failed to load abilities' });
     }
 });
 
@@ -1552,7 +1596,8 @@ const STRUCTURE_TYPES = {
 
 // Build ship endpoint
 router.post('/build-ship', (req, res) => {
-    const { stationId, blueprintId, userId } = req.body;
+    const { stationId, blueprintId, userId, freeBuild } = req.body;
+    const devMode = process.env.SF_DEV_MODE === '1' || process.env.NODE_ENV === 'development';
     
     // Validate blueprint
     const blueprint = SHIP_BLUEPRINTS.find(b => b.id === blueprintId);
@@ -1588,8 +1633,10 @@ router.post('/build-ship', (req, res) => {
         const reqs = computeAllRequirements(blueprint);
         const resourceMap = { ...reqs.core, ...reqs.specialized };
 
-        // Atomically consume resources from the building station
-        CargoManager.consumeResourcesAtomic(stationId, resourceMap, false)
+        // Atomically consume resources from the building station (unless freeBuild flag)
+        const allowFree = !!freeBuild && devMode;
+        const consume = allowFree ? Promise.resolve({ success: true }) : CargoManager.consumeResourcesAtomic(stationId, resourceMap, false);
+        consume
             .then(async (result) => {
                 if (!result.success) {
                     return res.status(400).json({ error: 'Insufficient resources', details: result.shortages });
@@ -1604,6 +1651,9 @@ router.post('/build-ship', (req, res) => {
                     shipType: resolved.class,
                     blueprintId: resolved.id
                 };
+                // Sanity: ensure abilities array exists and filter to known keys for UI
+                if (!Array.isArray(shipMetaObj.abilities)) shipMetaObj.abilities = [];
+                shipMetaObj.abilities = shipMetaObj.abilities.filter(k => !!Abilities[k]);
                 const shipMeta = JSON.stringify(shipMetaObj);
                 
                 // Find adjacent position

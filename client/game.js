@@ -862,7 +862,7 @@ class GameClient {
         }
     }
     // Update unit details panel
-    updateUnitDetails() {
+    async updateUnitDetails() {
         const detailsContainer = document.getElementById('unitDetails');
         
         if (!this.selectedUnit) {
@@ -879,21 +879,19 @@ class GameClient {
         const abilityButtons = [];
         const passiveChips = [];
         const abilities = Array.isArray(meta.abilities) ? meta.abilities : [];
-        const abilityDefs = window.AbilityDefs || {
-            // Ship: Explorer abilities
-            dual_light_coilguns: { name: 'Dual Light Coilguns', description: 'Low-caliber kinetic repeaters.', cooldown: 1, energyCost: 0, target: 'enemy', range: 6, type: 'offense' },
-            boost_engines: { name: 'Boost Engines', description: 'Increase travel speed by 25% for 3 turns.', cooldown: 20, energyCost: 2, target: 'self', type: 'active' },
-            jury_rig_repair: { name: 'Jury-Rig Repair', description: 'Restore 5% hull per turn for 3 turns.', cooldown: 20, energyCost: 3, target: 'self', type: 'active' },
-            survey_scanner: { name: 'Survey Scanner', description: 'Double scan range for 3 turns.', cooldown: 6, energyCost: 2, target: 'self', type: 'active' },
-            duct_tape_resilience: { name: 'Duct Tape Resilience', description: 'First hit at full HP reduced by 25%.', cooldown: 0, energyCost: 0, target: 'self', type: 'passive' },
-            //Ship: Needle Gunship abilities
-            auralite_lance: { name: 'Auralite Lance', description: 'Long-range burst; overpenetrates.', cooldown: 3, energyCost: 4, target: 'enemy', range: 15, type: 'offense' },
-            quarzon_micro_missiles: { name: 'Quarzon Micro-Missiles', description: 'Moderate tracking with debuff.', cooldown: 1, energyCost: 2, target: 'enemy', range: 10, type: 'offense' },
-            phantom_burn: { name: 'Phantom Burn', description: 'Evasion boost.', cooldown: 4, energyCost: 3, target: 'self', type: 'active' },
-            strike_vector: { name: 'Strike Vector', description: 'Short reposition.', cooldown: 3, energyCost: 3, target: 'position', range: 3, type: 'active' }
-        };
-        // Expose globally for render and interaction helpers
-        window.AbilityDefs = window.AbilityDefs || abilityDefs;
+        // Load ability definitions from server registry (once per session)
+        if (!window.AbilityDefs) {
+            try {
+                const res = await fetch('/game/abilities');
+                const data = await res.json();
+                if (res.ok && data && data.abilities) {
+                    window.AbilityDefs = data.abilities;
+                } else {
+                    window.AbilityDefs = {};
+                }
+            } catch { window.AbilityDefs = {}; }
+        }
+        const abilityDefs = window.AbilityDefs;
         abilities.forEach(key => {
             const def = abilityDefs[key];
             if (!def) return;
@@ -4672,6 +4670,13 @@ async function showBuildModal() {
                     <span class="resource-name">Rock:</span>
                     <span class="resource-quantity">${rockQuantity}</span>
                 </div>
+                ${(window.SF_DEV_MODE || (typeof process !== 'undefined' && process.env && (process.env.SF_DEV_MODE==='1' || process.env.NODE_ENV==='development'))) ? `
+                <div class="resource-display" style="margin-left: 12px;">
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <input id="free-build-toggle" type="checkbox" ${window.sfFreeBuild ? 'checked' : ''} />
+                        <span>🧪 Free builds (test)</span>
+                    </label>
+                </div>` : ''}
             </div>
             
             <div id="ships-tab" class="build-tab-content">
@@ -4679,28 +4684,7 @@ async function showBuildModal() {
                     <h3>🚢 Ship Construction</h3>
             <div class="build-options" id="shipyard-container"></div>
                 </div>
-                <div class="build-section">
-                    <h3>🧪 Test: Quick Ship Builds</h3>
-                    <div class="build-options">
-                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🔍 Explorer (Test)</div>
-                                <div class="build-description">Basic Explorer ship for testing</div>
-                                <div class="build-stats">
-                                    • Speed: 4 • Scan: 50 • Cargo: 10
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 1 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
-                                        onclick="buildBasicExplorer(1)" 
-                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                
             </div>
             
             <div id="structures-tab" class="build-tab-content hidden">
@@ -5070,17 +5054,26 @@ async function renderShipyard(selectedStation, cargo) {
                 return `<div class="req-row"><span>${k}</span><span>${ok?'✅':'❌'} ${have}/${v}</span></div>`;
             }).join('');
             const canBuild = [...Object.entries(reqs.core), ...Object.entries(reqs.specialized)].every(([k,v]) => (haveMap.get(k)||0) >= v);
+            const freeBuild = !!document.getElementById('free-build-toggle')?.checked;
+            // remember toggle globally for the session
+            window.sfFreeBuild = freeBuild;
+            const abilityPreview = (bp.abilitiesMeta||[]).map(a => {
+                const tag = a.type === 'passive' ? '✨' : '🛠️';
+                const tip = a.shortDescription || '';
+                return `<span class="chip" title="${tip}">${tag} ${a.name}</span>`;
+            }).join(' ');
             wrap.innerHTML = `
                 <div class="build-info">
                     <div class="build-name">${bp.name}</div>
                     <div class="build-description">Class: ${bp.class} • Role: ${(LABELS[bp.refinedRole]||LABELS[bp.role]||bp.refinedRole||bp.role)}</div>
+                    ${abilityPreview ? `<div style="margin:6px 0; display:flex; flex-wrap:wrap; gap:6px;">${abilityPreview}</div>` : ''}
                     <div class="build-reqs"><h4>Core</h4>${reqRows(reqs.core)}<h4>Specialized</h4>${reqRows(reqs.specialized)}</div>
                 </div>
                 <div class="build-cost">
-                    <button class="build-btn ${canBuild?'':'disabled'}" ${canBuild?'':'disabled'}>Build</button>
+                    <button class="build-btn ${(canBuild||freeBuild)?'':'disabled'}" ${(canBuild||freeBuild)?'':'disabled'}>Build${freeBuild?' (Free)':''}</button>
                 </div>`;
             wrap.querySelector('button').onclick = async () => {
-                const resp = await fetch('/game/build-ship', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ stationId: selectedStation.id, blueprintId: bp.id, userId: gameClient.userId }) });
+                const resp = await fetch('/game/build-ship', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ stationId: selectedStation.id, blueprintId: bp.id, userId: gameClient.userId, freeBuild }) });
                 const jd = await resp.json();
                 if (!resp.ok) {
                     gameClient.addLogEntry(jd.error || 'Build failed', 'error');
@@ -5093,6 +5086,10 @@ async function renderShipyard(selectedStation, cargo) {
             list.appendChild(wrap);
         });
     };
+    const freeToggle = document.getElementById('free-build-toggle');
+    if (freeToggle) {
+        freeToggle.onchange = () => { renderList(); };
+    }
     renderList();
 }
 

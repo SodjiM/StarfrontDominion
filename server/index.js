@@ -1103,13 +1103,15 @@ async function processSingleMovement(order, turnNumber, gameId) {
         // Apply engine boost effect if present
         const effects = await new Promise((resolve) => db.all('SELECT * FROM ship_status_effects WHERE ship_id = ? AND (expires_turn IS NULL OR expires_turn >= ?)', [order.object_id, turnNumber], (e, rows) => resolve(rows || [])));
         let speedMultiplier = 1;
+        let speedFlat = 0;
         for (const eff of effects) {
             try {
                 const data = eff.effect_data ? JSON.parse(eff.effect_data) : {};
                 if (data.movementBonus) speedMultiplier += data.movementBonus;
+                if (typeof data.movementFlatBonus === 'number') speedFlat = Math.max(speedFlat, data.movementFlatBonus);
             } catch {}
         }
-        const movementSpeed = Math.max(1, Math.floor(baseSpeed * speedMultiplier));
+        const movementSpeed = Math.max(1, Math.floor(baseSpeed * speedMultiplier) + speedFlat);
         console.log(`🧭 Movement calc: ship=${order.object_id} base=${baseSpeed} mult=${speedMultiplier.toFixed(2)} eff=${movementSpeed} turn=${turnNumber}`);
         
         // Calculate how many steps to take this turn
@@ -1609,6 +1611,37 @@ async function regenerateShipEnergy(gameId, turnNumber) {
                             delete meta.movementBoostMultiplier;
                             delete meta.movementBoostExpires;
                         }
+                        if (typeof meta.movementFlatExpires === 'number' && Number(meta.movementFlatExpires) <= Number(turnNumber)) {
+                            delete meta.movementFlatBonus;
+                            delete meta.movementFlatExpires;
+                        }
+                        if (typeof meta.evasionExpires === 'number' && Number(meta.evasionExpires) <= Number(turnNumber)) {
+                            delete meta.evasionBonus;
+                            delete meta.evasionExpires;
+                        }
+                    } catch {}
+                    // Passive: Solo Miner's Instinct (apply per-turn if alone)
+                    try {
+                        const abilities = Array.isArray(meta.abilities) ? meta.abilities : [];
+                        if (abilities.includes('solo_miners_instinct')) {
+                            const selfRow = await new Promise((resolve) => db.get('SELECT id, owner_id, sector_id, x, y FROM sector_objects WHERE id = ?', [ship.id], (e, r) => resolve(r)));
+                            if (selfRow) {
+                                const nearAlly = await new Promise((resolve) => db.get(
+                                    'SELECT 1 FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND id != ? AND ABS(x - ?) <= 5 AND ABS(y - ?) <= 5 LIMIT 1',
+                                    [selfRow.sector_id, selfRow.owner_id, selfRow.id, selfRow.x, selfRow.y],
+                                    (e, r) => resolve(!!r)
+                                ));
+                                if (!nearAlly) {
+                                    // Apply temporary bonuses for this turn
+                                    meta.movementFlatBonus = Math.max(meta.movementFlatBonus || 0, 1);
+                                    meta.movementFlatExpires = Number(turnNumber) + 1;
+                                    meta.scanRangeMultiplier = Math.max(meta.scanRangeMultiplier || 1, 1.25);
+                                    meta.scanBoostExpires = Number(turnNumber) + 1;
+                                    meta.evasionBonus = Math.max(meta.evasionBonus || 0, 0.10);
+                                    meta.evasionExpires = Number(turnNumber) + 1;
+                                }
+                            }
+                        }
                     } catch {}
                     await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(meta), new Date().toISOString(), ship.id], () => resolve()));
                 }
@@ -1700,6 +1733,96 @@ async function processAbilityOrders(gameId, turnNumber) {
                 () => resolve()
             ));
         } else {
+            // Special-case ability handling (non-offense)
+            if (order.ability_key === 'microthruster_shift') {
+                // Reposition up to 2 tiles if target position is free
+                const tx = Number(order.target_x);
+                const ty = Number(order.target_y);
+                if (Number.isFinite(tx) && Number.isFinite(ty)) {
+                    // Ensure within range 2 (already prevalidated in socket, but recheck)
+                    const dx = (caster.x || 0) - tx;
+                    const dy = (caster.y || 0) - ty;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist <= (ability.range || 2)) {
+                        const occupied = await new Promise((resolve) => db.get('SELECT id FROM sector_objects WHERE sector_id = ? AND x = ? AND y = ? LIMIT 1', [caster.sector_id, tx, ty], (e, r) => resolve(r)));
+                        if (!occupied) {
+                            await new Promise((resolve) => db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [tx, ty, new Date().toISOString(), order.caster_id], () => resolve()));
+                            await new Promise((resolve) => db.run(
+                                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
+                                 VALUES (?, ?, ?, 'ability', ?, ?)`,
+                                [gameId, turnNumber, order.caster_id, 'Microthruster Shift executed', JSON.stringify({ to: { x: tx, y: ty } })],
+                                () => resolve()
+                            ));
+                        }
+                    }
+                }
+                const availableTurn = Number(turnNumber) + (ability.cooldown || 5);
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+                     ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+                    [order.caster_id, order.ability_key, availableTurn],
+                    () => resolve()
+                ));
+                continue;
+            }
+            if (order.ability_key === 'emergency_discharge_vent') {
+                // Create a cargo can at caster position
+                const casterFull = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                if (casterFull) {
+                    const canMeta = { name: 'Jettisoned Cargo', hp: 10, maxHp: 10, cargoCapacity: 999, alwaysKnown: true };
+                    const canId = await new Promise((resolve, reject) => {
+                        db.run(
+                            'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, NULL, ?)',
+                            [casterFull.sector_id, 'cargo_can', casterFull.x, casterFull.y, JSON.stringify(canMeta)],
+                            function(err) { if (err) reject(err); else resolve(this.lastID); }
+                        );
+                    });
+                    try { await CargoManager.initializeObjectCargo(canId, 999); } catch {}
+                    // Move all ship cargo to can
+                    try {
+                        const cargo = await CargoManager.getShipCargo(order.caster_id);
+                        for (const item of (cargo.items || [])) {
+                            if (item.quantity > 0) {
+                                try { await CargoManager.removeResourceFromCargo(order.caster_id, item.resource_name, item.quantity); } catch {}
+                                try { await CargoManager.addResourceToCargo(canId, item.resource_name, item.quantity); } catch {}
+                            }
+                        }
+                    } catch {}
+                    await new Promise((resolve) => db.run(
+                        `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
+                         VALUES (?, ?, ?, 'ability', ?, ?)`,
+                        [gameId, turnNumber, order.caster_id, 'Emergency Discharge: cargo jettisoned', JSON.stringify({ canId })],
+                        () => resolve()
+                    ));
+                }
+                // Apply temporary movement and evasion buffs via status effect and mirror into meta
+                const effectData = { movementFlatBonus: 3, evasionBonus: 0.5 };
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO ship_status_effects (ship_id, effect_key, magnitude, effect_data, source_object_id, applied_turn, expires_turn)
+                     VALUES (?, 'emergency_discharge_buff', NULL, ?, ?, ?, ?)`,
+                    [order.caster_id, JSON.stringify(effectData), order.caster_id, turnNumber, Number(turnNumber) + 1],
+                    () => resolve()
+                ));
+                const casterMetaRow2 = await new Promise((resolve) => db.get('SELECT meta FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                if (casterMetaRow2) {
+                    try {
+                        const cm = JSON.parse(casterMetaRow2.meta || '{}');
+                        cm.movementFlatBonus = Math.max(cm.movementFlatBonus || 0, 3);
+                        cm.movementFlatExpires = Number(turnNumber) + 1;
+                        cm.evasionBonus = Math.max(cm.evasionBonus || 0, 0.5);
+                        cm.evasionExpires = Number(turnNumber) + 1;
+                        await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(cm), new Date().toISOString(), order.caster_id], () => resolve()));
+                    } catch {}
+                }
+                const availableTurn = Number(turnNumber) + (ability.cooldown || 4);
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+                     ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+                    [order.caster_id, order.ability_key, availableTurn],
+                    () => resolve()
+                ));
+                continue;
+            }
             // Apply status effects (if defined) and set cooldown
             let effectTargetId = order.target_object_id || order.caster_id;
             let magnitude = ability.penaltyReduction || ability.selfPenaltyReduction || ability.damageReduction || ability.ignoreSizePenalty ? 1 : null;
@@ -1734,6 +1857,10 @@ async function processAbilityOrders(gameId, turnNumber) {
                             if (ability.movementBonus) {
                                 cm.movementBoostMultiplier = 1 + ability.movementBonus; // e.g., 2.0 for +100%
                                 cm.movementBoostExpires = Number(turnNumber) + (ability.duration || 1);
+                            }
+                            if (ability.evasionBonus) {
+                                cm.evasionBonus = Math.max(cm.evasionBonus || 0, ability.evasionBonus);
+                                cm.evasionExpires = Number(turnNumber) + (ability.duration || 1);
                             }
                             await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(cm), new Date().toISOString(), order.caster_id], () => resolve()));
                         } catch {}
@@ -1834,6 +1961,21 @@ async function processCombatOrders(gameId, turnNumber) {
         // Size penalty (apply after we compute status effects context)
         const sizeMult = CombatConfig.computeSizePenalty(aMeta.class, tMeta.class, effectCtx);
 
+        // Evasion: aggregate from status effects and meta, clamp [0, 0.9]
+        let evasionTotal = 0;
+        for (const eff of effects) {
+            try {
+                const data = eff.effect_data ? JSON.parse(eff.effect_data) : {};
+                if (eff.ship_id === target.id && typeof data.evasionBonus === 'number') {
+                    evasionTotal += data.evasionBonus;
+                }
+            } catch {}
+        }
+        if (typeof tMeta.evasionBonus === 'number') {
+            evasionTotal += tMeta.evasionBonus;
+        }
+        evasionTotal = Math.max(0, Math.min(0.9, evasionTotal));
+
         // Explorer passive hook sets
         const targetAbilities = Array.isArray(tMeta.abilities) ? tMeta.abilities : [];
 
@@ -1847,7 +1989,8 @@ async function processCombatOrders(gameId, turnNumber) {
         }
         // PD fires every turn regardless (cd=1), heavy weapons respect cooldown
         // Do not use turn-modulus cadence here; ability cooldowns already gated firing
-        let damage = Math.max(0, Math.round(baseDamage * rangeMult * sizeMult));
+        const hitMultiplier = Math.max(0, 1 - evasionTotal);
+        let damage = Math.max(0, Math.round(baseDamage * rangeMult * sizeMult * hitMultiplier));
 
         // Duct Tape Resilience: first hit at full HP reduced by 25%
         if (targetAbilities.includes('duct_tape_resilience') && tMeta.hp === tMeta.maxHp && !tMeta._resilienceConsumed) {
@@ -1859,7 +2002,7 @@ async function processCombatOrders(gameId, turnNumber) {
             await new Promise((resolve) => db.run(
                 `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
                  VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
-                [gameId, turnNumber, attacker.id, target.id, `Attack with ${weaponKey} missed/ineffective`, JSON.stringify({ weaponKey, distance, rangeMult, sizeMult })],
+                [gameId, turnNumber, attacker.id, target.id, `Attack with ${weaponKey} missed/ineffective`, JSON.stringify({ weaponKey, distance, rangeMult, sizeMult, evasionTotal, hitMultiplier })],
                 () => resolve()
             ));
             continue;
@@ -1875,7 +2018,7 @@ async function processCombatOrders(gameId, turnNumber) {
         await new Promise((resolve) => db.run(
             `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
              VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
-            [gameId, turnNumber, attacker.id, target.id, `Hit for ${damage}`, JSON.stringify({ weaponKey, distance, rangeMult, sizeMult })],
+            [gameId, turnNumber, attacker.id, target.id, `Hit for ${damage}`, JSON.stringify({ weaponKey, distance, rangeMult, sizeMult, evasionTotal, hitMultiplier })],
             () => resolve()
         ));
 
