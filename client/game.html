@@ -1731,8 +1731,27 @@
             if (!box) return;
             const line = document.createElement('div');
             line.style.margin = '2px 0';
-            const scope = msg.channelId ? `[#${msg.channelId}]` : (msg.toUserId ? `(DM→${msg.toUserId})` : '(Public)');
-            line.textContent = `[${new Date(msg.timestamp).toLocaleTimeString()}] ${scope} ${msg.fromUserId}: ${msg.text}`;
+
+            const resolveName = (userId) => {
+                const id = Number(userId);
+                try {
+                    if (window.gameClient) {
+                        const map = gameClient.playerNameById;
+                        if (map && map.has(id)) return map.get(id);
+                        if (id === gameClient.userId && typeof Session?.getUser === 'function') {
+                            return Session.getUser()?.username || `Player ${id}`;
+                        }
+                    }
+                } catch {}
+                return `Player ${id}`;
+            };
+
+            const scope = msg.channelId
+                ? `[#${msg.channelId}]`
+                : (msg.toUserId ? `(DM→${resolveName(msg.toUserId)})` : '(Public)');
+
+            const fromName = resolveName(msg.fromUserId);
+            line.textContent = `[${new Date(msg.timestamp).toLocaleTimeString()}] ${scope} ${fromName}: ${msg.text}`;
             box.appendChild(line);
             box.scrollTop = box.scrollHeight;
         }
@@ -1748,6 +1767,14 @@
                 if (!data || !data.success) return;
                 const sel = document.getElementById('chatRecipient');
                 if (!sel) return;
+                // Update local cache of usernames for quick lookup
+                try {
+                    if (window.gameClient && data.players) {
+                        data.players.forEach(p => {
+                            if (p && p.userId) gameClient.playerNameById.set(p.userId, p.username || `Player ${p.userId}`);
+                        });
+                    }
+                } catch {}
                 // Keep 'Public' and replace the rest
                 sel.innerHTML = '<option value="public">Public</option>' +
                     (data.players || []).map(p => `<option value="user:${p.userId}">${p.username || ('User '+p.userId)}</option>`).join('');
