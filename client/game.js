@@ -34,6 +34,7 @@ class GameClient {
         this.senateProgress = 0; // 0-100 senate update meter
         this.turnCountdownTimer = null;
         this.queueMode = false; // If true, right-clicking queues orders
+        this._queuedByShipId = new Map(); // Cached queued orders by ship id for UI and map markers
     }
 
     async fetchSectorTrails() {
@@ -97,12 +98,7 @@ class GameClient {
     setupCanvas() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
-        this.miniCanvas = document.getElementById('miniCanvas');
-        if (this.miniCanvas) {
-            this.miniCtx = this.miniCanvas.getContext('2d');
-        } else {
-            this.miniCtx = null;
-        }
+        this.ensureMiniCanvasRef();
         
         // Set canvas size
         this.resizeCanvas();
@@ -110,6 +106,9 @@ class GameClient {
 
         // Create tooltip overlay for hover info (once)
         this.createMapTooltip();
+        
+        // Bind minimap interactions (click and drag to pan main camera)
+        this.bindMiniMapInteractions();
     }
 
     // Resize canvas to fit container
@@ -117,13 +116,61 @@ class GameClient {
         const container = this.canvas.parentElement;
         this.canvas.width = container.clientWidth;
         this.canvas.height = container.clientHeight;
-        
+        this.ensureMiniCanvasRef();
         if (this.miniCanvas && this.miniCanvas.parentElement) {
             this.miniCanvas.width = this.miniCanvas.parentElement.clientWidth - 20;
             this.miniCanvas.height = this.miniCanvas.parentElement.clientHeight - 40;
         }
         
         this.render();
+    }
+
+    // Robustly find the minimap canvas whether it's inline or floating
+    ensureMiniCanvasRef() {
+        // Prefer an element with id="miniCanvas" if present
+        const byId = document.getElementById('miniCanvas');
+        if (byId && byId instanceof HTMLCanvasElement) {
+            if (this.miniCanvas !== byId) {
+                this.miniCanvas = byId;
+                this.miniCtx = this.miniCanvas.getContext('2d');
+                this._miniBound = false; // rebind interactions
+                this.bindMiniMapInteractions();
+            }
+            return;
+        }
+        // Fallback: floating wrapper structure as provided in user HTML
+        const wrap = document.getElementById('floatingMiniWrap');
+        if (wrap) {
+            const canv = wrap.querySelector('canvas');
+            if (canv && canv instanceof HTMLCanvasElement) {
+                if (this.miniCanvas !== canv) {
+                    this.miniCanvas = canv;
+                    this.miniCtx = this.miniCanvas.getContext('2d');
+                    this._miniBound = false; // rebind interactions
+                    this.bindMiniMapInteractions();
+                }
+                return;
+            }
+        }
+        // As last resort, pick the first canvas inside any element with title "Mini-map"
+        const guess = Array.from(document.querySelectorAll('div')).find(d => /Mini-map/i.test(d.textContent || ''));
+        if (guess) {
+            const canv2 = guess.querySelector('canvas');
+            if (canv2 && canv2 instanceof HTMLCanvasElement) {
+                if (this.miniCanvas !== canv2) {
+                    this.miniCanvas = canv2;
+                    this.miniCtx = this.miniCanvas.getContext('2d');
+                    this._miniBound = false;
+                    this.bindMiniMapInteractions();
+                }
+                return;
+            }
+        }
+        // If none found, clear refs
+        if (!byId) {
+            this.miniCanvas = null;
+            this.miniCtx = null;
+        }
     }
 
     // Connect to Socket.IO
@@ -165,6 +212,13 @@ class GameClient {
                 
                 // Refresh the unit details panel to disable action buttons
                 this.updateUnitDetails();
+            }
+        });
+
+        // Refresh queue UI when queue changes on server
+        this.socket.on('queue:updated', ({ shipId }) => {
+            if (this.selectedUnit && this.selectedUnit.type === 'ship' && this.selectedUnit.id === shipId) {
+                this.loadQueueLog(shipId, true);
             }
         });
 
@@ -797,7 +851,6 @@ class GameClient {
             }
         }
     }
-
     // Update unit details panel
     updateUnitDetails() {
         const detailsContainer = document.getElementById('unitDetails');
@@ -953,8 +1006,15 @@ class GameClient {
                     <div class="panel-title" style="margin:16px 0 0 0;">🛠️ Abilities</div>
                     <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style=\"color:#888\">No abilities</span>'}</div>
                     ${passiveChips.length ? `<div class="panel-title" style="margin:8px 0 0 0;">✨ Passive Traits</div><div style="display:flex; flex-wrap:wrap; gap:6px;">${passiveChips.join('')}</div>` : ''}
-                    <div class="panel-title" style="margin:16px 0 0 0;">📝 Combat Log (Turn ${this.currentTurn || '?'})</div>
-                    <div id="combatLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
+                    <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">
+                        🧭 Queue (Hold Shift to queue)
+                        <span title="Hold Shift to queue multiple orders. Right-click empty space to queue Move. Use Warp/Mine while holding Shift to queue Warp/Mining. You can clear or remove items below.">❔</span>
+                    </div>
+                    <div id="queueLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
+                    <div style="display:flex; gap:8px; margin-top:6px;">
+                        <button class="sf-btn sf-btn-secondary" id="queueClearBtn">Clear Queue</button>
+                        <button class="sf-btn sf-btn-secondary" id="queueRefreshBtn">Refresh</button>
+                    </div>
                 ` : ''}
             </div>
         `;
@@ -993,9 +1053,13 @@ class GameClient {
             }
         }
 
-        // Populate combat log
+        // Populate queue log for ships
         if (unit.type === 'ship') {
-            this.loadCombatLog();
+            this.loadQueueLog(unit.id);
+            const clearBtn = document.getElementById('queueClearBtn');
+            const refreshBtn = document.getElementById('queueRefreshBtn');
+            if (clearBtn) clearBtn.onclick = () => this.clearQueue(unit.id);
+            if (refreshBtn) refreshBtn.onclick = () => this.loadQueueLog(unit.id, true);
         }
     }
 
@@ -1109,19 +1173,63 @@ class GameClient {
     }
 
     // Simple combat log fetch
-    async loadCombatLog() {
+    async loadQueueLog(shipId, force) {
         try {
-            const turn = this.currentTurn || 1;
-            const res = await fetch(`/combat/logs/${this.gameId}/${turn}`);
-            const data = await res.json();
-            const logEl = document.getElementById('combatLog');
-            if (!logEl) return;
-            const logs = (data.logs || []).slice(-50).map(l => `<div class=\"log-entry\">${l.summary || l.event_type}</div>`).join('');
-            logEl.innerHTML = logs || '<div class=\"log-entry\">No events this turn</div>';
+            // Optional: use cached if not force
+            if (!force && this._queuedByShipId.has(shipId)) {
+                this.renderQueueList(shipId, this._queuedByShipId.get(shipId));
+                return;
+            }
+            const orders = await new Promise((resolve) => {
+                this.socket.timeout(3000).emit('queue:list', { gameId: this.gameId, shipId }, (err, data) => {
+                    if (err || !data?.success) resolve([]); else resolve(data.orders || []);
+                });
+            });
+            this._queuedByShipId.set(shipId, orders);
+            this.renderQueueList(shipId, orders);
         } catch (e) {
-            const logEl = document.getElementById('combatLog');
-            if (logEl) logEl.innerHTML = '<div class=\"log-entry error\">Failed to load combat log</div>';
+            const el = document.getElementById('queueLog');
+            if (el) el.innerHTML = '<div class=\"log-entry error\">Failed to load queue</div>';
         }
+    }
+
+    renderQueueList(shipId, orders) {
+        const el = document.getElementById('queueLog');
+        if (!el) return;
+        if (!orders || orders.length === 0) {
+            el.innerHTML = '<div class="log-entry">Queue is empty</div>';
+            return;
+        }
+        const items = orders.map((o, idx) => {
+            let label = o.order_type;
+            try {
+                const p = o.payload ? JSON.parse(o.payload) : {};
+                if (o.order_type === 'move' && p?.destination) label = `#${idx+1} Move to (${p.destination.x},${p.destination.y})`;
+                else if (o.order_type === 'warp' && p?.destination) label = `#${idx+1} Warp to (${p.destination.x},${p.destination.y})`;
+                else if (o.order_type === 'harvest_start') label = `#${idx+1} Start mining (node ${p?.nodeId || '?'})`;
+                else if (o.order_type === 'harvest_stop') label = `#${idx+1} Stop mining`;
+            } catch {}
+            return `<div class="log-entry" data-qid="${o.id}">
+                <span>${label}</span>
+                <button class="sf-btn sf-btn-xs" data-remove="${o.id}">✖</button>
+            </div>`;
+        }).join('');
+        el.innerHTML = items;
+        // Wire remove buttons
+        el.querySelectorAll('button[data-remove]').forEach(btn => {
+            btn.onclick = () => {
+                const id = Number(btn.getAttribute('data-remove'));
+                this.socket.emit('queue:remove', { gameId: this.gameId, shipId, id }, (resp) => {
+                    this.loadQueueLog(shipId, true);
+                });
+            };
+        });
+    }
+
+    clearQueue(shipId) {
+        this.socket.emit('queue:clear', { gameId: this.gameId, shipId }, (resp) => {
+            this.loadQueueLog(shipId, true);
+        });
     }
 
     // Draw fog of war: dim everything, then punch radial gradients around owned sensors
@@ -1585,7 +1693,6 @@ class GameClient {
             this.drawWarpPreparationEffect(ctx, obj, x, y, size);
         }
     }
-    
     // Specialized drawing functions for different celestial types
     drawStar(ctx, x, y, size, colors) {
         // Create radial gradient for star
@@ -2101,6 +2208,7 @@ class GameClient {
 
     // Render mini-map
     renderMiniMap() {
+        this.ensureMiniCanvasRef();
         if (!this.miniCanvas || !this.objects) return;
         
         const ctx = this.miniCtx;
@@ -2259,36 +2367,7 @@ class GameClient {
             ctx.fillRect(x - size/2, y - size/2, size, size);
         });
         
-        // Fog mask on minimap (mirror of main fog)
-        if (this.fogEnabled) {
-            const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'station' || obj.type === 'sensor-tower'));
-            if (ownedSensors.length > 0) {
-                // Base dark overlay
-                ctx.save();
-                ctx.fillStyle = 'rgba(0,0,0,0.6)';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.globalCompositeOperation = 'destination-out';
-                ownedSensors.forEach(sensor => {
-                    const meta = sensor.meta || {};
-                    let scanRange = meta.scanRange || 5;
-                    if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
-                        scanRange = Math.ceil(scanRange * (meta.scanRangeMultiplier));
-                    }
-                    const sx = sensor.x * scaleX;
-                    const sy = sensor.y * scaleY;
-                    const radius = scanRange * Math.max(scaleX, scaleY);
-                    const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(1, radius));
-                    gradient.addColorStop(0, 'rgba(0,0,0,1)');
-                    gradient.addColorStop(0.7, 'rgba(0,0,0,0.4)');
-                    gradient.addColorStop(1, 'rgba(0,0,0,0)');
-                    ctx.fillStyle = gradient;
-                    ctx.beginPath();
-                    ctx.arc(sx, sy, Math.max(1, radius), 0, Math.PI * 2);
-                    ctx.fill();
-                });
-                ctx.restore();
-            }
-        }
+        // Minimap: always show full information; do not apply fog of war here
         
         // Draw camera viewport
         const viewWidth = (this.canvas.width / this.tileSize) * scaleX;
@@ -2312,6 +2391,40 @@ class GameClient {
                 canvas.height - 4
             );
         }
+
+        // Click-to-pan: set handler once
+        // No binding here; handled in bindMiniMapInteractions()
+    }
+
+    // One-time binding for minimap click + drag to pan camera
+    bindMiniMapInteractions() {
+        // Ensure we have a reference
+        if (!this.miniCanvas) return;
+        if (this._miniBound) return;
+        this._miniBound = true;
+        this._miniBoundCanvas = this.miniCanvas;
+        let dragging = false;
+        const toWorld = (mx, my) => ({
+            x: Math.round((mx / this.miniCanvas.width) * 5000),
+            y: Math.round((my / this.miniCanvas.height) * 5000)
+        });
+        const handle = (clientX, clientY) => {
+            const rect = this.miniCanvas.getBoundingClientRect();
+            const scaleX = this.miniCanvas.width / rect.width;
+            const scaleY = this.miniCanvas.height / rect.height;
+            const mx = Math.max(0, Math.min(this.miniCanvas.width, (clientX - rect.left) * scaleX));
+            const my = Math.max(0, Math.min(this.miniCanvas.height, (clientY - rect.top) * scaleY));
+            const w = toWorld(mx, my);
+            this.camera.x = w.x;
+            this.camera.y = w.y;
+            this.render();
+        };
+        this.miniCanvas.addEventListener('mousedown', (e) => { dragging = true; handle(e.clientX, e.clientY); });
+        window.addEventListener('mouseup', () => { dragging = false; });
+        this.miniCanvas.addEventListener('mousemove', (e) => { if (dragging) handle(e.clientX, e.clientY); });
+        this.miniCanvas.addEventListener('click', (e) => { handle(e.clientX, e.clientY); });
+        // Prevent text selection while dragging
+        this.miniCanvas.addEventListener('dragstart', (e) => e.preventDefault());
     }
 
     // Setup event listeners
@@ -2362,7 +2475,6 @@ class GameClient {
         parent.appendChild(tip);
         this._tooltipEl = tip;
     }
-
     // Update tooltip content/position
     updateMapTooltip(obj, mouseX, mouseY) {
         if (!this._tooltipEl) return;
@@ -2372,15 +2484,21 @@ class GameClient {
         }
         const meta = obj.meta || {};
         const name = meta.name || obj.type || 'Unknown';
-        const shipType = meta.shipType || meta.class || obj.subtype || obj.type;
+        const shipType = obj.type === 'resource_node' ? (meta.resourceType || 'resource_node') : (meta.shipType || meta.class || obj.subtype || obj.type);
         const ownerName = this.getOwnerName(obj.owner_id);
         const hp = (meta.hp != null && meta.maxHp != null) ? `${meta.hp}/${meta.maxHp}` : (meta.hp != null ? String(meta.hp) : '—');
         const lines = [
             `${name}`,
             `Type: ${shipType || '—'}`,
-            `Owner: ${ownerName || obj.owner_id || '—'}`,
-            `HP: ${hp}`
         ];
+        if (obj.type === 'resource_node') {
+            const amt = (meta.resourceAmount != null) ? meta.resourceAmount : (meta.amount != null ? meta.amount : undefined);
+            if (meta.resourceType) lines.push(`Resource: ${meta.resourceType}`);
+            if (amt != null) lines.push(`Amount: ${amt}`);
+        } else {
+            lines.push(`Owner: ${ownerName || obj.owner_id || '—'}`);
+            lines.push(`HP: ${hp}`);
+        }
         this._tooltipEl.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
         // offset tooltip near cursor
         const parentRect = this.canvas.getBoundingClientRect();
@@ -2550,28 +2668,18 @@ class GameClient {
     }
 
     renderFloatingMini() {
+        // Delegate all floating minimap rendering to the unified minimap renderer
         if (!this._floatingMini || !this.objects) return;
+        // Temporarily point miniCanvas to floating canvas for a consistent look
         const { canvas, ctx } = this._floatingMini;
-        // Background
-        ctx.fillStyle = '#0a0a1a';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.strokeStyle = 'rgba(100, 181, 246, 0.3)';
-        ctx.lineWidth = 2; ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-        const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
-        // Celestials
-        this.objects.filter(o=>this.isCelestialObject(o)).forEach(obj=>{
-            const x = obj.x * scaleX, y = obj.y * scaleY; const meta = obj.meta||{}; const t = meta.celestialType || obj.celestial_type;
-            if (t==='belt'||t==='nebula') return; ctx.fillStyle = this.getCelestialColors(obj).border; ctx.beginPath(); ctx.arc(x,y,2,0,Math.PI*2); ctx.fill();
-        });
-        // Ships/bases
-        this.objects.filter(o=>!this.isCelestialObject(o)&&o.type!=='resource_node').forEach(o=>{
-            const x = o.x * scaleX, y = o.y * scaleY; ctx.fillStyle = o.owner_id===this.userId?'#4CAF50':'#FF9800'; ctx.fillRect(x-2,y-2,4,4);
-        });
-        // Camera viewport box
-        const viewW = canvas.width*(this.canvas.width/5000/ this.tileSize);
-        const viewH = canvas.height*(this.canvas.height/5000/ this.tileSize);
-        const vX = this.camera.x*scaleX - viewW/2; const vY = this.camera.y*scaleY - viewH/2;
-        ctx.strokeStyle = '#ffeb3b'; ctx.lineWidth = 1; ctx.strokeRect(vX, vY, viewW, viewH);
+        this.miniCanvas = canvas;
+        this.miniCtx = ctx;
+        // Ensure interactions are bound to the floating canvas (avoid rebinding if already bound)
+        if (this._miniBoundCanvas !== this.miniCanvas) {
+            this._miniBound = false;
+            this.bindMiniMapInteractions();
+        }
+        this.renderMiniMap();
     }
 
     // Drag-to-pan state
@@ -2612,7 +2720,6 @@ class GameClient {
         }
         this.render();
         this.renderMiniMap();
-        this.renderFloatingMini();
     }
 
     // Handle mouse movement for cursor feedback
@@ -3146,6 +3253,20 @@ class GameClient {
             // If target type mismatched, keep waiting
         }
         
+        if (clickedObject && this.queueMode && clickedObject.type === 'resource_node' && this.selectedUnit && this.selectedUnit.type === 'ship') {
+            // Queue mining: enqueue move to adjacent tile, then harvest_start
+            const target = clickedObject;
+            const adj = this.getAdjacentTileNear(target.x, target.y, this.selectedUnit.x, this.selectedUnit.y);
+            if (adj) {
+                this.socket.emit('queue-order', { gameId: this.gameId, shipId: this.selectedUnit.id, orderType: 'move', payload: { destination: { x: adj.x, y: adj.y } } }, () => {});
+            }
+            this.socket.emit('queue-order', { gameId: this.gameId, shipId: this.selectedUnit.id, orderType: 'harvest_start', payload: { nodeId: target.id } }, (resp) => {
+                if (resp && resp.success) this.addLogEntry(`Queued: Mine ${target.meta?.resourceType || 'resource'}`, 'info');
+                else this.addLogEntry('Failed to queue mining', 'error');
+            });
+            return;
+        }
+
         if (clickedObject && clickedObject.owner_id === this.userId) {
             // Select owned unit
             this.selectUnit(clickedObject.id);
@@ -3156,6 +3277,22 @@ class GameClient {
         } else {
             // Clicked on empty space - do NOT deselect; selection should persist unless selecting another unit
         }
+    }
+    
+    // Pick an adjacent tile near a target that is closest to current ship position
+    getAdjacentTileNear(targetX, targetY, fromX, fromY) {
+        const candidates = [
+            { x: targetX + 1, y: targetY },
+            { x: targetX - 1, y: targetY },
+            { x: targetX, y: targetY + 1 },
+            { x: targetX, y: targetY - 1 },
+        ];
+        candidates.sort((a, b) => {
+            const da = Math.hypot(a.x - fromX, a.y - fromY);
+            const db = Math.hypot(b.x - fromX, b.y - fromY);
+            return da - db;
+        });
+        return candidates[0] || null;
     }
     // Handle canvas right-clicks for movement only (attack removed)
     handleCanvasRightClick(e) {
@@ -3513,6 +3650,42 @@ class GameClient {
         activeShips.forEach(ship => {
             this.drawSingleMovementPath(ctx, centerX, centerY, ship, false); // false = active
         });
+
+        // Draw queued order markers for selected owned ship
+        if (this.selectedUnit && this.selectedUnit.type === 'ship' && this.selectedUnit.owner_id === this.userId) {
+            const shipId = this.selectedUnit.id;
+            const orders = this._queuedByShipId.get(shipId) || [];
+            if (orders.length > 0) {
+                ctx.save();
+                let index = 1;
+                orders.forEach((o) => {
+                    try {
+                        const p = o.payload ? JSON.parse(o.payload) : {};
+                        let dest = null;
+                        if (o.order_type === 'move' && p?.destination) dest = p.destination;
+                        if (o.order_type === 'warp' && p?.destination) dest = p.destination;
+                        // For harvest_start, we could draw a small pickaxe icon near the node (skipped for now)
+                        if (dest) {
+                            const sx = centerX + (dest.x - this.camera.x) * this.tileSize;
+                            const sy = centerY + (dest.y - this.camera.y) * this.tileSize;
+                            // Marker circle
+                            ctx.fillStyle = '#ffd54f';
+                            ctx.beginPath();
+                            ctx.arc(sx, sy, 6, 0, Math.PI * 2);
+                            ctx.fill();
+                            // Number label
+                            ctx.fillStyle = '#1a1a1a';
+                            ctx.font = '10px Arial';
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(String(index), sx, sy);
+                            index++;
+                        }
+                    } catch {}
+                });
+                ctx.restore();
+            }
+        }
     }
 
     // PHASE 3: Draw movement path for a single ship (supports both old paths and new segments)
@@ -3935,7 +4108,6 @@ class GameClient {
         
         return targets;
     }
-    
     // Get icon for warp target type
     getWarpTargetIcon(target) {
         if (target.celestial_type) {
@@ -4669,7 +4841,6 @@ async function showBuildModal() {
         gameClient.addLogEntry('Failed to access construction bay', 'error');
     }
 }
-
 // Render the Shipyard UI inside the build modal
 async function renderShipyard(selectedStation, cargo) {
     const container = document.getElementById('shipyard-container');
@@ -5394,7 +5565,6 @@ function startMining(shipId, resourceNodeId, resourceName) {
         gameClient.addLogEntry(`Starting to mine ${resourceName}...`, 'info');
     }
 }
-
 async function showCargo() {
     if (!gameClient || !gameClient.selectedUnit) {
         gameClient?.addLogEntry('No unit selected', 'warning');
@@ -6123,7 +6293,6 @@ function selectGalaxySystem(systemId) {
         gameClient.addLogEntry('Multi-system navigation coming soon!', 'info');
     }
 }
-
 // Show comprehensive player assets modal
 async function showPlayerAssets() {
     if (!gameClient || !gameClient.gameState) {
