@@ -5831,7 +5831,7 @@ function openMapModal() {
     
     const modalContent = document.createElement('div');
     modalContent.innerHTML = `
-        <div class="map-tabs">
+        <div class="map-tabs" style="display:flex; gap:8px; align-items:center; padding: 12px 16px 8px 16px;">
             <button class="map-tab active sf-btn sf-btn-secondary" onclick="switchMapTab('solar-system')">
                 🌌 Solar System
             </button>
@@ -5840,20 +5840,36 @@ function openMapModal() {
             </button>
         </div>
         
-        <div id="solar-system-tab" class="map-tab-content">
-            <div style="margin-bottom: 15px;">
-                <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 ${gameClient.gameState?.sector?.name || 'Current Solar System'}</h3>
-                <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
+        <div id="solar-system-tab" class="map-tab-content" style="height: calc(100% - 56px); overflow: hidden; padding: 8px 14px 12px;">
+            <div style="display:flex; flex-direction:column; height:100%; min-width:0;">
+                <div style="margin: 0 0 6px 0; flex: 0 0 auto;">
+                    <h3 style="color: #64b5f6; margin: 0 0 6px 0;">🌌 ${gameClient.gameState?.sector?.name || 'Current Solar System'}</h3>
+                    <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
+                </div>
+                <div style="flex:1 1 auto; min-height:0; display:grid; grid-template-columns: 3fr 1fr; gap:14px; align-items:stretch;">
+                    <div style="display:flex; flex-direction:column; min-width:0;">
+                        <div style="flex:1; min-height:0;">
+                            <canvas id="fullMapCanvas" class="full-map-canvas" style="width:100%; height:100%; display:block;"></canvas>
+                        </div>
+                    </div>
+                    <div id="systemFacts" style="background:#0b1220; border:1px solid rgba(100,181,246,0.25); border-radius:8px; padding:12px; color:#e3f2fd; overflow:hidden;">
+                        <h4 style="margin:0 0 8px 0; color:#9ecbff;">System Facts</h4>
+                        <div id="sysMetaSummary" style="font-size:13px; line-height:1.6;">
+                            Loading...
+                        </div>
+                    </div>
+                </div>
             </div>
-            <canvas id="fullMapCanvas" class="full-map-canvas"></canvas>
         </div>
         
-        <div id="galaxy-tab" class="map-tab-content hidden">
-            <div style="margin-bottom: 15px;">
+        <div id="galaxy-tab" class="map-tab-content hidden" style="height: calc(100% - 56px); overflow:hidden; padding: 12px 16px 16px;">
+            <div style="margin-bottom: 10px;">
                 <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 Galaxy Overview</h3>
                 <p style="color: #ccc; margin: 0; font-size: 0.9em;">All known solar systems in the galaxy</p>
             </div>
-            <canvas id="galaxyCanvas" class="full-map-canvas" style="height: 400px;"></canvas>
+            <div style="height: calc(100% - 52px); min-height: 280px;">
+                <canvas id="galaxyCanvas" class="full-map-canvas" style="height:100%; width:100%; display:block;"></canvas>
+            </div>
             <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">
                 ● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.
             </div>
@@ -5870,14 +5886,81 @@ function openMapModal() {
                 action: () => true
             }
         ],
-        className: 'map-modal'
+        className: 'map-modal',
+        width: 1280,
+        height: 820
     });
     
     // Initialize the solar system map after modal is shown
     setTimeout(() => {
         initializeFullMap();
         loadGalaxyData();
+        populateSystemFacts();
     }, 100);
+}
+
+// Populate the System Facts panel (type, mineral ratios, unique, wildcards, gate slots)
+async function populateSystemFacts() {
+    try {
+        const wrap = document.getElementById('sysMetaSummary');
+        if (!wrap || !gameClient?.gameState?.sector) return;
+        const sector = gameClient.gameState.sector;
+        const systemId = sector.id;
+        // Fetch server-side computed facts (we can implement the endpoint later; for now, build from client data if present)
+        let facts = null;
+        try {
+            const res = await fetch(`/game/system/${systemId}/facts`);
+            if (res.ok) facts = await res.json();
+        } catch {}
+        if (!facts) {
+            // Fallback: compute basic surface facts from objects we have
+            const all = gameClient.objects || [];
+            const planets = all.filter(o => (o.celestial_type === 'planet'));
+            const belts = all.filter(o => o.celestial_type === 'belt');
+            const nebulas = all.filter(o => o.celestial_type === 'nebula');
+            // Dummy mineral model: ratios for rock/gas/energy based on counts
+            const rock = Math.max(1, belts.length * 3);
+            const gas = Math.max(1, nebulas.length * 2);
+            const energy = Math.max(1, planets.length);
+            const total = rock + gas + energy;
+            const pct = (n) => `${Math.round((n / total) * 100)}%`;
+            const systemType = sector.archetype || 'standard';
+            const unique = (systemType === 'aurora-veil') ? ['aurorium','veil-crystal'] : (systemType === 'iron-forge') ? ['ferrox','slagite'] : ['cryo-ice','dust-opal'];
+            const wildcards = ['platinum','titanium','silicates'];
+            const gateSlots = typeof sector.gateSlots === 'number' ? sector.gateSlots : 3;
+            const usedGates = typeof sector.gatesUsed === 'number' ? sector.gatesUsed : 0;
+            facts = {
+                name: sector.name,
+                type: systemType,
+                ratios: { rock: pct(rock), gas: pct(gas), energy: pct(energy) },
+                unique,
+                wildcards,
+                gateSlots,
+                gatesUsed: usedGates
+            };
+        }
+        wrap.innerHTML = `
+            <div><b>Name:</b> ${facts.name || sector.name}</div>
+            <div><b>Type:</b> ${facts.type || sector.archetype || 'standard'}</div>
+            <div style="margin-top:8px;"><b>Core Mineral Bias</b></div>
+            <div>
+                • Ferrite Alloy: x${(facts.coreBias?.Ferrite || facts.coreBias?.FerriteAlloy || '1.00')}<br/>
+                • Crytite: x${(facts.coreBias?.Crytite || '1.00')}<br/>
+                • Ardanium: x${(facts.coreBias?.Ardanium || '1.00')}<br/>
+                • Vornite: x${(facts.coreBias?.Vornite || '1.00')}<br/>
+                • Zerothium: x${(facts.coreBias?.Zerothium || '1.00')}
+            </div>
+            <div style="margin-top:8px;"><b>Themed Minerals</b></div>
+            <div>${(facts.themed || facts.unique || []).join(', ') || '—'}</div>
+            <div style="margin-top:8px;"><b>Minor Minerals</b></div>
+            <div>${(facts.minor || facts.wildcards || []).join(', ') || '—'}</div>
+            <div style="margin-top:8px;"><b>Gate Slots</b></div>
+            <div>${facts.gatesUsed || 0} / ${facts.gateSlots || 3}</div>
+        `;
+    } catch (e) {
+        const wrap = document.getElementById('sysMetaSummary');
+        if (wrap) wrap.innerText = 'Failed to load system facts';
+    }
 }
 
 function switchMapTab(tabName) {
@@ -5906,9 +5989,8 @@ function initializeFullMap() {
     if (!canvas || !gameClient || !gameClient.objects) return;
     
     const ctx = canvas.getContext('2d');
+    // Size canvas to container exactly (no internal scrollbars)
     const rect = canvas.getBoundingClientRect();
-    
-    // Set canvas size to match display size
     canvas.width = rect.width;
     canvas.height = rect.height;
     

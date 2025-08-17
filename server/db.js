@@ -326,6 +326,17 @@ const initializeDatabase = async () => {
                     console.error('Migration error (archetype):', err);
                 }
             });
+            // Gate slots support
+            db.run(`ALTER TABLE sectors ADD COLUMN gate_slots INTEGER DEFAULT 3`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (gate_slots):', err);
+                }
+            });
+            db.run(`ALTER TABLE sectors ADD COLUMN gates_used INTEGER DEFAULT 0`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (gates_used):', err);
+                }
+            });
             
             // Add new movement order columns
             db.run(`ALTER TABLE movement_orders ADD COLUMN movement_path TEXT`, (err) => {

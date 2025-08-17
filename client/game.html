@@ -748,17 +748,18 @@
 
         /* Full map modal styles */
         .map-modal {
-            max-width: 90vw;
-            max-height: 85vh;
-            width: 1000px;
-            height: 700px;
+            max-width: 95vw;
+            max-height: 92vh;
+            width: 1280px;
+            height: 820px;
         }
 
-        .map-modal .modal-content {
+        .map-modal .game-modal-content {
             padding: 0;
             height: 100%;
             display: flex;
             flex-direction: column;
+            overflow: hidden; /* prevent scrollbars inside the modal */
         }
 
         /* Player assets modal styles */
@@ -1005,7 +1006,7 @@
         .map-tab-content {
             flex: 1;
             padding: 20px;
-            overflow: auto;
+            overflow: hidden;
         }
 
         .map-tab-content.hidden {

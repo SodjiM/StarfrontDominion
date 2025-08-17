@@ -54,10 +54,11 @@ class GameWorldManager {
         
         console.log(`🌍 Creating sector for ${player.username}`);
         
-        // Create sector
+        // Create sector with randomized gate slots (2–4)
+        const initialGateSlots = 2 + Math.floor(Math.random() * 3); // 2,3,4
         db.run(
-            'INSERT INTO sectors (game_id, owner_id, name, archetype) VALUES (?, ?, ?, ?)',
-            [gameId, player.user_id, sectorName, GameWorldManager.pickRandomArchetype(gameId, player.user_id)],
+            'INSERT INTO sectors (game_id, owner_id, name, archetype, gate_slots) VALUES (?, ?, ?, ?, ?)',
+            [gameId, player.user_id, sectorName, GameWorldManager.pickRandomArchetype(gameId, player.user_id), initialGateSlots],
             function(err) {
                 if (err) {
                     console.error('Error creating sector:', err);
@@ -121,10 +122,12 @@ class GameWorldManager {
     
     // Create starting objects for a player
     static createStartingObjects(gameId, player, sectorId, onComplete, onError) {
-        // Find a suitable planet for spawning near
+        // Find a planet with no existing anchored station to spawn near/anchor to
         db.get(
-            `SELECT x, y, meta FROM sector_objects 
-             WHERE sector_id = ? AND celestial_type = 'planet' 
+            `SELECT p.id, p.x, p.y, p.meta
+             FROM sector_objects p
+             LEFT JOIN sector_objects s ON s.parent_object_id = p.id AND s.type = 'station'
+             WHERE p.sector_id = ? AND p.celestial_type = 'planet' AND s.id IS NULL
              ORDER BY RANDOM() LIMIT 1`,
             [sectorId],
             (err, planet) => {
@@ -136,18 +139,17 @@ class GameWorldManager {
                 let spawnX, spawnY;
                 
                 if (planet) {
-                    // Spawn near the planet (200-400 tiles away)
+                    // Place on the same 35–45 tile ring used by manual planet-station deploys
+                    // while still anchoring to the planet via parent_object_id
                     const planetMeta = JSON.parse(planet.meta || '{}');
-                    const distance = 200 + Math.floor(Math.random() * 200); // 200-400 tiles
+                    const distance = 35 + Math.floor(Math.random() * 11); // 35..45
                     const angle = Math.random() * 2 * Math.PI;
                     spawnX = Math.round(planet.x + Math.cos(angle) * distance);
                     spawnY = Math.round(planet.y + Math.sin(angle) * distance);
-                    
-                    // Ensure spawn is within sector bounds
-                    spawnX = Math.max(100, Math.min(4900, spawnX));
-                    spawnY = Math.max(100, Math.min(4900, spawnY));
-                    
-                    console.log(`🌍 Spawning ${player.username} near planet "${planetMeta.name}" at (${spawnX}, ${spawnY})`);
+                    // Clamp within bounds
+                    spawnX = Math.max(1, Math.min(4999, spawnX));
+                    spawnY = Math.max(1, Math.min(4999, spawnY));
+                    console.log(`🌍 Spawning ${player.username} on ring ${distance}T from planet "${planetMeta.name}" at (${spawnX}, ${spawnY}) [planetId=${planet.id}]`);
                 } else {
                     // Fallback to safe zone if no planets found (shouldn't happen with our generator)
                     spawnX = 1000 + Math.floor(Math.random() * 3000);
@@ -155,10 +157,10 @@ class GameWorldManager {
                     console.warn(`⚠️ No planets found for ${player.username}, using fallback spawn at (${spawnX}, ${spawnY})`);
                 }
                 
-                // Create starting station as an anchored station (planet preferred, sun fallback)
-                const stationClass = planet ? 'planet-station' : 'sun-station';
+                // Create starting station: standard planet-station baseline for now
+                const stationClass = 'planet-station';
                 const starbaseMetaObj = {
-                    name: `${player.username} Prime Station`,
+                    name: `${player.username} Station`,
                     hp: 100,
                     maxHp: 100,
                     scanRange: 200,
@@ -167,10 +169,79 @@ class GameWorldManager {
                 };
                 const starbaseMeta = JSON.stringify(starbaseMetaObj);
 
-                const insertAnchored = (parentId) => {
+                // Helper: create starter ship and initialize visibility after station placement
+                const proceedAfterStation = (starbaseId) => {
+                    const { DEFAULT_ABILITIES } = require('../abilities');
+                    const shipMetaObj = {
+                        name: `${player.username} Explorer`,
+                        hp: 50,
+                        maxHp: 50,
+                        scanRange: 50,
+                        movementSpeed: 4,
+                        cargoCapacity: 10,
+                        harvestRate: 1.0,
+                        canMine: true,
+                        canActiveScan: false,
+                        shipType: 'explorer',
+                        pilotCost: 1,
+                        energy: 6,
+                        maxEnergy: 6,
+                        energyRegen: 3,
+                        abilities: DEFAULT_ABILITIES.explorer || ['dual_light_coilguns','boost_engines','jury_rig_repair','duct_tape_resilience']
+                    };
+                    const shipMeta = JSON.stringify(shipMetaObj);
+
                     db.run(
-                        `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, parent_object_id) VALUES (?, 'station', ?, ?, ?, ?, ?)`,
-                        [sectorId, spawnX, spawnY, player.user_id, starbaseMeta, parentId || null],
+                        'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
+                        function(err) {
+                            if (err) {
+                                console.error('Error creating ship:', err);
+                                return onError(err);
+                            }
+                            console.log(`🚢 Created ship for ${player.username} at (${spawnX + 1}, ${spawnY})`);
+                            GameWorldManager.initializeVisibility(gameId, player.user_id, sectorId, spawnX, spawnY, onComplete, onError);
+                        }
+                    );
+                };
+
+                const insertAnchored = (parentId) => {
+                    // Ensure uniqueness: one station per parent object (planet)
+                    const ensureUnique = (cb) => {
+                        if (!parentId) return cb();
+                        db.get(`SELECT id FROM sector_objects WHERE type = 'station' AND parent_object_id = ? LIMIT 1`, [parentId], (e, r) => {
+                            if (e) return cb(e);
+                            if (r) return cb(new Error('station_already_anchored'));
+                            cb();
+                        });
+                    };
+                    ensureUnique((uniqueErr) => {
+                        if (uniqueErr) {
+                            console.warn(`⚠️ Planet ${parentId} already has a station; selecting fallback for ${player.username}`);
+                            // Fallback: place slightly away but still in sector (unanchored)
+                            db.run(
+                                `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, parent_object_id) VALUES (?, 'station', ?, ?, ?, ?, NULL)`,
+                                [sectorId, spawnX, spawnY, player.user_id, starbaseMeta],
+                                function(err) {
+                                    if (err) {
+                                        console.error('Error creating fallback station:', err);
+                                        return onError(err);
+                                    }
+                                    const starbaseId = this.lastID;
+                                    console.log(`🏭 Created fallback station (unanchored) for ${player.username} at (${spawnX}, ${spawnY})`);
+                                    // Continue flow
+                                    CargoManager.initializeObjectCargo(starbaseId, 50)
+                                        .then(() => CargoManager.addResourceToCargo(starbaseId, 'rock', 25, false))
+                                        .catch(error => console.error('Error initializing station cargo or adding rocks:', error));
+                                    // Create starting ship adjacent to starbase
+                                    proceedAfterStation(starbaseId);
+                                }
+                            );
+                            return;
+                        }
+                        db.run(
+                            `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, parent_object_id) VALUES (?, 'station', ?, ?, ?, ?, ?)`,
+                            [sectorId, spawnX, spawnY, player.user_id, starbaseMeta, parentId || null],
                         function(err) {
                             if (err) {
                                 console.error('Error creating anchored station:', err);
@@ -188,45 +259,10 @@ class GameWorldManager {
                                     console.error('Error initializing station cargo or adding rocks:', error);
                                 });
                             
-                            // Create starting ship adjacent to starbase
-                            const { DEFAULT_ABILITIES } = require('../abilities');
-                            const shipMetaObj = {
-                                name: `${player.username} Explorer`,
-                                hp: 50,
-                                maxHp: 50,
-                                scanRange: 50,
-                                movementSpeed: 4,
-                                cargoCapacity: 10,
-                                harvestRate: 1.0,
-                                canMine: true,
-                                canActiveScan: false,
-                                shipType: 'explorer',
-                                pilotCost: 1,
-                                // Energy and abilities for explorer starter
-                                energy: 6,
-                                maxEnergy: 6,
-                                energyRegen: 3,
-                                abilities: DEFAULT_ABILITIES.explorer || ['dual_light_coilguns','boost_engines','jury_rig_repair','duct_tape_resilience']
-                            };
-                            const shipMeta = JSON.stringify(shipMetaObj);
-                            
-                            db.run(
-                                'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                                [sectorId, 'ship', spawnX + 1, spawnY, player.user_id, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
-                                function(err) {
-                                    if (err) {
-                                        console.error('Error creating ship:', err);
-                                        return onError(err);
-                                    }
-                                    
-                                    console.log(`🚢 Created ship for ${player.username} at (${spawnX + 1}, ${spawnY})`);
-                                    
-                                    // Initialize visibility memory around starting position via object-based system
-                                    GameWorldManager.initializeVisibility(gameId, player.user_id, sectorId, spawnX, spawnY, onComplete, onError);
-                                }
-                            );
+                            proceedAfterStation(starbaseId);
                         }
-                    );
+                        );
+                    });
                 };
 
                 if (planet && planet.id) {
@@ -797,8 +833,9 @@ async function computePilotStats(gameId, userId, currentTurn) {
         try {
             const meta = JSON.parse(r.meta || '{}');
             const cls = meta.stationClass;
-            if (cls === 'sun-station') capacity += 10;
-            else if (cls === 'planet-station') capacity += 5;
+            // For now, normalize station classes: treat all as planet-station for capacity
+            if (cls === 'sun-station') capacity += 10; // legacy
+            else if (cls === 'planet-station' || !cls) capacity += 5;
             else if (cls === 'moon-station') capacity += 3;
         } catch {}
     }
@@ -1019,6 +1056,37 @@ router.get('/:gameId/galaxy-graph', (req, res) => {
                 res.json({ systems, gates });
             }
         );
+    });
+});
+
+// System facts: core bias, themed/minor minerals, gate slots
+router.get('/system/:sectorId/facts', (req, res) => {
+    const { sectorId } = req.params;
+    db.get('SELECT name, archetype, gate_slots, gates_used FROM sectors WHERE id = ?', [sectorId], (err, sector) => {
+        if (err || !sector) return res.status(404).json({ error: 'sector_not_found' });
+        try {
+            const { getArchetype } = require('../archetypes');
+            const arch = sector.archetype ? getArchetype(sector.archetype) : null;
+            const coreBias = arch && arch.coreBias ? arch.coreBias : {
+                Ferrite: '1.00', Crytite: '1.00', Ardanium: '1.00', Vornite: '1.00', Zerothium: '1.00'
+            };
+            // Themed (fixedSpecialized) and minor (deterministic extras)
+            const themed = (arch && Array.isArray(arch.fixedSpecialized)) ? arch.fixedSpecialized.slice(0,2) : [];
+            const { pickDeterministicExtrasForSector } = require('../resource-node-generator');
+            const minor = pickDeterministicExtrasForSector ? pickDeterministicExtrasForSector(sectorId, arch).slice(0,3) : [];
+            res.json({
+                name: sector.name,
+                type: sector.archetype,
+                coreBias,
+                themed,
+                minor,
+                gateSlots: sector.gate_slots || 3,
+                gatesUsed: sector.gates_used || 0
+            });
+        } catch (e) {
+            console.error('facts error:', e);
+            res.status(500).json({ error: 'facts_error' });
+        }
     });
 });
 
@@ -2058,6 +2126,20 @@ router.post('/deploy-interstellar-gate', (req, res) => {
                     // Generate unique gate pair ID
                     const gatePairId = `gate_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
                     
+                    // Enforce gate slots and prevent duplicate edges
+                    db.get('SELECT gate_slots, gates_used FROM sectors WHERE id = ?', [ship.sector_id], (eA, originSector) => {
+                        if (eA || !originSector) return res.status(400).json({ error: 'origin_sector_not_found' });
+                        db.get('SELECT gate_slots, gates_used FROM sectors WHERE id = ?', [destinationSectorId], (eB, destSector) => {
+                            if (eB || !destSector) return res.status(400).json({ error: 'destination_sector_not_found' });
+                            if ((originSector.gates_used || 0) >= (originSector.gate_slots || 3)) return res.status(400).json({ error: 'origin_gate_slots_full' });
+                            if ((destSector.gates_used || 0) >= (destSector.gate_slots || 3)) return res.status(400).json({ error: 'dest_gate_slots_full' });
+                            // Prevent existing A->B connection
+                            db.get(
+                                `SELECT 1 FROM sector_objects WHERE sector_id = ? AND type='interstellar-gate' AND json_extract(meta,'$.destinationSectorId') = ? LIMIT 1`,
+                                [ship.sector_id, destinationSectorId],
+                                (edgeErr, exists) => {
+                                    if (edgeErr) return res.status(500).json({ error: 'edge_check_failed' });
+                                    if (exists) return res.status(400).json({ error: 'connection_already_exists' });
                     // Create gate in current sector (origin)
                     const originGateX = ship.x + (Math.random() < 0.5 ? -1 : 1);
                     const originGateY = ship.y + (Math.random() < 0.5 ? -1 : 1);
@@ -2113,7 +2195,8 @@ router.post('/deploy-interstellar-gate', (req, res) => {
                                     
                                     const destGateId = this.lastID;
                                     console.log(`🌀 Created interstellar gate pair (${gatePairId}): Origin ${originGateId} in sector ${ship.sector_id}, Destination ${destGateId} in sector ${destinationSectorId}`);
-                                    
+                                    // Increment gates_used for both sectors
+                                    db.run('UPDATE sectors SET gates_used = gates_used + 1 WHERE id IN (?, ?)', [ship.sector_id, destinationSectorId], () => {});
                                     res.json({ 
                                         success: true, 
                                         structureName: 'Interstellar Gate',
@@ -2123,6 +2206,10 @@ router.post('/deploy-interstellar-gate', (req, res) => {
                                     });
                                 }
                             );
+                                }
+                            );
+                        });
+                    });
                         }
                     );
                 })

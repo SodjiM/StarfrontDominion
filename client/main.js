@@ -221,6 +221,23 @@ const Modal = {
             contentContainer.appendChild(config.content);
         }
 
+        // Apply optional className and explicit sizing to the container
+        const containerEl = modal.querySelector('.game-modal-container');
+        if (config.className) {
+            // Support single or multiple classes
+            String(config.className).split(/\s+/).forEach(cls => {
+                if (cls) containerEl.classList.add(cls);
+            });
+        }
+        if (typeof config.width === 'number') {
+            containerEl.style.width = `${config.width}px`;
+            containerEl.style.maxWidth = `${config.width}px`;
+        }
+        if (typeof config.height === 'number') {
+            containerEl.style.height = `${config.height}px`;
+            containerEl.style.maxHeight = `${config.height}px`;
+        }
+
         // Add action buttons
         if (config.actions) {
             const actionsContainer = modal.querySelector('.game-modal-actions');

@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS sectors (
     archetype TEXT DEFAULT NULL,
     width INTEGER DEFAULT 5000,
     height INTEGER DEFAULT 5000,
+    gate_slots INTEGER DEFAULT 3,
+    gates_used INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (game_id) REFERENCES games(id),
     FOREIGN KEY (owner_id) REFERENCES users(id)

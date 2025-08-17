@@ -28,6 +28,20 @@ class SystemGenerator {
         const rng = new SeededRandom(seed);
         
         try {
+            // Initialize gate slots (2–4) at generation time if not already explicitly set
+            await new Promise((resolve) => {
+                db.get('SELECT gate_slots FROM sectors WHERE id = ?', [sectorId], (err, row) => {
+                    if (err) return resolve();
+                    const current = row ? row.gate_slots : null;
+                    if (current === null || current === undefined || current === 3) {
+                        const randomizedSlots = rng.randInt(2, 5); // 2,3,4
+                        db.run('UPDATE sectors SET gate_slots = ? WHERE id = ?', [randomizedSlots, sectorId], () => resolve());
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+
             // Update sector with generation info
             await this.updateSectorGenerationInfo(sectorId, seed, false);
             

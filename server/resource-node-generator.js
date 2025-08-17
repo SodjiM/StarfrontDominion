@@ -198,7 +198,7 @@ class ResourceNodeGenerator {
         const candidates = base[celestialType];
         if (!candidates) return 'rock';
 
-        // Determine 3 deterministic per-sector extras
+        // Determine exactly two themed and three minor minerals per system; restrict spawn set to core + these 5
         const extras = pickDeterministicExtrasForSector(parentObject?.sector_id, arch);
 
         const weightFor = (mineral) => {
@@ -212,13 +212,17 @@ class ResourceNodeGenerator {
             return w;
         };
 
-        // Compute weighted pick across union of base list and boosted themed minerals
-        // Ensure the 5 cores are present in candidate list for sector-wide availability
+        // Build restricted union: five core minerals + 2 themed + 3 minor only
         const ALL_CORES = ['Ferrite Alloy','Crytite','Ardanium','Vornite','Zerothium'];
-        const union = new Map(candidates.map(c => [c.name, c.w]));
-        ALL_CORES.forEach(c => union.set(c, union.get(c) || 2));
-        if (arch) arch.fixedSpecialized.forEach(m => union.set(m, union.get(m) || 2));
-        extras.forEach(m => union.set(m, union.get(m) || 1));
+        const allowed = new Set(ALL_CORES);
+        if (arch && Array.isArray(arch.fixedSpecialized)) arch.fixedSpecialized.slice(0,2).forEach(m => allowed.add(m));
+        extras.slice(0,3).forEach(m => allowed.add(m));
+
+        const union = new Map();
+        // Start from base candidates but keep only allowed
+        candidates.forEach(c => { if (allowed.has(c.name)) union.set(c.name, c.w); });
+        // Ensure all allowed are present with baseline weight
+        allowed.forEach(name => { if (!union.has(name)) union.set(name, 2); });
 
         let total = 0; union.forEach((_, k) => { total += weightFor(k); });
         let roll = rng.random() * total;
@@ -633,7 +637,7 @@ function weightedPick(items, rng) {
     return items[items.length - 1];
 }
 
-module.exports = { ResourceNodeGenerator };
+module.exports = { ResourceNodeGenerator, pickDeterministicExtrasForSector };
 
 // Helper: deterministic extras per sector based on sector_id and generation_seed
 function pickDeterministicExtrasForSector(sectorId, arch) {
