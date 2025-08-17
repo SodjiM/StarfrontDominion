@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { SystemGenerator } = require('../system-generator');
 const { CargoManager } = require('../cargo-manager');
-const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../blueprints');
+const { SHIP_BLUEPRINTS, computeAllRequirements, resolveBlueprint } = require('../blueprints');
 const { SECTOR_ARCHETYPES } = require('../archetypes');
 const { HarvestingManager } = require('../harvesting-manager');
 const router = express.Router();
@@ -1595,40 +1595,14 @@ router.post('/build-ship', (req, res) => {
                     return res.status(400).json({ error: 'Insufficient resources', details: result.shortages });
                 }
                 
-                // Create ship adjacent to station
+                // Create ship adjacent to station using resolved blueprint
                 const shipName = `${blueprint.name} ${Math.floor(Math.random() * 1000)}`;
-                // Baseline stats per class (first pass)
-                const classStats = {
-                    frigate: { hp: 60, maxHp: 60, scanRange: 50, movementSpeed: 4, cargoCapacity: 10, harvestRate: 1.0 },
-                    battleship: { hp: 200, maxHp: 200, scanRange: 60, movementSpeed: 3, cargoCapacity: 20, harvestRate: 0.0 },
-                    capital: { hp: 600, maxHp: 600, scanRange: 70, movementSpeed: 2, cargoCapacity: 40, harvestRate: 0.0 }
-                }[blueprint.class] || { hp: 50, maxHp: 50, scanRange: 50, movementSpeed: 3, cargoCapacity: 10, harvestRate: 0.0 };
+                const resolved = resolveBlueprint(blueprint);
                 const shipMetaObj = {
                     name: shipName,
-                    ...classStats,
-                    canMine: classStats.harvestRate > 0,
-                    canActiveScan: false,
-                    shipType: blueprint.class,
-                    blueprintId: blueprint.id,
-                    role: blueprint.role,
-                    class: blueprint.class,
-                    pilotCost: 1,
-                    // Energy system (per class baseline)
-                    ...(function(cls){
-                        if (cls === 'frigate') return { energy: 6, maxEnergy: 6, energyRegen: 3 };
-                        if (cls === 'battleship') return { energy: 8, maxEnergy: 8, energyRegen: 2 };
-                        if (cls === 'capital') return { energy: 12, maxEnergy: 12, energyRegen: 2 };
-                        return { energy: 6, maxEnergy: 6, energyRegen: 2 };
-                    })(blueprint.class),
-                    // Defaults for combat integration (no explicit loadouts per instruction)
-                    // Weapon profile inferred by class; abilities by class default
-                    abilities: (function(cls, bp){
-                        if (bp === 'needle-gunship') return ['auralite_lance','quarzon_micro_missiles','phantom_burn','strike_vector'];
-                        if (cls === 'frigate') return ['target_painter'];
-                        if (cls === 'battleship') return ['barrage','tractor_field'];
-                        if (cls === 'capital') return ['aegis_pulse','tractor_field'];
-                        return [];
-                    })(blueprint.class, blueprint.id)
+                    ...resolved,
+                    shipType: resolved.class,
+                    blueprintId: resolved.id
                 };
                 const shipMeta = JSON.stringify(shipMetaObj);
                 
@@ -1638,7 +1612,7 @@ router.post('/build-ship', (req, res) => {
                 
                 db.run(
                     'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
+                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, shipMetaObj.canActiveScan ? 1 : 0],
                     function(shipErr) {
                         if (shipErr) {
                             console.error('Error creating ship:', shipErr);
