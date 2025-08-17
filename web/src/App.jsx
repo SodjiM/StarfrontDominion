@@ -6,27 +6,11 @@ import {
 const mockPosts = [
   {
     id: 1,
-    title: 'Patch 0.3.7 — Asteroid Overhaul & Mining Cargo UI',
-    date: '2025-08-14',
+    title: 'Alpha Launch — Starfront: Dominion',
+    date: '2025-08-16',
     excerpt:
-      'Performance-optimized asteroid fields, persistent rock nodes, and per-ship cargo panes. Plus warp beacon visibility tuning.',
-    href: '/blog/patch-0-3-7',
-  },
-  {
-    id: 2,
-    title: 'Design Notes — Senate Tags & Policy Cards',
-    date: '2025-08-10',
-    excerpt:
-      'How ideology tags shape quests, influence thresholds, and unlockable policy actives. A look at Centralist vs. Decentralist arcs.',
-    href: '/blog/senate-design-notes',
-  },
-  {
-    id: 3,
-    title: 'Ship Roster Refresh — Frigates & Battleships',
-    date: '2025-08-03',
-    excerpt:
-      'Needle Gunship, Brute, and hybrid roles. Target falloff curves, ECM counters, and warp-interdiction balance.',
-    href: '/blog/roster-refresh',
+      'The galaxy opens for Alpha! Create/join games in the Lobby (auto-turn timers enabled), build Explorer ships, anchor Interstellar Gates, mine Asteroid Fields, and battle in turn-based combat. Start in the Lobby, spin up a game, explore, and tell us what breaks. Your feedback will shape the next milestone.',
+    href: '/play',
   },
 ];
 
@@ -51,10 +35,8 @@ export default function App() {
             <span className="font-semibold tracking-wide text-slate-100">Starfront Dominion</span>
           </a>
           <nav className="hidden md:flex items-center gap-8 text-slate-300">
-            <a className="hover:text-white/90" href="#features">Features</a>
-            <a className="hover:text-white/90" href="#factions">Factions</a>
             <a className="hover:text-white/90" href="#blog">Patch Notes</a>
-            <a className="hover:text-white/90" href="#cta">Join</a>
+            <a className="hover:text-white/90" href="/play">Join</a>
           </nav>
           <div className="flex items-center gap-3">
             <a href="/play" className="hidden sm:inline-flex items-center gap-2 rounded-xl bg-cyan-500/90 hover:bg-cyan-400 text-slate-900 px-4 py-2 font-semibold shadow-lg shadow-cyan-500/25 transition">
@@ -108,38 +90,24 @@ export default function App() {
         </div>
       </section>
 
-      <section id="features" className="relative z-10 py-16 sm:py-24 border-t border-white/10 bg-white/[0.02]">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="grid md:grid-cols-3 gap-6">
-            <FeatureCard icon={<Radar className="h-6 w-6"/>} title="Discover & Exploit">
-              Scan asteroid belts, anchor mining outposts, and route convoys through hidden warp beacons.
-            </FeatureCard>
-            <FeatureCard icon={<Swords className="h-6 w-6"/>} title="Turn‑Based Tactics">
-              Range falloff, interdiction bubbles, ECM duels, and alpha‑strike windows create real maneuver.
-            </FeatureCard>
-            <FeatureCard icon={<Shield className="h-6 w-6"/>} title="Senate & Policy Cards">
-              Align with ideologies, complete quests, and unlock empire‑wide actives that reshape the map.
-            </FeatureCard>
-          </div>
-        </div>
-      </section>
+      {/* Features removed per request */}
 
       <section id="blog" className="relative z-10 py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-end justify-between mb-8">
             <h2 className="text-2xl sm:text-3xl font-bold">Latest Patch Notes</h2>
-            <a href="/blog" className="text-sm text-cyan-300 hover:text-cyan-200 inline-flex items-center gap-1">
-              View all <ExternalLink className="h-3.5 w-3.5"/>
+            <a href="/play" className="text-sm text-cyan-300 hover:text-cyan-200 inline-flex items-center gap-1">
+              Join Alpha <ArrowRight className="h-3.5 w-3.5"/>
             </a>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {mockPosts.map((post) => (
-              <article key={post.id} className="group rounded-2xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition">
+              <a key={post.id} href="/blog/alpha-launch" className="group md:col-span-3 rounded-2xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition block">
                 <div className="text-xs text-slate-400 flex items-center gap-2"><Rss className="h-3.5 w-3.5"/> {new Date(post.date).toLocaleDateString()}</div>
-                <h3 className="mt-2 text-lg font-semibold leading-snug group-hover:text-white"><a href={post.href}>{post.title}</a></h3>
+                <h3 className="mt-2 text-lg font-semibold leading-snug group-hover:text-white">{post.title}</h3>
                 <p className="mt-2 text-sm text-slate-300/90">{post.excerpt}</p>
-                <a href={post.href} className="mt-4 inline-flex items-center gap-1 text-cyan-300 hover:text-cyan-200 text-sm">Read patch notes <ArrowRight className="h-3.5 w-3.5"/></a>
-              </article>
+                <div className="mt-4 inline-flex items-center gap-1 text-cyan-300 group-hover:text-cyan-200 text-sm">Read more <ArrowRight className="h-3.5 w-3.5"/></div>
+              </a>
             ))}
           </div>
         </div>
@@ -154,8 +122,8 @@ export default function App() {
               <a href="/play" className="inline-flex items-center gap-2 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-6 py-3 font-semibold shadow-lg shadow-cyan-500/30">
                 <Play className="h-5 w-5"/> Play Now
               </a>
-              <a href="/newsletter" className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-6 py-3 font-semibold text-slate-100/90 hover:bg-white/10">
-                <Mail className="h-4 w-4"/> Get Updates
+              <a href="/play" className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-6 py-3 font-semibold text-slate-100/90 hover:bg-white/10">
+                <Mail className="h-4 w-4"/> Join the Alpha
               </a>
             </div>
           </div>

@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
+    "build": "npm run web:build",
+    "postinstall": "npm run web:build",
     "web:dev": "vite --config web/vite.config.mjs",
     "web:build": "vite build --config web/vite.config.mjs",
     "web:preview": "vite preview --config web/vite.config.mjs"
@@ -22,7 +24,8 @@
     "socket.io": "^4.7.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.453.0"
+    "lucide-react": "^0.453.0",
+    "react-router-dom": "^6.26.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

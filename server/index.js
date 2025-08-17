@@ -109,6 +109,11 @@ app.get('/play', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/index.html'));
 });
 
+// SPA fallback for blog routes
+app.get(['/blog', '/blog/*'], (req, res) => {
+    res.sendFile(path.join(__dirname, '../web/dist/index.html'));
+});
+
 // Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

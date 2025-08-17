@@ -10,6 +10,8 @@ class GameClient {
         this.selectedObjectId = null; // STAGE B: Track selection by ID across turns
         this.canvas = null;
         this.ctx = null;
+        this.playerNameById = new Map();
+        this._tooltipEl = null;
         this.miniCanvas = null;
         this.miniCtx = null;
         this.camera = { x: 2500, y: 2500, zoom: 1 };
@@ -104,6 +106,9 @@ class GameClient {
         // Set canvas size
         this.resizeCanvas();
         window.addEventListener('resize', () => this.resizeCanvas());
+
+        // Create tooltip overlay for hover info (once)
+        this.createMapTooltip();
     }
 
     // Resize canvas to fit container
@@ -132,6 +137,9 @@ class GameClient {
                 if (typeof populateChatRecipients === 'function') populateChatRecipients();
                 if (typeof requestChatHistory === 'function') requestChatHistory();
             } catch {}
+
+            // Prime owner name cache for tooltips
+            this.primePlayerNameCache();
         });
 
         this.socket.on('player-locked-turn', (data) => {
@@ -260,8 +268,12 @@ class GameClient {
                     });
                 }
                 
+                // Preserve current camera and selection while updating state
+                const preserveCamera = { x: this.camera.x, y: this.camera.y };
                 this.gameState = data;
                 this.updateUI();
+                this.camera.x = preserveCamera.x;
+                this.camera.y = preserveCamera.y;
                 this.render();
                 console.log('🎮 Game state loaded:', data);
             } else {
@@ -476,9 +488,7 @@ class GameClient {
                 // Check if object moved and log it
                 if (oldPosition && (oldPosition.x !== previouslySelected.x || oldPosition.y !== previouslySelected.y)) {
                     console.log(`📍 Selected object moved from (${oldPosition.x},${oldPosition.y}) to (${previouslySelected.x},${previouslySelected.y})`);
-                    // Update camera to follow moved object
-                    this.camera.x = previouslySelected.x;
-                    this.camera.y = previouslySelected.y;
+                    // Do NOT recenter camera automatically; respect user's current view
                 }
                 
                 // Ensure UI selection highlight is applied
@@ -2314,18 +2324,99 @@ class GameClient {
             this.handleCanvasRightClick(e);
         });
         
-        // Mouse move for cursor feedback and drag-pan
+        // Mouse move for cursor feedback, tooltip, and drag-pan
         this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
         this.canvas.addEventListener('mousedown', (e) => this.startDragPan(e));
         this.canvas.addEventListener('mouseup', () => this.stopDragPan());
         this.canvas.addEventListener('mouseleave', () => this.stopDragPan());
         this.canvas.addEventListener('mousemove', (e) => this.handleDragPan(e));
+        this.canvas.addEventListener('mouseleave', () => this.hideMapTooltip());
         
         // Mouse wheel for zooming
         this.canvas.addEventListener('wheel', (e) => this.handleCanvasWheel(e));
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+    }
+
+    // Create tooltip overlay element for map hover
+    createMapTooltip() {
+        if (this._tooltipEl) return;
+        const parent = this.canvas?.parentElement;
+        if (!parent) return;
+        const tip = document.createElement('div');
+        tip.id = 'mapTooltip';
+        tip.style.position = 'absolute';
+        tip.style.zIndex = '2500';
+        tip.style.pointerEvents = 'none';
+        tip.style.background = 'rgba(10, 15, 28, 0.95)';
+        tip.style.border = '1px solid rgba(100,181,246,0.35)';
+        tip.style.borderRadius = '8px';
+        tip.style.padding = '6px 8px';
+        tip.style.color = '#e0f2ff';
+        tip.style.fontSize = '12px';
+        tip.style.display = 'none';
+        tip.style.boxShadow = '0 6px 18px rgba(0,0,0,0.35)';
+        parent.appendChild(tip);
+        this._tooltipEl = tip;
+    }
+
+    // Update tooltip content/position
+    updateMapTooltip(obj, mouseX, mouseY) {
+        if (!this._tooltipEl) return;
+        if (!obj) {
+            this._tooltipEl.style.display = 'none';
+            return;
+        }
+        const meta = obj.meta || {};
+        const name = meta.name || obj.type || 'Unknown';
+        const shipType = meta.shipType || meta.class || obj.subtype || obj.type;
+        const ownerName = this.getOwnerName(obj.owner_id);
+        const hp = (meta.hp != null && meta.maxHp != null) ? `${meta.hp}/${meta.maxHp}` : (meta.hp != null ? String(meta.hp) : '—');
+        const lines = [
+            `${name}`,
+            `Type: ${shipType || '—'}`,
+            `Owner: ${ownerName || obj.owner_id || '—'}`,
+            `HP: ${hp}`
+        ];
+        this._tooltipEl.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
+        // offset tooltip near cursor
+        const parentRect = this.canvas.getBoundingClientRect();
+        const left = Math.min(parentRect.width - 180, mouseX + 12);
+        const top = Math.min(parentRect.height - 80, mouseY + 12);
+        this._tooltipEl.style.left = `${left}px`;
+        this._tooltipEl.style.top = `${top}px`;
+        this._tooltipEl.style.display = 'block';
+    }
+
+    hideMapTooltip() {
+        if (this._tooltipEl) this._tooltipEl.style.display = 'none';
+    }
+
+    // Resolve owner name from cache or fallback
+    getOwnerName(ownerId) {
+        if (!ownerId) return '';
+        if (this.playerNameById.has(ownerId)) return this.playerNameById.get(ownerId);
+        // Fallback to session user
+        if (ownerId === this.userId) return (Session.getUser()?.username) || 'You';
+        return `Player ${ownerId}`;
+    }
+
+    // Prime player name cache from server if available
+    async primePlayerNameCache() {
+        try {
+            if (!this.socket) return;
+            const data = await new Promise((resolve) => {
+                this.socket.timeout(4000).emit('players:list', { gameId: this.gameId }, (err, response) => {
+                    if (err) resolve({ success: false }); else resolve(response);
+                });
+            });
+            if (data && data.success && Array.isArray(data.players)) {
+                data.players.forEach(p => {
+                    if (p?.userId) this.playerNameById.set(p.userId, p.username || `Player ${p.userId}`);
+                });
+            }
+        } catch {}
     }
 
     // Toggle floating minimap within main map area
@@ -2490,7 +2581,8 @@ class GameClient {
             startX: e.clientX - rect.left,
             startY: e.clientY - rect.top,
             cameraX: this.camera.x,
-            cameraY: this.camera.y
+            cameraY: this.camera.y,
+            movedEnough: false
         };
         this.canvas.style.cursor = 'grabbing';
     }
@@ -2512,6 +2604,10 @@ class GameClient {
         const tilesDY = dy / this.tileSize;
         this.camera.x = Math.max(0, Math.min(5000, this._dragPan.cameraX - tilesDX));
         this.camera.y = Math.max(0, Math.min(5000, this._dragPan.cameraY - tilesDY));
+        // mark as moved if drag exceeded a small threshold in pixels
+        if (!this._dragPan.movedEnough && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+            this._dragPan.movedEnough = true;
+        }
         this.render();
         this.renderMiniMap();
         this.renderFloatingMini();
@@ -2519,10 +2615,7 @@ class GameClient {
 
     // Handle mouse movement for cursor feedback
     handleCanvasMouseMove(e) {
-        if (!this.selectedUnit || this.turnLocked) {
-            this.canvas.style.cursor = 'default';
-            return;
-        }
+        // Tooltip + cursor feedback works regardless of selection; movement cursor still respects selection
         
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -2541,14 +2634,17 @@ class GameClient {
             return distance <= hitRadius;
         });
         
+        this.updateMapTooltip(hoveredObject, x, y);
+
+        if (!this.selectedUnit || this.turnLocked) {
+            this.canvas.style.cursor = hoveredObject ? 'pointer' : 'default';
+            return;
+        }
+
         if (hoveredObject) {
-            if (hoveredObject.owner_id === this.userId) {
-                this.canvas.style.cursor = 'pointer'; // Own unit - select
-            } else {
-                this.canvas.style.cursor = 'crosshair'; // Enemy - attack
-            }
+            this.canvas.style.cursor = hoveredObject.owner_id === this.userId ? 'pointer' : 'crosshair';
         } else if (this.selectedUnit.type === 'ship') {
-            this.canvas.style.cursor = 'move'; // Empty space - move
+            this.canvas.style.cursor = 'move';
         } else {
             this.canvas.style.cursor = 'default';
         }
@@ -2760,11 +2856,14 @@ class GameClient {
                 
                 if (response.ok) {
                     // Update game state to new sector
+                    const preserveCamera = { x: this.camera.x, y: this.camera.y };
                     this.gameState = data.gameState;
                     this.addLogEntry(`Switched to ${sectorName}`, 'info');
                     
                     // Update the UI
                     this.updateUI();
+                    this.camera.x = preserveCamera.x;
+                    this.camera.y = preserveCamera.y;
                     this.render();
                     this.renderMiniMap();
                     this.updateSectorOverviewTitle();
@@ -2993,6 +3092,11 @@ class GameClient {
 
     // Handle canvas clicks (left-click)
     handleCanvasClick(e) {
+        // If a drag-pan just occurred, suppress click selection (prevents accidental selects while panning)
+        if (this._dragPan && this._dragPan.active === false && this._dragPan.movedEnough) {
+            this._dragPan.movedEnough = false; // reset once
+            return;
+        }
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -3048,18 +3152,7 @@ class GameClient {
             // Clicked on enemy/neutral object - just show info, don't select
             this.addLogEntry(`Detected ${clickedObject.meta.name || clickedObject.type} (${clickedObject.owner_id === this.userId ? 'Friendly' : 'Enemy'})`, 'info');
         } else {
-            // Clicked on empty space - deselect current unit
-            if (this.selectedUnit) {
-                console.log(`Deselected unit: ${this.selectedUnit.meta.name || this.selectedUnit.type}`);
-                this.selectedUnit = null;
-                this.selectedObjectId = null; // STAGE B: Clear ID tracking
-                
-                // Update unit details panel to show nothing selected
-                this.updateUnitDetails();
-                
-                // Re-render to remove selection highlight
-                this.render(); 
-            }
+            // Clicked on empty space - do NOT deselect; selection should persist unless selecting another unit
         }
     }
     // Handle canvas right-clicks for movement only (attack removed)
@@ -3231,10 +3324,7 @@ class GameClient {
     handleKeyboard(e) {
         switch(e.key) {
             case 'Escape':
-                this.selectedUnit = null;
-                this.selectedObjectId = null; // STAGE B: Clear ID tracking
-                this.updateUnitDetails();
-                this.render();
+                // Do not clear selection with Escape anymore to keep selection persistent
                 break;
                 
             case '1':

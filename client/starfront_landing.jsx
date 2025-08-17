@@ -1,5 +1,16 @@
-import React, { useEffect, useState } from "react";
-import { Rocket, Radar, Shield, Swords, ArrowRight, ExternalLink, Mail, Rss, Play } from "lucide-react";
+/* global React */
+const { useEffect } = React;
+
+// Minimal emoji-based icons to avoid external imports in the browser
+function Rocket(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '🚀'); }
+function Radar(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '📡'); }
+function Shield(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '🛡️'); }
+function Swords(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '⚔️'); }
+function ArrowRight(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '➡️'); }
+function ExternalLink(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '🔗'); }
+function Mail(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '✉️'); }
+function Rss(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '📰'); }
+function Play(props) { return React.createElement('span', { className: props.className, 'aria-hidden': true }, '▶️'); }
 
 // NOTE: This file is a single-file, previewable landing page for your game.
 // Styling uses Tailwind utility classes (no external CSS needed in this preview).
@@ -32,7 +43,7 @@ const mockPosts = [
   },
 ];
 
-export default function Landing() {
+function Landing() {
   // Subtle animated starfield using CSS variables
   useEffect(() => {
     const root = document.documentElement;
@@ -116,22 +127,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="relative z-10 py-16 sm:py-24 border-t border-white/10 bg-white/[0.02]">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="grid md:grid-cols-3 gap-6">
-            <FeatureCard icon={<Radar className="h-6 w-6"/>} title="Discover & Exploit">
-              Scan asteroid belts, anchor mining outposts, and route convoys through hidden warp beacons.
-            </FeatureCard>
-            <FeatureCard icon={<Swords className="h-6 w-6"/>} title="Turn‑Based Tactics">
-              Range falloff, interdiction bubbles, ECM duels, and alpha‑strike windows create real maneuver.
-            </FeatureCard>
-            <FeatureCard icon={<Shield className="h-6 w-6"/>} title="Senate & Policy Cards">
-              Align with ideologies, complete quests, and unlock empire‑wide actives that reshape the map.
-            </FeatureCard>
-          </div>
-        </div>
-      </section>
+      {/* Features (optional) */}
 
       {/* Blog / Patch Notes */}
       <section id="blog" className="relative z-10 py-16 sm:py-24">
@@ -188,7 +184,7 @@ export default function Landing() {
   );
 }
 
-function FeatureCard({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+function FeatureCard({ icon, title, children }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
       <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-400/20 to-indigo-400/20 grid place-items-center text-cyan-300 mb-4">
@@ -200,7 +196,7 @@ function FeatureCard({ icon, title, children }: { icon: React.ReactNode; title: 
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
       <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
@@ -233,11 +229,12 @@ function Starfield() {
 }
 
 // Utility: generate a data-URI of tiny radial dots to simulate a starfield
-function generateStars(count: number) {
+function generateStars(count) {
   const size = 1200;
   const cvs = document.createElement("canvas");
   cvs.width = size; cvs.height = size;
-  const ctx = cvs.getContext("2d")!;
+  const ctx = cvs.getContext("2d");
+  if (!ctx) return "";
   ctx.fillStyle = "rgba(255,255,255,0)"; ctx.fillRect(0,0,size,size);
   for (let i = 0; i < count; i++) {
     const x = Math.random() * size;
@@ -255,3 +252,6 @@ function generateStars(count: number) {
   }
   return `url(${cvs.toDataURL()})`;
 }
+
+// Expose component globally for mounting if needed
+window.StarfrontLanding = Landing;
