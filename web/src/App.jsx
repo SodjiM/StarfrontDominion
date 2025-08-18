@@ -2,17 +2,9 @@ import { useEffect } from 'react';
 import {
   Rocket, Radar, Shield, Swords, ArrowRight, ExternalLink, Mail, Rss, Play
 } from 'lucide-react';
+import { getPostsSortedNewestFirst } from './data/posts';
 
-const mockPosts = [
-  {
-    id: 1,
-    title: 'Alpha Launch — Starfront: Dominion',
-    date: '2025-08-16',
-    excerpt:
-      'The galaxy opens for Alpha! Create/join games in the Lobby (auto-turn timers enabled), build Explorer ships, anchor Interstellar Gates, mine Asteroid Fields, and battle in turn-based combat. Start in the Lobby, spin up a game, explore, and tell us what breaks. Your feedback will shape the next milestone.',
-    href: '/play',
-  },
-];
+const mockPosts = getPostsSortedNewestFirst();
 
 export default function App() {
   useEffect(() => {
@@ -90,19 +82,46 @@ export default function App() {
         </div>
       </section>
 
-      {/* Features removed per request */}
+      <section id="features" className="relative z-10 py-16 sm:py-24 border-t border-white/10 bg-white/[0.02]">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-400/20 to-indigo-400/20 grid place-items-center text-cyan-300 mb-4">
+                <Radar className="h-6 w-6" />
+              </div>
+              <h3 className="font-semibold text-lg">Discover & Exploit</h3>
+              <p className="mt-2 text-slate-300/90 text-sm">Scan asteroid belts, anchor mining outposts, and route convoys through hidden warp beacons.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-400/20 to-indigo-400/20 grid place-items-center text-cyan-300 mb-4">
+                <Swords className="h-6 w-6" />
+              </div>
+              <h3 className="font-semibold text-lg">Turn‑Based Tactics</h3>
+              <p className="mt-2 text-slate-300/90 text-sm">Range falloff, interdiction bubbles, ECM duels, and alpha‑strike windows create real maneuver.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-400/20 to-indigo-400/20 grid place-items-center text-cyan-300 mb-4">
+                <Shield className="h-6 w-6" />
+              </div>
+              <h3 className="font-semibold text-lg">Senate & Policy Cards</h3>
+              <p className="mt-2 text-slate-300/90 text-sm">Align with ideologies, complete quests, and unlock empire‑wide actives that reshape the map.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
 
       <section id="blog" className="relative z-10 py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-end justify-between mb-8">
             <h2 className="text-2xl sm:text-3xl font-bold">Latest Patch Notes</h2>
-            <a href="/play" className="text-sm text-cyan-300 hover:text-cyan-200 inline-flex items-center gap-1">
-              Join Alpha <ArrowRight className="h-3.5 w-3.5"/>
+            <a href="/blog" className="text-sm text-cyan-300 hover:text-cyan-200 inline-flex items-center gap-1">
+              See all blog posts <ArrowRight className="h-3.5 w-3.5"/>
             </a>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
-            {mockPosts.map((post) => (
-              <a key={post.id} href="/blog/alpha-launch" className="group md:col-span-3 rounded-2xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition block">
+            {mockPosts.slice(0,3).map((post, idx) => (
+              <a key={post.id} href={`/blog/${post.slug}`} className="group rounded-2xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition block">
                 <div className="text-xs text-slate-400 flex items-center gap-2"><Rss className="h-3.5 w-3.5"/> {new Date(post.date).toLocaleDateString()}</div>
                 <h3 className="mt-2 text-lg font-semibold leading-snug group-hover:text-white">{post.title}</h3>
                 <p className="mt-2 text-sm text-slate-300/90">{post.excerpt}</p>

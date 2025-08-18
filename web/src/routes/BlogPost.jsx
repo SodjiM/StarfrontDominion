@@ -1,12 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
+import { posts } from '../data/posts';
 
-const postsBySlug = {
-  'alpha-launch': {
-    title: 'Alpha Launch — Starfront: Dominion',
-    date: '2025-08-16',
-    body: `Welcome to the Alpha!\n\nWhat you can do today:\n- Create/join games in the Lobby (auto-turn timers enabled)\n- Build Explorer ships\n- Anchor Interstellar Gates\n- Mine Asteroid Fields\n- Engage in turn-based combat\n\nHow to start:\n1) Head to the Lobby and spin up a game\n2) Join and explore your starting sector\n3) Share feedback and report issues — your input shapes the roadmap!`
-  }
-};
+const postsBySlug = Object.fromEntries(posts.map(p => [p.slug, p]));
 
 export default function BlogPost() {
   const { slug } = useParams();
@@ -34,7 +29,10 @@ export default function BlogPost() {
           {post.body}
         </article>
         <div className="mt-6">
-          <a href="/play" className="inline-flex items-center gap-2 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-6 py-3 font-semibold shadow-lg shadow-cyan-500/30">Play the Alpha</a>
+          <div className="flex gap-3">
+            <a href="/" className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-6 py-3 font-semibold text-slate-100/90 hover:bg-white/10">Home</a>
+            <a href="/play" className="inline-flex items-center gap-2 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-6 py-3 font-semibold shadow-lg shadow-cyan-500/30">Play the Alpha</a>
+          </div>
         </div>
       </div>
     </div>
