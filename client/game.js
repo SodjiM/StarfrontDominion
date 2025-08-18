@@ -241,15 +241,61 @@ class GameClient {
             this.fetchSectorTrails();
             // Tick senate meter +1% per resolved turn
             this.incrementSenateProgress(1);
+            // Append combat logs for the resolved turn to Activity Log
+            try {
+                fetch(`/combat/logs/${this.gameId}/${data.turnNumber}`)
+                    .then(r => r.ok ? r.json() : Promise.reject())
+                    .then(payload => {
+                        const rows = Array.isArray(payload?.logs) ? payload.logs : [];
+                        rows.forEach(log => {
+                            const kind = (log.event_type === 'kill') ? 'success' : (log.event_type === 'ability' || log.event_type === 'status') ? 'info' : 'info';
+                            this.addLogEntry(log.summary || 'Combat event', kind);
+                        });
+                    })
+                    .catch(() => {});
+            } catch {}
             setTimeout(() => this.refreshAbilityCooldowns(), 50);
         });
 
-        this.socket.on('ability-queued', () => {
-            this.refreshAbilityCooldowns();
+        this.socket.on('ability-queued', (payload) => {
+            try {
+                // Refresh cooldown buttons
+                this.refreshAbilityCooldowns();
+                // If the queued ability is Microthruster Shift on a visible ship, update its meta for immediate UI feedback
+                const casterId = payload?.casterId;
+                const abilityKey = payload?.abilityKey;
+                if (abilityKey === 'microthruster_shift' && casterId) {
+                    // Update selected unit if it matches
+                    if (this.selectedUnit && this.selectedUnit.id === casterId) {
+                        const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
+                        this.selectedUnit.meta = this.selectedUnit.meta || {};
+                        this.selectedUnit.meta.movementFlatBonus = Math.max(this.selectedUnit.meta.movementFlatBonus || 0, 3);
+                        this.selectedUnit.meta.movementFlatExpires = Number(currentTurn) + 1;
+                        this.render();
+                    }
+                    // Also update cached units list entry if present
+                    const unit = this.units?.find(u => u.id === casterId);
+                    if (unit) {
+                        const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
+                        unit.meta = unit.meta || {};
+                        unit.meta.movementFlatBonus = Math.max(unit.meta.movementFlatBonus || 0, 3);
+                        unit.meta.movementFlatExpires = Number(currentTurn) + 1;
+                    }
+                }
+            } catch {}
         });
 
         this.socket.on('warp-confirmed', (data) => {
             this.addLogEntry(`Warp order confirmed: ${data.message}`, 'success');
+            // Optimistically annotate the selected ship with required prep turns for better UI text
+            try {
+                if (this.selectedUnit && this.selectedUnit.id === data.shipId) {
+                    this.selectedUnit.meta = this.selectedUnit.meta || {};
+                    if (typeof data.requiredPreparationTurns === 'number') {
+                        this.selectedUnit.meta.warpPreparationTurns = data.requiredPreparationTurns;
+                    }
+                }
+            } catch {}
             this.loadGameState(); // Refresh to show warp preparation
         });
 
@@ -1206,6 +1252,16 @@ class GameClient {
             this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit.id, abilityKey });
             this.addLogEntry(`Queued ${def.name}`, 'info');
             console.log(`🧪 Ability queued: key=${abilityKey} name=${def.name} ship=${this.selectedUnit.id}`);
+            // Optimistic UI: show Microthruster Shift effect immediately on the current turn
+            if (abilityKey === 'microthruster_shift') {
+                try {
+                    const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
+                    this.selectedUnit.meta = this.selectedUnit.meta || {};
+                    this.selectedUnit.meta.movementFlatBonus = Math.max(this.selectedUnit.meta.movementFlatBonus || 0, 3);
+                    this.selectedUnit.meta.movementFlatExpires = Number(currentTurn) + 1;
+                    this.render();
+                } catch {}
+            }
             // For self-cast, keep preview off
             this.abilityPreview = null; this.abilityHover = null; this.pendingAbility = null;
         } else if (def.target === 'position') {
@@ -1463,14 +1519,30 @@ class GameClient {
         return celestialTypes.includes(obj.celestial_type || obj.type);
     }
     
+    // Resolve a player's color palette
+    getPlayerColors(ownerId) {
+        try {
+            const players = this.gameState?.players || [];
+            const p = players.find(pl => pl.userId === ownerId);
+            return {
+                primary: p?.colorPrimary || '#4caf50',
+                secondary: p?.colorSecondary || 'rgba(76, 175, 80, 1)'
+            };
+        } catch { return { primary: '#4caf50', secondary: 'rgba(76,175,80,1)' }; }
+    }
+
     // Get colors for different object types
     getObjectColors(obj, isOwned, visibility, isCelestial) {
-        if (isOwned && !isCelestial) {
-            return {
-                border: '#4caf50',
-                background: 'rgba(76, 175, 80, 0.3)',
-                text: '#ffffff'
-            };
+        if (!isCelestial) {
+            const palette = this.getPlayerColors(obj.owner_id);
+            if (obj.owner_id) {
+                // Use player palette for any owned non-celestial object
+                return {
+                    border: palette.primary,
+                    background: (palette.secondary.startsWith('#') ? this.hexToRgba(palette.secondary, 0.25) : palette.secondary.replace(/\)$|$/, ', 0.25)').replace('rgba(', 'rgba(')),
+                    text: '#ffffff'
+                };
+            }
         }
         
         if (isCelestial) {
@@ -1498,6 +1570,17 @@ class GameClient {
             background: 'rgba(255, 255, 255, 0.1)',
             text: '#ffffff'
         };
+    }
+
+    // Helper: convert hex color to rgba string with given alpha
+    hexToRgba(hex, alpha) {
+        try {
+            const m = hex.replace('#', '');
+            const r = parseInt(m.substring(0, 2), 16);
+            const g = parseInt(m.substring(2, 4), 16);
+            const b = parseInt(m.substring(4, 6), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        } catch { return hex; }
     }
     
     // Get celestial-specific colors
@@ -2032,11 +2115,12 @@ class GameClient {
     drawWarpPreparationEffect(ctx, ship, x, y, size) {
         const time = Date.now() / 1000;
         const phase = ship.warpPhase;
-        const preparationTurns = ship.warpPreparationTurns || 0;
+        const preparationTurns = ship.warpPreparationTurns || 0; // current accumulated turns from server
+        const maxPrepTurns = (ship.meta && Number(ship.meta.warpPreparationTurns)) || 2; // blueprint-defined, default 2
         
         if (phase === 'preparing') {
             // Charging effect - intensifies over time
-            const intensity = Math.min(1.0, preparationTurns / 2);
+            const intensity = Math.min(1.0, maxPrepTurns ? (preparationTurns / maxPrepTurns) : 1);
             const pulse = 0.3 + 0.7 * Math.sin(time * 6) * intensity;
             
             // Blue energy rings
@@ -2064,7 +2148,7 @@ class GameClient {
             ctx.font = '12px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText(`Charging ${preparationTurns}/2`, x, y + size/2 + 5);
+            ctx.fillText(`Charging ${preparationTurns}/${maxPrepTurns}`, x, y + size/2 + 5);
             
         } else if (phase === 'ready') {
             // Ready to warp - steady bright glow
@@ -3158,28 +3242,99 @@ class GameClient {
         }
     }
 
-    // Build an effects chip with tooltip of active effects and remaining turns
+    // Helper to compute inclusive remaining turns with strong guards
+    computeRemainingTurns(expiresTurn, currentTurn) {
+        const e = Number(expiresTurn);
+        const c = Number(currentTurn);
+        if (Number.isFinite(e) && Number.isFinite(c)) {
+            return Math.max(1, Math.floor(e - c + 1));
+        }
+        return 1;
+    }
+
+    // Escape text for safe use inside HTML attribute values
+    escapeAttr(text) {
+        try {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '&#10;');
+        } catch { return ''; }
+    }
+
+    // Build an effects chip using authoritative server statusEffects, with meta mirrors as fallback
     renderActiveEffectsChip(unit) {
         try {
             const meta = unit.meta || {};
             const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
-            const effects = [];
-            if (typeof meta.movementFlatBonus === 'number' && meta.movementFlatBonus > 0) {
-                const remain = (typeof meta.movementFlatExpires === 'number') ? Math.max(0, meta.movementFlatExpires - currentTurn) : 1;
-                effects.push({ name: '+Move', desc: `+${meta.movementFlatBonus} tiles`, turns: remain, source: 'Microthruster Shift' });
+            const list = [];
+            // 1) Use server-provided statusEffects if present
+            if (Array.isArray(unit.statusEffects) && unit.statusEffects.length > 0) {
+                for (const eff of unit.statusEffects) {
+                    const data = eff.effectData || {};
+                    // expiresTurn is inclusive; ensure at least 1 turn remains on the expiry turn
+                    const until = this.computeRemainingTurns(eff.expiresTurn, currentTurn);
+                    if (eff.effectKey === 'microthruster_speed' || typeof data.movementFlatBonus === 'number') {
+                        const amt = data.movementFlatBonus ?? 3;
+                        list.push({ name: '+Move', desc: `+${amt} tiles`, turns: until, source: 'Microthruster Shift' });
+                    }
+                    if (eff.effectKey === 'emergency_discharge_buff' || typeof data.evasionBonus === 'number') {
+                        const pct = Math.round((data.evasionBonus ?? 0.5) * 100);
+                        list.push({ name: 'Evasion', desc: `+${pct}%`, turns: until, source: 'Emergency Discharge Vent' });
+                    }
+                    if (eff.effectKey === 'engine_boost' || typeof data.movementBonus === 'number') {
+                        const pct = Math.round((data.movementBonus ?? 1.0) * 100);
+                        list.push({ name: 'Speed', desc: `+${pct}%`, turns: until, source: 'Engine Boost' });
+                    }
+                    if (eff.effectKey === 'repair_over_time' || typeof data.healPercentPerTurn === 'number') {
+                        const pct = Math.round((data.healPercentPerTurn ?? 0.05) * 100);
+                        list.push({ name: 'Regen', desc: `${pct}%/turn`, turns: until, source: 'Jury-Rig Repair' });
+                    }
+                    if (eff.effectKey === 'survey_scanner' || typeof data.scanRangeMultiplier === 'number') {
+                        const mult = data.scanRangeMultiplier ?? 2;
+                        list.push({ name: 'Scan', desc: `x${mult}`, turns: until, source: 'Survey Scanner' });
+                    }
+                    if (eff.effectKey === 'evasion_boost') {
+                        const pct = Math.round((data.evasionBonus ?? 0.8) * 100);
+                        list.push({ name: 'Evasion', desc: `+${pct}%`, turns: until, source: 'Phantom Burn' });
+                    }
+                    if (eff.effectKey === 'accuracy_debuff') {
+                        const pct = Math.round((data.magnitude ?? eff.magnitude ?? 0.2) * 100);
+                        list.push({ name: 'Accuracy', desc: `-${pct}%`, turns: until, source: 'Quarzon Micro-Missiles' });
+                    }
+                }
             }
-            // Passive hint for Solo Miner's Instinct
+            // 2) Passive hint for Solo Miner's Instinct
             if (Array.isArray(meta.abilities) && meta.abilities.includes('solo_miners_instinct')) {
-                effects.push({ name: '+Move', desc: "+1 tile (Solo Miner's Instinct)", turns: 1, source: 'Passive' });
+                list.push({ name: '+Move', desc: "+1 tile (Solo Miner's Instinct)", turns: 1, source: 'Passive' });
+            }
+            // 3) Meta mirrors fallback for immediate client feedback
+            if (typeof meta.movementBoostMultiplier === 'number' && meta.movementBoostMultiplier > 1) {
+                const pct = Math.round((meta.movementBoostMultiplier - 1) * 100);
+                const remain = this.computeRemainingTurns(meta.movementBoostExpires, currentTurn);
+                list.push({ name: 'Speed', desc: `+${pct}%`, turns: remain, source: 'Engine Boost' });
+            }
+            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+                const remain = this.computeRemainingTurns(meta.scanBoostExpires, currentTurn);
+                list.push({ name: 'Scan', desc: `x${meta.scanRangeMultiplier}`, turns: remain, source: 'Survey Scanner' });
+            }
+            if (typeof meta.movementFlatBonus === 'number' && meta.movementFlatBonus > 0) {
+                const remain = this.computeRemainingTurns(meta.movementFlatExpires, currentTurn);
+                list.push({ name: '+Move', desc: `+${meta.movementFlatBonus} tiles`, turns: remain, source: 'Microthruster Shift' });
             }
             if (typeof meta.evasionBonus === 'number' && meta.evasionBonus > 0) {
-                const remain = (typeof meta.evasionExpires === 'number') ? Math.max(0, meta.evasionExpires - currentTurn) : 1;
-                effects.push({ name: 'Evasion', desc: `+${Math.round(meta.evasionBonus*100)}%`, turns: remain, source: 'Emergency Discharge Vent' });
+                const remain = this.computeRemainingTurns(meta.evasionExpires, currentTurn);
+                list.push({ name: 'Evasion', desc: `+${Math.round(meta.evasionBonus*100)}%`, turns: remain, source: 'Emergency Discharge Vent' });
             }
-            const active = effects.filter(e => e.turns > 0);
+
+            const active = list.filter(e => e.turns > 0);
             if (active.length === 0) return '';
-            const tip = active.map(e => `${e.name} ${e.desc} (${e.turns}T)`).join('\n');
-            return `<span class="chip" title="${tip}">✨ Effects</span>`;
+            const tip = active.map(e => `${e.name} ${e.desc} (${e.turns}T) – ${e.source}`).join('\n');
+            const safeTip = this.escapeAttr(tip);
+            return `<span class=\"chip\" title=\"${safeTip}\">✨ Effects</span>`;
         } catch { return ''; }
     }
 
@@ -3316,17 +3471,23 @@ class GameClient {
         console.log(`Left-clicked world position: (${worldX}, ${worldY})`);
         
         // Check if clicking on an object (account for object radius)
+        // For large celestial fields (e.g., belts, nebulae), use a much smaller picking radius unless their exact tile is clicked.
         const clickedObject = this.objects.find(obj => {
-            const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
-            const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8); // Use object radius for hit detection
-            return distance <= hitRadius;
+            const dx = obj.x - worldX;
+            const dy = obj.y - worldY;
+            const distance = Math.sqrt(dx*dx + dy*dy);
+            const baseRadius = Math.max(0.5, (obj.radius || 1) * 0.8);
+            const isLargeField = (obj.celestial_type === 'belt' || obj.celestial_type === 'nebula');
+            const pickRadius = isLargeField ? Math.min(baseRadius, 3) : baseRadius;
+            return distance <= pickRadius;
         });
         
         // Ability targeting flow first
         if (this.pendingAbility) {
             const { key, def } = this.pendingAbility;
-            if (def.target === 'position' && !clickedObject) {
-                // Validate with the same generic hover rule before sending
+            if (def.target === 'position') {
+                // For position-target abilities, allow clicks even if a large-radius object is under the cursor.
+                // Only block if the exact tile is occupied or out of range.
                 const hover = this.computePositionAbilityHover(key, worldX, worldY);
                 if (!hover || !hover.valid) {
                     this.addLogEntry('Invalid destination for ability', 'warning');
@@ -3338,14 +3499,13 @@ class GameClient {
                 return;
             }
             if ((def.target === 'enemy' || def.target === 'ally') && clickedObject) {
-                // Pre-check range if defined
+                // Allow queueing even if currently out of range; server will validate after utility phase.
                 if (def.range && this.selectedUnit) {
                     const dx = clickedObject.x - this.selectedUnit.x;
                     const dy = clickedObject.y - this.selectedUnit.y;
                     const d = Math.hypot(dx, dy);
                     if (d > def.range) {
-                        this.addLogEntry(`Target out of range for ${def.name}`, 'warning');
-                        return;
+                        this.addLogEntry('Target currently out of range; will fire if in range after utility phase.', 'warning');
                     }
                 }
                 this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit?.id, abilityKey: key, targetObjectId: clickedObject.id });
@@ -4060,6 +4220,9 @@ class GameClient {
         );
         
         const modalContent = document.createElement('div');
+        const requiredPrep = (this.selectedUnit?.meta && typeof this.selectedUnit.meta.warpPreparationTurns === 'number')
+            ? this.selectedUnit.meta.warpPreparationTurns
+            : 2;
         modalContent.innerHTML = `
             <div class="warp-confirmation">
                 <h3>🌌 Warp Jump Confirmation</h3>
@@ -4067,7 +4230,7 @@ class GameClient {
                     <p><strong>Ship:</strong> ${this.selectedUnit.meta.name}</p>
                     <p><strong>Destination:</strong> ${target.meta.name || target.type}</p>
                     <p><strong>Distance:</strong> ${Math.round(distance)} tiles</p>
-                    <p><strong>Preparation Time:</strong> 2 turns</p>
+                    <p><strong>Preparation Time:</strong> ${requiredPrep} turn${requiredPrep === 1 ? '' : 's'}</p>
                     <p><strong>Jump Time:</strong> Instant</p>
                 </div>
                 <div class="warp-warning">
@@ -4532,16 +4695,31 @@ class GameClient {
 
 // Players modal: show all players, lock status, and online status
 async function showPlayersModal() {
-    if (!gameClient || !gameClient.socket) return;
+    if (!gameClient || !gameClient.socket) {
+        console.warn('[PlayersModal] Aborting: gameClient or socket not ready', {
+            hasGameClient: !!gameClient,
+            hasSocket: !!(gameClient && gameClient.socket)
+        });
+        return;
+    }
 
     try {
+        console.debug('[PlayersModal] Requesting players list...', {
+            gameId: gameClient.gameId,
+            socketConnected: !!(gameClient.socket && gameClient.socket.connected)
+        });
         const data = await new Promise((resolve) => {
             gameClient.socket.timeout(4000).emit('players:list', { gameId: gameClient.gameId }, (err, response) => {
-                if (err) resolve({ success: false, error: 'Timeout' });
-                else resolve(response);
+                if (err) {
+                    console.error('[PlayersModal] Socket ack error:', err);
+                    resolve({ success: false, error: 'Timeout' });
+                } else {
+                    resolve(response);
+                }
             });
         });
 
+        console.debug('[PlayersModal] Response:', data);
         if (!data || !data.success) {
             UI.showAlert(data?.error || 'Failed to load players');
             return;
@@ -4549,6 +4727,10 @@ async function showPlayersModal() {
 
         const players = data.players || [];
         const currentTurn = data.currentTurn;
+        console.debug(`[PlayersModal] Players received: count=${players.length}`, players.map(p => ({ userId: p.userId, username: p.username, avatar: p.avatar, colorPrimary: p.colorPrimary, colorSecondary: p.colorSecondary, locked: p.locked, online: p.online })));
+        if (players.length === 0) {
+            console.warn('[PlayersModal] No players returned for game', gameClient.gameId);
+        }
 
         const container = document.createElement('div');
         container.innerHTML = `

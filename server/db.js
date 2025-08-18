@@ -35,9 +35,15 @@ const initializeDatabase = async () => {
                 }
             });
         });
-        // Backfill/migrate last_seen_at column if needed
+        // Backfill/migrate presence columns if needed
         await new Promise((resolve) => {
             db.run(`ALTER TABLE users ADD COLUMN last_seen_at DATETIME`, (err) => {
+                // ignore if exists
+                resolve();
+            });
+        });
+        await new Promise((resolve) => {
+            db.run(`ALTER TABLE users ADD COLUMN last_activity_at DATETIME`, (err) => {
                 // ignore if exists
                 resolve();
             });

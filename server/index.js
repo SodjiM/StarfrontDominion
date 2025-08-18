@@ -330,6 +330,7 @@ io.on('connection', (socket) => {
             const gameId = payload?.gameId || socket.gameId;
             if (!gameId) return callback && callback({ success: false, error: 'Missing gameId' });
 
+            // [players:list] request
             // Current turn
             const currentTurn = await new Promise((resolve) => {
                 db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (err, row) => {
@@ -342,10 +343,17 @@ io.on('connection', (socket) => {
                 db.all(
                     `SELECT gp.user_id as userId, u.username, u.last_seen_at as lastSeenAt, u.last_activity_at as lastActivityAt, gp.avatar, gp.color_primary as colorPrimary, gp.color_secondary as colorSecondary
                      FROM game_players gp 
-                     JOIN users u ON gp.user_id = u.id 
+                     LEFT JOIN users u ON gp.user_id = u.id 
                      WHERE gp.game_id = ?`,
                     [gameId],
-                    (err, rows) => resolve(rows || [])
+                    (err, rows) => {
+                        if (err) {
+                            // [players:list] game_players query error
+                            return resolve([]);
+                        }
+                        // [players:list] raw players rows
+                        resolve(rows || []);
+                    }
                 );
             });
 
@@ -355,7 +363,15 @@ io.on('connection', (socket) => {
                     db.all(
                         'SELECT user_id FROM turn_locks WHERE game_id = ? AND turn_number = ? AND locked = 1',
                         [gameId, currentTurn],
-                        (err, rows) => resolve((rows || []).map(r => r.user_id))
+                        (err, rows) => {
+                            if (err) {
+                                // [players:list] turn_locks query error
+                                return resolve([]);
+                            }
+                            const ids = (rows || []).map(r => r.user_id);
+                            // [players:list] locked users turn
+                            resolve(ids);
+                        }
                     );
                 })
             );
@@ -369,6 +385,7 @@ io.on('connection', (socket) => {
                     if (s?.userId) onlineUserIds.add(Number(s.userId));
                 }
             }
+            // [players:list] online users detected
 
             const enriched = players.map(p => ({
                 userId: p.userId,
@@ -382,8 +399,10 @@ io.on('connection', (socket) => {
                 lastActivityAt: p.lastActivityAt || null
             }));
 
+            // [players:list] responding with players for game
             callback && callback({ success: true, currentTurn, players: enriched });
         } catch (e) {
+            // [players:list] handler error
             callback && callback({ success: false, error: 'Failed to get players' });
         }
     });
@@ -550,6 +569,15 @@ io.on('connection', (socket) => {
                             console.log(`🗑️ Canceled ${this.changes} existing orders for warp ship ${shipId}`);
                         }
                         
+                        // Determine required preparation time from ship blueprint if available
+                        let requiredPrep = 2;
+                        try {
+                            const metaObj = JSON.parse(ship.meta || '{}');
+                            if (typeof metaObj.warpPreparationTurns === 'number' && metaObj.warpPreparationTurns >= 0) {
+                                requiredPrep = Math.max(0, Math.floor(metaObj.warpPreparationTurns));
+                            }
+                        } catch {}
+
                         // Store warp order with preparation phase
                         const orderTimestamp = new Date().toISOString();
                         db.run(
@@ -583,7 +611,8 @@ io.on('connection', (socket) => {
                                         targetY,
                                         phase: 'preparing',
                                         preparationTurns: 0,
-                                        message: `Warp drive engaging. Preparation: 0/2 turns`
+                                        requiredPreparationTurns: requiredPrep,
+                                        message: `Warp drive engaging. Preparation: 0/${requiredPrep} turns`
                                     });
                                     
                                     // Notify other players about the warp preparation
@@ -1256,13 +1285,14 @@ function processWarpOrder(order, turnNumber, gameId, resolve, reject) {
     const preparationTurns = order.warp_preparation_turns || 0;
     const warpPhase = order.warp_phase || 'preparing';
     const meta = JSON.parse(order.meta || '{}');
+    const requiredPrep = (typeof meta.warpPreparationTurns === 'number' && meta.warpPreparationTurns >= 0) ? Math.max(0, Math.floor(meta.warpPreparationTurns)) : 2;
     
-    console.log(`🌌 Processing warp order for ship ${order.object_id}: phase=${warpPhase}, prep=${preparationTurns}/2`);
+    console.log(`🌌 Processing warp order for ship ${order.object_id}: phase=${warpPhase}, prep=${preparationTurns}/${requiredPrep}`);
     
     if (warpPhase === 'preparing') {
         const newPreparationTurns = preparationTurns + 1;
         
-        if (newPreparationTurns >= 2) {
+        if (newPreparationTurns >= requiredPrep) {
             // Preparation complete - execute warp jump
             console.log(`🚀 Warp preparation complete for ship ${order.object_id}, executing jump!`);
             
@@ -1333,13 +1363,13 @@ function processWarpOrder(order, turnNumber, gameId, resolve, reject) {
                         return reject(err);
                     }
                     
-                    console.log(`⚡ Ship ${order.object_id} warp preparation: ${newPreparationTurns}/2 turns`);
+                    console.log(`⚡ Ship ${order.object_id} warp preparation: ${newPreparationTurns}/${requiredPrep} turns`);
                     
                     resolve({
                         objectId: order.object_id,
                         status: 'warp_preparing',
                         preparationTurns: newPreparationTurns,
-                        message: `Warp drive charging: ${newPreparationTurns}/2 turns`
+                        message: `Warp drive charging: ${newPreparationTurns}/${requiredPrep} turns`
                     });
                 }
             );
@@ -1696,7 +1726,17 @@ async function processAbilityOrders(gameId, turnNumber) {
         );
     });
 
-    for (const order of orders) {
+    // Partition orders: utility (non-offense) first, then offense. Ensures pre-combat reposition/buffs apply before we queue attacks.
+    const utilityOrders = [];
+    const offenseOrders = [];
+    for (const o of orders) {
+        const ab = Abilities[o.ability_key];
+        if (!ab) continue;
+        if (ab.type === 'offense') offenseOrders.push(o); else utilityOrders.push(o);
+    }
+
+    // Utility phase
+    for (const order of utilityOrders) {
         const ability = Abilities[order.ability_key];
         if (!ability) continue;
         // Cooldown check; if on CD skip
@@ -1763,6 +1803,105 @@ async function processAbilityOrders(gameId, turnNumber) {
             ));
         } else {
             // Special-case ability handling (non-offense)
+            if (order.ability_key === 'strike_vector') {
+                // Instant micro-warp reposition up to ability.range tiles, if not tractored/rooted, landing on a free tile
+                const casterFull = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                if (!casterFull) continue;
+                const range = ability.range || 3;
+                const tx = Math.round(order.target_x || 0);
+                const ty = Math.round(order.target_y || 0);
+                const dx = (casterFull.x || 0) - tx;
+                const dy = (casterFull.y || 0) - ty;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist > range) {
+                    // Out of range → skip
+                    await new Promise((resolve) => db.run(
+                        `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
+                         VALUES (?, ?, ?, 'ability', ?, ?)`,
+                        [gameId, turnNumber, order.caster_id, 'Strike Vector failed: out of range', JSON.stringify({ range, dist, from: { x: casterFull.x, y: casterFull.y }, to: { x: tx, y: ty } })],
+                        () => resolve()
+                    ));
+                } else {
+                    // Check tractored/rooted (any effect that prevents reposition)
+                    const blocked = await new Promise((resolve) => db.get(
+                        `SELECT 1 FROM ship_status_effects WHERE ship_id = ? AND effect_key IN ('tractored','rooted') AND (expires_turn IS NULL OR expires_turn >= ?) LIMIT 1`,
+                        [order.caster_id, turnNumber],
+                        (e, r) => resolve(!!r)
+                    ));
+                    if (blocked) {
+                        // Skip if immobilized
+                        await new Promise((resolve) => db.run(
+                            `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary)
+                             VALUES (?, ?, ?, 'ability', ?)`,
+                            [gameId, turnNumber, order.caster_id, 'Strike Vector failed: immobilized (tractored/rooted)'],
+                            () => resolve()
+                        ));
+                    } else {
+                        // Ensure landing tile is free in the same sector
+                        const occupied = await new Promise((resolve) => db.get(
+                            'SELECT 1 FROM sector_objects WHERE sector_id = ? AND x = ? AND y = ? LIMIT 1',
+                            [casterFull.sector_id, tx, ty],
+                            (e, r) => resolve(!!r)
+                        ));
+                        if (!occupied) {
+                            await new Promise((resolve) => db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [tx, ty, new Date().toISOString(), order.caster_id], () => resolve()));
+                            // Re-base any active movement order from new position to same destination
+                            const move = await new Promise((resolve) => db.get(
+                                `SELECT * FROM movement_orders WHERE object_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+                                [order.caster_id],
+                                (e, r) => resolve(r)
+                            ));
+                            if (move && typeof move.destination_x === 'number' && typeof move.destination_y === 'number') {
+                                const path = computePathBresenham(tx, ty, move.destination_x, move.destination_y);
+                                const movementSpeed = move.movement_speed || 1;
+                                const eta = Math.ceil(Math.max(0, path.length - 1) / Math.max(1, movementSpeed));
+                                await new Promise((resolve) => db.run(
+                                    'UPDATE movement_orders SET movement_path = ?, current_step = 0, eta_turns = ? WHERE id = ?',
+                                    [JSON.stringify(path), eta, move.id],
+                                    () => resolve()
+                                ));
+                            }
+                            // Cooldown and log
+                            const availableTurn = Number(turnNumber) + (ability.cooldown || 3);
+                            await new Promise((resolve) => db.run(
+                                `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+                                 ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+                                [order.caster_id, order.ability_key, availableTurn],
+                                () => resolve()
+                            ));
+                            await new Promise((resolve) => db.run(
+                                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
+                                 VALUES (?, ?, ?, 'ability', ?, ?)`,
+                                [gameId, turnNumber, order.caster_id, `Strike Vector: repositioned to (${tx},${ty})`, JSON.stringify({ x: tx, y: ty })],
+                                () => resolve()
+                            ));
+                            continue;
+                        } else {
+                            await new Promise((resolve) => db.run(
+                                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
+                                 VALUES (?, ?, ?, 'ability', ?, ?)`,
+                                [gameId, turnNumber, order.caster_id, 'Strike Vector failed: destination occupied', JSON.stringify({ to: { x: tx, y: ty } })],
+                                () => resolve()
+                            ));
+                        }
+                    }
+                }
+                // If failed (blocked/occupied/out of range), still apply cooldown
+                const availableTurn = Number(turnNumber) + (ability.cooldown || 3);
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+                     ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+                    [order.caster_id, order.ability_key, availableTurn],
+                    () => resolve()
+                ));
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary)
+                     VALUES (?, ?, ?, 'ability', ?)`,
+                    [gameId, turnNumber, order.caster_id, `Strike Vector failed (blocked/occupied/out-of-range)`],
+                    () => resolve()
+                ));
+                continue;
+            }
             if (order.ability_key === 'microthruster_shift') {
                 // New design: speed buff only, no reposition. +3 tiles for this turn
                 const effectData = { movementFlatBonus: 3 };
@@ -1917,6 +2056,51 @@ async function processAbilityOrders(gameId, turnNumber) {
             ));
         }
     }
+
+    // Offense phase
+    for (const order of offenseOrders) {
+        const ability = Abilities[order.ability_key];
+        if (!ability) continue;
+        // Cooldown check; if on CD skip
+        const cdRow = await new Promise((resolve) => db.get('SELECT available_turn FROM ability_cooldowns WHERE ship_id = ? AND ability_key = ?', [order.caster_id, order.ability_key], (e, r) => resolve(r)));
+        if (cdRow && Number(cdRow.available_turn) > Number(turnNumber)) continue;
+
+        // Target presence
+        if (!order.target_object_id) continue;
+        const target = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.target_object_id], (e, r) => resolve(r)));
+        const caster = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+        if (!caster || !target) continue;
+        if (caster.sector_id !== target.sector_id) continue;
+        if (ability.range) {
+            const dx = (caster.x || 0) - (target.x || 0);
+            const dy = (caster.y || 0) - (target.y || 0);
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist > ability.range) continue;
+        }
+        // Enqueue combat order and set cooldown
+        await new Promise((resolve) => db.run('DELETE FROM combat_orders WHERE attacker_id = ? AND game_id = ? AND turn_number = ?', [order.caster_id, gameId, turnNumber], () => resolve()));
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO combat_orders (game_id, turn_number, attacker_id, target_id, weapon_key, desired_range, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [gameId, turnNumber, order.caster_id, order.target_object_id, order.ability_key, null, new Date().toISOString()],
+                (err) => err ? reject(err) : resolve()
+            );
+        });
+        const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+        await new Promise((resolve) => db.run(
+            `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
+             ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,
+            [order.caster_id, order.ability_key, availableTurn],
+            () => resolve()
+        ));
+        await new Promise((resolve) => db.run(
+            `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+             VALUES (?, ?, ?, ?, 'attack', ?, ?)`,
+            [gameId, turnNumber, order.caster_id, order.target_object_id, `${order.ability_key} queued`, JSON.stringify({ weaponKey: order.ability_key })],
+            () => resolve()
+        ));
+    }
 }
 
 // Process combat orders: compute damage using range falloff then size penalty adjusted by status effects
@@ -2048,6 +2232,31 @@ async function processCombatOrders(gameId, turnNumber) {
         const newHp = targetHp - damage;
         tMeta.hp = newHp;
         await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(tMeta), new Date().toISOString(), target.id], () => resolve()));
+
+        // On-hit status application (e.g., missiles applying debuff)
+        try {
+            const { Abilities: AB2 } = require('./abilities');
+            const weap = AB2[weaponKey];
+            if (weap && weap.onHitStatus && damage > 0) {
+                const status = weap.onHitStatus;
+                const effData = {};
+                if (typeof status.magnitude === 'number') {
+                    effData.magnitude = status.magnitude;
+                }
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO ship_status_effects (ship_id, effect_key, magnitude, effect_data, source_object_id, applied_turn, expires_turn)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [target.id, status.effectKey, status.magnitude || null, JSON.stringify(effData), attacker.id, turnNumber, Number(turnNumber) + (status.duration || 1)],
+                    () => resolve()
+                ));
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO combat_logs (game_id, turn_number, attacker_id, target_id, event_type, summary, data)
+                     VALUES (?, ?, ?, ?, 'status', ?, ?)`,
+                    [gameId, turnNumber, attacker.id, target.id, `Applied ${status.effectKey}`, JSON.stringify({ duration: status.duration || 1, magnitude: status.magnitude })],
+                    () => resolve()
+                ));
+            }
+        } catch {}
 
         // Log attack
         await new Promise((resolve) => db.run(

@@ -63,39 +63,8 @@
  * }} ShipBlueprint
  */
 
-// Class baselines (merged first; blueprints override)
-const CLASS_BASELINES = {
-  frigate:  { hp: 50,  maxHp: 50,  scanRange: 50, movementSpeed: 4, cargoCapacity: 10, harvestRate: 0, energy: 6,  maxEnergy: 6,  energyRegen: 3, pilotCost: 1 },
-  battleship:{ hp: 140, maxHp: 140, scanRange: 50, movementSpeed: 3, cargoCapacity: 20, harvestRate: 0, energy: 8,  maxEnergy: 8,  energyRegen: 2, pilotCost: 2 },
-  capital:  { hp: 300, maxHp: 300, scanRange: 50, movementSpeed: 2, cargoCapacity: 40, harvestRate: 0, energy: 12, maxEnergy: 12, energyRegen: 2, pilotCost: 3 }
-};
-
-// Default abilities if a blueprint doesn't specify any
-const DEFAULT_ABILITIES_BY_CLASS = {
-  frigate:    ['target_painter'],
-  battleship: ['barrage','tractor_field'],
-  capital:    ['aegis_pulse','tractor_field']
-};
-
-// Helper: finalize a blueprint with baselines, fallbacks, and computed flags
-function resolveBlueprint(bp) {
-  const base = CLASS_BASELINES[bp.class] || {};
-  const merged = {
-    ...base,
-    ...bp
-  };
-  if (!Array.isArray(merged.abilities) || merged.abilities.length === 0) {
-    merged.abilities = DEFAULT_ABILITIES_BY_CLASS[bp.class] || [];
-  }
-  if (typeof merged.canMine !== 'boolean') {
-    merged.canMine = (merged.harvestRate || 0) > 0;
-  }
-  if (typeof merged.canActiveScan !== 'boolean') {
-    merged.canActiveScan = false;
-  }
-  if (typeof merged.version !== 'number') merged.version = 1;
-  return merged;
-}
+// NOTE: Class baselines and resolver are deprecated; blueprints are now full data objects.
+// For compatibility, compute simple defaults where needed downstream rather than merging baselines here.
 
 function computeAllRequirements(blueprint) {
   return (blueprint && blueprint.requirements) ? blueprint.requirements : { core: {}, specialized: {} };
@@ -120,11 +89,18 @@ const SHIP_BLUEPRINTS = [
       core:        { 'Ferrite Alloy': 20, 'Crytite': 12, 'Ardanium': 10, 'Vornite': 8, 'Zerothium': 6 },
       specialized: { }
     },
+    hp: 50,
+    maxHp: 50,
+    energy: 6,
+    maxEnergy: 6,
+    energyRegen: 3,
     movementSpeed: 4,
     scanRange: 55,
     cargoCapacity: 12,
     harvestRate: 1.0,
     abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience'],
+    pilotCost: 1,
+    warpPreparationTurns: 2,
     buildTimeTurns: 1,
     upkeep: {},
     tier: 1,
@@ -149,13 +125,17 @@ const SHIP_BLUEPRINTS = [
     },
     hp: 45,
     maxHp: 45,
+    energy: 6,
+    maxEnergy: 6,
+    energyRegen: 3,
     movementSpeed: 4,
     scanRange: 50,
     cargoCapacity: 6,
     harvestRate: 0.0,
     abilities: ['auralite_lance','quarzon_micro_missiles','phantom_burn','strike_vector'],
     tags: ['small','sniper'],
-    buildTimeTurns: 2,
+    warpPreparationTurns: 2,
+    pilotCost: 1,
     upkeep: {},
     tier: 1,
     prereqs: [],
@@ -177,12 +157,18 @@ const SHIP_BLUEPRINTS = [
       core:        { 'Ferrite Alloy': 20, 'Crytite': 12, 'Ardanium': 10, 'Vornite': 8, 'Zerothium': 6 },
       specialized: { 'Tachytrium': 5, 'Fluxium': 5 }
     },
+    hp: 35,
+    maxHp: 35,
+    energy: 6,
+    maxEnergy: 6,
+    energyRegen: 3,
     movementSpeed: 5,
     cargoCapacity: 30,
     harvestRate: 0.0,
     canMine: false,
     abilities: [],
-    buildTimeTurns: 1,
+    warpPreparationTurns: 1,
+    pilotCost: 1,
     upkeep: {},
     tier: 1,
     prereqs: [],
@@ -206,13 +192,17 @@ const SHIP_BLUEPRINTS = [
     },
     hp: 35,
     maxHp: 35,
+    energy: 6,
+    maxEnergy: 6,
+    energyRegen: 3,
     movementSpeed: 5,
     scanRange: 45,
     cargoCapacity: 25,
     harvestRate: 1.0,
     abilities: ['rotary_mining_lasers','microthruster_shift','emergency_discharge_vent','solo_miners_instinct'],
     tags: ['miner','agile'],
-    buildTimeTurns: 1,
+    warpPreparationTurns: 2,
+    pilotCost: 1,
     upkeep: {},
     tier: 1,
     prereqs: [],
@@ -220,7 +210,4 @@ const SHIP_BLUEPRINTS = [
   }
 ];
 
-// Optionally export a resolved view for callers that want merged stats
-const RESOLVED_BLUEPRINTS = SHIP_BLUEPRINTS.map(resolveBlueprint);
-
-module.exports = { SHIP_BLUEPRINTS, RESOLVED_BLUEPRINTS, CLASS_BASELINES, DEFAULT_ABILITIES_BY_CLASS, resolveBlueprint, computeAllRequirements };
+module.exports = { SHIP_BLUEPRINTS, computeAllRequirements };

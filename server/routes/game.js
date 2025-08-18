@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { SystemGenerator } = require('../system-generator');
 const { CargoManager } = require('../cargo-manager');
-const { SHIP_BLUEPRINTS, computeAllRequirements, resolveBlueprint } = require('../blueprints');
+const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../blueprints');
 const { Abilities } = require('../abilities');
 const { SECTOR_ARCHETYPES } = require('../archetypes');
 const { HarvestingManager } = require('../harvesting-manager');
@@ -172,9 +172,9 @@ class GameWorldManager {
 
                 // Helper: create starter ship and initialize visibility after station placement
                 const proceedAfterStation = (starbaseId) => {
-                    const { SHIP_BLUEPRINTS, resolveBlueprint } = require('../blueprints');
+                    const { SHIP_BLUEPRINTS } = require('../blueprints');
                     const explorer = (SHIP_BLUEPRINTS || []).find(b => b.id === 'explorer');
-                    const resolved = explorer ? resolveBlueprint(explorer) : {
+                    const resolved = explorer || {
                         class: 'frigate',
                         scanRange: 50,
                         movementSpeed: 4,
@@ -687,7 +687,7 @@ class GameWorldManager {
                                             
                                             // Get player setup data
                                             db.get(
-                                                'SELECT avatar, color_primary, color_secondary, setup_completed FROM game_players WHERE game_id = ? AND user_id = ?',
+                                                'SELECT avatar, color_primary AS colorPrimary, color_secondary AS colorSecondary, setup_completed FROM game_players WHERE game_id = ? AND user_id = ?',
                                                 [gameId, userId],
                                                 (err, playerData) => {
                                                     if (err) return reject(err);
@@ -700,96 +700,140 @@ class GameWorldManager {
                                                             if (err) return reject(err);
                                                             const autoTurnMinutes = (gameRow && gameRow.auto_turn_minutes !== undefined) ? gameRow.auto_turn_minutes : null;
                                                             
-                                                    // Parse meta JSON and determine visibility status for objects
-                                                    const parsedObjects = objects.map(obj => {
-                                                    let meta;
-                                                    if (typeof obj.meta === 'string') {
-                                                        try {
-                                                            meta = JSON.parse(obj.meta || '{}');
-                                                        } catch (e) {
-                                                            console.error('Meta JSON parse error for object', obj.id, e);
-                                                            meta = {};
-                                                        }
-                                                    } else {
-                                                        meta = obj.meta || {};
-                                                    }
-                                                        const isOwned = obj.owner_id === userId;
-                                                    const isVisible = (obj.visibility_level || 0) > 0;
-                                                        const isAlwaysKnown = meta.alwaysKnown === true;
-                                                        
-                                                        // Parse movement data if available
-                                                        let movementData = null;
-                                                        if (obj.movement_path && obj.movement_status) {
-                                                            const movementPath = JSON.parse(obj.movement_path || '[]');
-                                                            movementData = {
-                                                                movementPath: movementPath,
-                                                                plannedDestination: obj.destination_x && obj.destination_y ? 
-                                                                    { x: obj.destination_x, y: obj.destination_y } : null,
-                                                                movementETA: obj.eta_turns,
-                                                                movementActive: obj.movement_status === 'active',
-                                                                movementStatus: obj.movement_status,
-                                                                currentStep: (obj.current_step !== null && obj.current_step !== undefined) ? obj.current_step : null,
-                                                                baseMovementSpeed: (obj.movement_speed !== null && obj.movement_speed !== undefined) ? obj.movement_speed : null
-                                                            };
-                                                        }
-                                                        
-                                                        // Parse warp data if available
-                                                        let warpData = null;
-                                                        if (obj.warp_phase) {
-                                                            warpData = {
-                                                                warpPhase: obj.warp_phase,
-                                                                warpPreparationTurns: obj.warp_preparation_turns || 0,
-                                                                warpDestination: obj.warp_destination_x && obj.warp_destination_y ? 
-                                                                    { x: obj.warp_destination_x, y: obj.warp_destination_y } : null
-                                                            };
-                                                        }
-                                                        
-                                                        // Parse harvesting data if available
-                                                        let harvestingData = null;
-                                                        if (obj.harvesting_task_id) {
-                                                            harvestingData = {
-                                                                harvestingTaskId: obj.harvesting_task_id,
-                                                                harvestingStatus: obj.harvesting_status,
-                                                                harvestRate: obj.harvest_rate,
-                                                                totalHarvested: obj.total_harvested,
-                                                                harvestingResource: obj.harvesting_resource
-                                                            };
-                                                        }
-                                                        
-                                                        return {
-                                                            ...obj,
-                                                            meta,
-                                                            ...movementData,
-                                                            ...warpData,
-                                                            ...harvestingData,
-                                                            queuedOrders: null,
-                                                            sectorInfo: {
-                                                                name: sector.name,
-                                                                archetype: sector.archetype,
-                                                                id: sector.id
-                                                            },
-                                                            visibilityStatus: {
-                                                                owned: isOwned,
-                                                                visible: isVisible || isOwned,
-                                                                dimmed: isAlwaysKnown && !isVisible && !isOwned,
-                                                                level: obj.visibility_level || 0,
-                                                                lastSeen: obj.last_seen_turn || (isOwned ? turnNumber : null)
+                                                            // Fetch minimal players list for palettes
+                                                            db.all(
+                                                                `SELECT gp.user_id AS userId, u.username, gp.avatar,
+                                                                        gp.color_primary AS colorPrimary, gp.color_secondary AS colorSecondary
+                                                                 FROM game_players gp
+                                                                 LEFT JOIN users u ON gp.user_id = u.id
+                                                                 WHERE gp.game_id = ?`,
+                                                                [gameId],
+                                                                (playersErr, playersRows) => {
+                                                                    if (playersErr) return reject(playersErr);
+                                                                    const players = playersRows || [];
+
+                                                    // Collect object ids and fetch active status effects
+                                                    const objectIds = (objects || []).map(o => o.id).filter(id => typeof id === 'number');
+                                                    const finishWithEffects = (effectsByShipId) => {
+                                                        // Parse meta JSON and determine visibility status for objects
+                                                        const parsedObjects = objects.map(obj => {
+                                                            let meta;
+                                                            if (typeof obj.meta === 'string') {
+                                                                try {
+                                                                    meta = JSON.parse(obj.meta || '{}');
+                                                                } catch (e) {
+                                                                    console.error('Meta JSON parse error for object', obj.id, e);
+                                                                    meta = {};
+                                                                }
+                                                            } else {
+                                                                meta = obj.meta || {};
                                                             }
-                                                        };
-                                                    });
-                                                    
-                                                    resolve({
-                                                        sector: {
-                                                            ...sector,
-                                                            name: sector.name,
-                                                            archetype: sector.archetype
-                                                        },
-                                                        objects: parsedObjects,
-                                                        currentTurn: currentTurn || { turn_number: 1, status: 'waiting' },
-                                                        turnLocked: lockStatus?.locked || false,
-                                                        playerSetup: playerData || { setup_completed: false },
-                                                        autoTurnMinutes: autoTurnMinutes
-                                                    });
+                                                            const isOwned = obj.owner_id === userId;
+                                                            const isVisible = (obj.visibility_level || 0) > 0;
+                                                            const isAlwaysKnown = meta.alwaysKnown === true;
+
+                                                            // Parse movement data if available
+                                                            let movementData = null;
+                                                            if (obj.movement_path && obj.movement_status) {
+                                                                const movementPath = JSON.parse(obj.movement_path || '[]');
+                                                                movementData = {
+                                                                    movementPath: movementPath,
+                                                                    plannedDestination: obj.destination_x && obj.destination_y ? { x: obj.destination_x, y: obj.destination_y } : null,
+                                                                    movementETA: obj.eta_turns,
+                                                                    movementActive: obj.movement_status === 'active',
+                                                                    movementStatus: obj.movement_status,
+                                                                    currentStep: (obj.current_step !== null && obj.current_step !== undefined) ? obj.current_step : null,
+                                                                    baseMovementSpeed: (obj.movement_speed !== null && obj.movement_speed !== undefined) ? obj.movement_speed : null
+                                                                };
+                                                            }
+
+                                                            // Parse warp data if available
+                                                            let warpData = null;
+                                                            if (obj.warp_phase) {
+                                                                warpData = {
+                                                                    warpPhase: obj.warp_phase,
+                                                                    warpPreparationTurns: obj.warp_preparation_turns || 0,
+                                                                    warpDestination: obj.warp_destination_x && obj.warp_destination_y ? { x: obj.warp_destination_x, y: obj.warp_destination_y } : null
+                                                                };
+                                                            }
+
+                                                            // Parse harvesting data if available
+                                                            let harvestingData = null;
+                                                            if (obj.harvesting_task_id) {
+                                                                harvestingData = {
+                                                                    harvestingTaskId: obj.harvesting_task_id,
+                                                                    harvestingStatus: obj.harvesting_status,
+                                                                    harvestRate: obj.harvest_rate,
+                                                                    totalHarvested: obj.total_harvested,
+                                                                    harvestingResource: obj.harvesting_resource
+                                                                };
+                                                            }
+
+                                                            return {
+                                                                ...obj,
+                                                                meta,
+                                                                statusEffects: effectsByShipId.get(obj.id) || [],
+                                                                ...movementData,
+                                                                ...warpData,
+                                                                ...harvestingData,
+                                                                queuedOrders: null,
+                                                                sectorInfo: {
+                                                                    name: sector.name,
+                                                                    archetype: sector.archetype,
+                                                                    id: sector.id
+                                                                },
+                                                                visibilityStatus: {
+                                                                    owned: isOwned,
+                                                                    visible: isVisible || isOwned,
+                                                                    dimmed: isAlwaysKnown && !isVisible && !isOwned,
+                                                                    level: obj.visibility_level || 0,
+                                                                    lastSeen: obj.last_seen_turn || (isOwned ? turnNumber : null)
+                                                                }
+                                                            };
+                                                        });
+
+                                                        resolve({
+                                                            sector: {
+                                                                ...sector,
+                                                                name: sector.name,
+                                                                archetype: sector.archetype
+                                                            },
+                                                            objects: parsedObjects,
+                                                            currentTurn: currentTurn || { turn_number: 1, status: 'waiting' },
+                                                            turnLocked: lockStatus?.locked || false,
+                                                            // Normalize playerSetup colors to camelCase for client usage
+                                                            playerSetup: playerData || { setup_completed: false },
+                                                            // Provide players for color palettes and labels
+                                                            players,
+                                                            autoTurnMinutes: autoTurnMinutes
+                                                        });
+                                                    };
+
+                                                    if (objectIds.length === 0) {
+                                                        finishWithEffects(new Map());
+                                                    } else {
+                                                        const placeholders = objectIds.map(() => '?').join(',');
+                                                        db.all(
+                                                            `SELECT ship_id, effect_key as effectKey, magnitude, effect_data as effectData, applied_turn as appliedTurn, expires_turn as expiresTurn
+                                                             FROM ship_status_effects
+                                                             WHERE ship_id IN (${placeholders}) AND (expires_turn IS NULL OR expires_turn >= ?)`,
+                                                            [...objectIds, turnNumber],
+                                                            (effErr, rows) => {
+                                                                if (effErr) return reject(effErr);
+                                                                const byId = new Map();
+                                                                (rows || []).forEach(r => {
+                                                                    let effectData;
+                                                                    try { effectData = r.effectData ? JSON.parse(r.effectData) : null; } catch { effectData = null; }
+                                                                    const arr = byId.get(r.ship_id) || [];
+                                                                    arr.push({ effectKey: r.effectKey, magnitude: r.magnitude, effectData, appliedTurn: r.appliedTurn, expiresTurn: r.expiresTurn });
+                                                                    byId.set(r.ship_id, arr);
+                                                                });
+                                                                finishWithEffects(byId);
+                                                            }
+                                                        );
+                                                    }
+                                                                    }
+                                                                );
                                                         }
                                                     );
                                                 }
@@ -1093,7 +1137,7 @@ router.get('/system/:sectorId/facts', (req, res) => {
 router.get('/blueprints', (req, res) => {
     try {
         const enriched = SHIP_BLUEPRINTS.map(bp => {
-            const resolved = resolveBlueprint(bp);
+            const resolved = bp;
             const abilitiesMeta = (resolved.abilities || []).filter(k => !!Abilities[k]).map(key => {
                 const a = Abilities[key];
                 return {
@@ -1649,7 +1693,7 @@ router.post('/build-ship', (req, res) => {
                 
                 // Create ship adjacent to station using resolved blueprint
                 const shipName = `${blueprint.name} ${Math.floor(Math.random() * 1000)}`;
-                const resolved = resolveBlueprint(blueprint);
+                const resolved = blueprint;
                 const shipMetaObj = {
                     name: shipName,
                     ...resolved,

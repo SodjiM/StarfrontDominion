@@ -132,20 +132,12 @@ const Abilities = {
     name: 'Strike Vector Insertion',
     description: 'Micro-warp reposition a short distance.',
     shortDescription: 'Short-range reposition.',
-    longDescription: 'Micro-warp to a nearby tile up to range 3 for rapid repositioning.',
+    longDescription: 'Micro-warp to a nearby tile up to range 5 for rapid repositioning.',
     type: 'active',
     target: 'position',
-    range: 3,
+    range: 5,
     cooldown: 3,
     energyCost: 3
-  },
-  target_lock_override: {
-    key: 'target_lock_override',
-    name: 'Target Lock Override',
-    description: 'Passive: Tracking the same target increases next lance damage.',
-    shortDescription: 'Passive damage ramp on lock.',
-    longDescription: 'While maintaining target lock, the next lance attack deals increased damage.',
-    type: 'passive'
   },
 
   // Explorer starting ship abilities
