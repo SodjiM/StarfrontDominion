@@ -1566,6 +1566,35 @@ async function cleanupExpiredEffectsAndWrecks(gameId, turnNumber) {
             }
         } catch {}
     }
+
+    // Remove empty, expired cargo cans
+    const cans = await new Promise((resolve) => {
+        db.all(
+            `SELECT so.id, so.meta FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.type = 'cargo_can'`,
+            [gameId],
+            (e, rows) => resolve(rows || [])
+        );
+    });
+    for (const c of cans) {
+        try {
+            const meta = JSON.parse(c.meta || '{}');
+            const emptiesAt = Number(meta.emptiesAtTurn || 0);
+            if (emptiesAt && emptiesAt <= Number(turnNumber)) {
+                const cargo = await new Promise((resolve) => db.get('SELECT SUM(quantity) as q FROM object_cargo WHERE object_id = ?', [c.id], (e, r) => resolve(r?.q || 0)));
+                if (!cargo || Number(cargo) === 0) {
+                    await new Promise((resolve) => db.run('DELETE FROM sector_objects WHERE id = ?', [c.id], () => resolve()));
+                    await new Promise((resolve) => db.run(
+                        `INSERT INTO combat_logs (game_id, turn_number, event_type, summary, data)
+                         VALUES (?, ?, 'effect', ?, ?)`,
+                        [gameId, turnNumber, 'Empty cargo can despawned', JSON.stringify({ objectId: c.id })],
+                        () => resolve()
+                    ));
+                }
+            }
+        } catch {}
+    }
 }
 
 // Regenerate ship energy each turn
@@ -1735,26 +1764,23 @@ async function processAbilityOrders(gameId, turnNumber) {
         } else {
             // Special-case ability handling (non-offense)
             if (order.ability_key === 'microthruster_shift') {
-                // Reposition up to 2 tiles if target position is free
-                const tx = Number(order.target_x);
-                const ty = Number(order.target_y);
-                if (Number.isFinite(tx) && Number.isFinite(ty)) {
-                    // Ensure within range 2 (already prevalidated in socket, but recheck)
-                    const dx = (caster.x || 0) - tx;
-                    const dy = (caster.y || 0) - ty;
-                    const dist = Math.sqrt(dx*dx + dy*dy);
-                    if (dist <= (ability.range || 2)) {
-                        const occupied = await new Promise((resolve) => db.get('SELECT id FROM sector_objects WHERE sector_id = ? AND x = ? AND y = ? LIMIT 1', [caster.sector_id, tx, ty], (e, r) => resolve(r)));
-                        if (!occupied) {
-                            await new Promise((resolve) => db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [tx, ty, new Date().toISOString(), order.caster_id], () => resolve()));
-                            await new Promise((resolve) => db.run(
-                                `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
-                                 VALUES (?, ?, ?, 'ability', ?, ?)`,
-                                [gameId, turnNumber, order.caster_id, 'Microthruster Shift executed', JSON.stringify({ to: { x: tx, y: ty } })],
-                                () => resolve()
-                            ));
-                        }
-                    }
+                // New design: speed buff only, no reposition. +3 tiles for this turn
+                const effectData = { movementFlatBonus: 3 };
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO ship_status_effects (ship_id, effect_key, magnitude, effect_data, source_object_id, applied_turn, expires_turn)
+                     VALUES (?, 'microthruster_speed', NULL, ?, ?, ?, ?)`,
+                    [order.caster_id, JSON.stringify(effectData), order.caster_id, turnNumber, Number(turnNumber) + 1],
+                    () => resolve()
+                ));
+                // Mirror to meta for immediate UI ETA calculation on client
+                const casterMetaRow = await new Promise((resolve) => db.get('SELECT meta FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                if (casterMetaRow) {
+                    try {
+                        const cm = JSON.parse(casterMetaRow.meta || '{}');
+                        cm.movementFlatBonus = Math.max(cm.movementFlatBonus || 0, 3);
+                        cm.movementFlatExpires = Number(turnNumber) + 1;
+                        await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(cm), new Date().toISOString(), order.caster_id], () => resolve()));
+                    } catch {}
                 }
                 const availableTurn = Number(turnNumber) + (ability.cooldown || 5);
                 await new Promise((resolve) => db.run(
@@ -1763,13 +1789,19 @@ async function processAbilityOrders(gameId, turnNumber) {
                     [order.caster_id, order.ability_key, availableTurn],
                     () => resolve()
                 ));
+                await new Promise((resolve) => db.run(
+                    `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
+                     VALUES (?, ?, ?, 'ability', ?, ?)`,
+                    [gameId, turnNumber, order.caster_id, 'Microthruster Shift: +3 movement this turn', JSON.stringify({ movementFlatBonus: 3 })],
+                    () => resolve()
+                ));
                 continue;
             }
             if (order.ability_key === 'emergency_discharge_vent') {
                 // Create a cargo can at caster position
                 const casterFull = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
                 if (casterFull) {
-                    const canMeta = { name: 'Jettisoned Cargo', hp: 10, maxHp: 10, cargoCapacity: 999, alwaysKnown: true };
+                    const canMeta = { name: 'Jettisoned Cargo', hp: 10, maxHp: 10, cargoCapacity: 25, alwaysKnown: true, publicAccess: true, emptiesAtTurn: Number(turnNumber) + 10 };
                     const canId = await new Promise((resolve, reject) => {
                         db.run(
                             'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, NULL, ?)',
@@ -1777,17 +1809,20 @@ async function processAbilityOrders(gameId, turnNumber) {
                             function(err) { if (err) reject(err); else resolve(this.lastID); }
                         );
                     });
-                    try { await CargoManager.initializeObjectCargo(canId, 999); } catch {}
-                    // Move all ship cargo to can
+                    try { await CargoManager.initializeObjectCargo(canId, 25); } catch {}
+                    // Move all ship cargo to can (atomic per item)
                     try {
                         const cargo = await CargoManager.getShipCargo(order.caster_id);
                         for (const item of (cargo.items || [])) {
-                            if (item.quantity > 0) {
-                                try { await CargoManager.removeResourceFromCargo(order.caster_id, item.resource_name, item.quantity); } catch {}
-                                try { await CargoManager.addResourceToCargo(canId, item.resource_name, item.quantity); } catch {}
+                            const qty = Number(item.quantity || 0);
+                            if (qty > 0) {
+                                await CargoManager.removeResourceFromCargo(order.caster_id, item.resource_name, qty, true);
+                                await CargoManager.addResourceToCargo(canId, item.resource_name, qty, false);
                             }
                         }
-                    } catch {}
+                    } catch (moveErr) {
+                        console.warn('jettison cargo move error:', moveErr);
+                    }
                     await new Promise((resolve) => db.run(
                         `INSERT INTO combat_logs (game_id, turn_number, attacker_id, event_type, summary, data)
                          VALUES (?, ?, ?, 'ability', ?, ?)`,
@@ -1814,7 +1849,7 @@ async function processAbilityOrders(gameId, turnNumber) {
                         await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(cm), new Date().toISOString(), order.caster_id], () => resolve()));
                     } catch {}
                 }
-                const availableTurn = Number(turnNumber) + (ability.cooldown || 4);
+                const availableTurn = Number(turnNumber) + (ability.cooldown || 10);
                 await new Promise((resolve) => db.run(
                     `INSERT INTO ability_cooldowns (ship_id, ability_key, available_turn) VALUES (?, ?, ?)
                      ON CONFLICT(ship_id, ability_key) DO UPDATE SET available_turn = excluded.available_turn`,

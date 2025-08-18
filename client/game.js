@@ -18,6 +18,7 @@ class GameClient {
         this.tileSize = 20;
         this.turnLocked = false;
         this.abilityPreview = null;
+        this.abilityHover = null; // { x, y, valid }
         this.pendingAbility = null;
         this.objects = [];
         this.units = [];
@@ -270,6 +271,18 @@ class GameClient {
 
         this.socket.on('harvesting-error', (data) => {
             this.addLogEntry(`Mining error: ${data.error}`, 'error');
+        });
+
+        // Instant position updates from server (e.g., microthruster teleport)
+        this.socket.on('object:teleport', (payload) => {
+            try {
+                const obj = this.objects.find(o => o.id === payload.id);
+                if (obj) { obj.x = payload.x; obj.y = payload.y; }
+                if (this.selectedUnit && this.selectedUnit.id === payload.id) {
+                    this.selectedUnit.x = payload.x; this.selectedUnit.y = payload.y;
+                }
+                this.render();
+            } catch {}
         });
 
         // Chat events
@@ -781,7 +794,6 @@ class GameClient {
         };
         return archetypes[archetype] || (archetype || 'Unknown');
     }
-
     // Select a unit
     selectUnit(unitId) {
         // Remove previous selection
@@ -915,6 +927,7 @@ class GameClient {
                     <span>Status:</span>
                     <span>
                         ${detailStatuses.map(s => `<span class=\"chip ${this.getStatusClass(s)}\">${this.getStatusLabel(s)}</span>`).join(' ')}
+                        ${this.renderActiveEffectsChip(unit)}
                     </span>
                 </div>
                 
@@ -1027,8 +1040,8 @@ class GameClient {
             </div>
         `;
         
-        // Update cargo status for any unit with cargo capacity
-        if (unit && unit.meta && unit.meta.cargoCapacity) {
+        // Update cargo status for the SELECTED unit only (avoid background overwrites)
+        if (this.selectedUnit && unit && unit.id === this.selectedUnit.id && unit.meta && unit.meta.cargoCapacity) {
             updateCargoStatus(unit.id);
         }
 
@@ -1039,7 +1052,7 @@ class GameClient {
                 const key = btn.getAttribute('data-ability');
                 btn.addEventListener('mouseenter', () => this.previewAbilityRange(key));
                 btn.addEventListener('mouseleave', () => this.clearAbilityPreview());
-                btn.addEventListener('click', () => this.queueAbility(key));
+                btn.addEventListener('click', (e) => { e.stopPropagation(); this.queueAbility(key); });
             });
             // Fetch cooldowns and disable buttons where applicable
             if (this.selectedUnit) {
@@ -1071,9 +1084,33 @@ class GameClient {
         }
     }
 
-    // Ability preview ring
+    // Ability preview ring + hover
     previewAbilityRange(abilityKey) { this.abilityPreview = abilityKey; this.render(); }
-    clearAbilityPreview() { this.abilityPreview = null; this.render(); }
+    clearAbilityPreview() {
+        // Do not clear the ring if a position-target ability is currently awaiting a click
+        if (this.pendingAbility && this.pendingAbility.def?.target === 'position') return;
+        this.abilityPreview = null; this.abilityHover = null; this.render();
+    }
+
+    // Utility: check if a tile is occupied by any object
+    isTileOccupied(x, y) {
+        return this.objects?.some?.(o => o.x === x && o.y === y) || false;
+    }
+
+    // Generic position-ability hover computation (reusable for any ability with target==='position')
+    computePositionAbilityHover(abilityKey, worldX, worldY) {
+        const unit = this.selectedUnit;
+        const def = (window.AbilityDefs || {})[abilityKey];
+        if (!unit || !def) return null;
+        const dx = worldX - unit.x;
+        const dy = worldY - unit.y;
+        const dist = Math.hypot(dx, dy);
+        // Default rule: within range and destination tile unoccupied
+        const inRange = !def.range || dist <= def.range;
+        const free = !this.isTileOccupied(worldX, worldY);
+        const valid = inRange && free;
+        return { x: worldX, y: worldY, valid, inRange, free };
+    }
 
     // Refresh ability cooldowns on-demand
     async refreshAbilityCooldowns() {
@@ -1169,10 +1206,14 @@ class GameClient {
             this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit.id, abilityKey });
             this.addLogEntry(`Queued ${def.name}`, 'info');
             console.log(`🧪 Ability queued: key=${abilityKey} name=${def.name} ship=${this.selectedUnit.id}`);
+            // For self-cast, keep preview off
+            this.abilityPreview = null; this.abilityHover = null; this.pendingAbility = null;
         } else if (def.target === 'position') {
             // Next click on the map will provide position
             this.pendingAbility = { key: abilityKey, def };
             this.addLogEntry(`Select position for ${def.name}`, 'info');
+            // Keep range ring visible until user clicks a position or cancels by clicking outside range
+            this.abilityPreview = abilityKey;
         } else {
             // Enemy/ally target
             this.pendingAbility = { key: abilityKey, def };
@@ -1548,7 +1589,6 @@ class GameClient {
         
 
     }
-    
     // Draw resource nodes (mineable resources)
     drawResourceNode(ctx, obj, x, y, size, colors) {
         const meta = obj.meta || {};
@@ -2210,10 +2250,19 @@ class GameClient {
                 ctx.beginPath();
                 ctx.arc(screenX, screenY, radiusPx, 0, Math.PI * 2);
                 ctx.stroke();
+
+                // Yellow hover dot for any position-target ability while selecting
+                if (this.pendingAbility && this.pendingAbility.def?.target === 'position' && this.abilityHover) {
+                    const hx = centerX + (Math.round(this.abilityHover.x) - this.camera.x) * this.tileSize;
+                    const hy = centerY + (Math.round(this.abilityHover.y) - this.camera.y) * this.tileSize;
+                    ctx.beginPath();
+                    ctx.fillStyle = this.abilityHover.valid ? 'rgba(255, 235, 59, 0.95)' : 'rgba(255, 82, 82, 0.7)';
+                    ctx.arc(hx, hy, Math.max(3, this.tileSize * 0.18), 0, Math.PI * 2);
+                    ctx.fill();
+                }
             }
         }
     }
-
     // Render mini-map
     renderMiniMap() {
         this.ensureMiniCanvasRef();
@@ -2753,6 +2802,20 @@ class GameClient {
         
         this.updateMapTooltip(hoveredObject, x, y);
 
+        // Ability hover preview for any position-target ability (generic system)
+        if (this.pendingAbility && this.selectedUnit) {
+            const { key, def } = this.pendingAbility;
+            if (def.target === 'position') {
+                this.abilityHover = this.computePositionAbilityHover(key, worldX, worldY);
+            } else {
+                this.abilityHover = null;
+            }
+        } else {
+            this.abilityHover = null;
+        }
+        // Re-render so the hover dot updates in real time
+        this.render();
+
         if (!this.selectedUnit || this.turnLocked) {
             this.canvas.style.cursor = hoveredObject ? 'pointer' : 'default';
             return;
@@ -2906,7 +2969,9 @@ class GameClient {
                     obj.owner_id === this.userId && obj.type === 'ship'
                 );
                 currentSectorShips.forEach(ship => {
-                    updateCargoStatus(ship.id);
+                    if (this.selectedUnit && ship.id === this.selectedUnit.id) {
+                        updateCargoStatus(ship.id);
+                    }
                 });
             }
 
@@ -2998,7 +3063,6 @@ class GameClient {
             }
         }
     }
-
     // Helpers for left panel chips
     getUnitStatus(meta, unit) {
         // Backwards-compatible single status: top priority from multi-status detector
@@ -3092,6 +3156,31 @@ class GameClient {
             case 'docked': return 'status-docked';
             default: return 'status-idle';
         }
+    }
+
+    // Build an effects chip with tooltip of active effects and remaining turns
+    renderActiveEffectsChip(unit) {
+        try {
+            const meta = unit.meta || {};
+            const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
+            const effects = [];
+            if (typeof meta.movementFlatBonus === 'number' && meta.movementFlatBonus > 0) {
+                const remain = (typeof meta.movementFlatExpires === 'number') ? Math.max(0, meta.movementFlatExpires - currentTurn) : 1;
+                effects.push({ name: '+Move', desc: `+${meta.movementFlatBonus} tiles`, turns: remain, source: 'Microthruster Shift' });
+            }
+            // Passive hint for Solo Miner's Instinct
+            if (Array.isArray(meta.abilities) && meta.abilities.includes('solo_miners_instinct')) {
+                effects.push({ name: '+Move', desc: "+1 tile (Solo Miner's Instinct)", turns: 1, source: 'Passive' });
+            }
+            if (typeof meta.evasionBonus === 'number' && meta.evasionBonus > 0) {
+                const remain = (typeof meta.evasionExpires === 'number') ? Math.max(0, meta.evasionExpires - currentTurn) : 1;
+                effects.push({ name: 'Evasion', desc: `+${Math.round(meta.evasionBonus*100)}%`, turns: remain, source: 'Emergency Discharge Vent' });
+            }
+            const active = effects.filter(e => e.turns > 0);
+            if (active.length === 0) return '';
+            const tip = active.map(e => `${e.name} ${e.desc} (${e.turns}T)`).join('\n');
+            return `<span class="chip" title="${tip}">✨ Effects</span>`;
+        } catch { return ''; }
     }
 
     getCargoFill(unit) {
@@ -3237,9 +3326,15 @@ class GameClient {
         if (this.pendingAbility) {
             const { key, def } = this.pendingAbility;
             if (def.target === 'position' && !clickedObject) {
+                // Validate with the same generic hover rule before sending
+                const hover = this.computePositionAbilityHover(key, worldX, worldY);
+                if (!hover || !hover.valid) {
+                    this.addLogEntry('Invalid destination for ability', 'warning');
+                    return;
+                }
                 this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit?.id, abilityKey: key, targetX: worldX, targetY: worldY });
                 this.addLogEntry(`Queued ${def.name} at (${worldX},${worldY})`, 'info');
-                this.pendingAbility = null; this.abilityPreview = null; this.updateUnitDetails();
+                this.pendingAbility = null; this.abilityPreview = null; this.abilityHover = null; this.updateUnitDetails();
                 return;
             }
             if ((def.target === 'enemy' || def.target === 'ally') && clickedObject) {
@@ -3255,7 +3350,7 @@ class GameClient {
                 }
                 this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit?.id, abilityKey: key, targetObjectId: clickedObject.id });
                 this.addLogEntry(`Queued ${def.name} on ${clickedObject.meta?.name || clickedObject.type}`, 'info');
-                this.pendingAbility = null; this.abilityPreview = null; this.updateUnitDetails();
+                this.pendingAbility = null; this.abilityPreview = null; this.abilityHover = null; this.updateUnitDetails();
                 return;
             }
             // If target type mismatched, keep waiting
@@ -3322,10 +3417,44 @@ class GameClient {
             // Skip large celestial objects for right-click targeting
             if (this.isCelestialObject(obj) && obj.radius > 50) return false;
             const distance = Math.hypot(obj.x - worldX, obj.y - worldY);
-            const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8);
+            const baseRadius = (obj.radius || 1);
+            // Resource nodes get a smaller click hitbox so adjacent tiles remain easy to target
+            const hitRadius = obj.type === 'resource_node'
+                ? Math.max(0.4, baseRadius * 0.5)
+                : Math.max(0.5, baseRadius * 0.8);
             return distance <= hitRadius;
         });
         
+        // Special handling: right-clicking a resource node should move adjacent (or queue in queueMode)
+        if (clickedObject && clickedObject.type === 'resource_node') {
+            const target = clickedObject;
+            const adj = this.getAdjacentTileNear(target.x, target.y, this.selectedUnit.x, this.selectedUnit.y);
+            if (adj) {
+                if (this.queueMode) {
+                    this.socket.emit('queue-order', { 
+                        gameId: this.gameId, 
+                        shipId: this.selectedUnit.id, 
+                        orderType: 'move', 
+                        payload: { destination: { x: adj.x, y: adj.y } } 
+                    }, () => {});
+                    // Also queue mining when in queue mode
+                    this.socket.emit('queue-order', { 
+                        gameId: this.gameId, 
+                        shipId: this.selectedUnit.id, 
+                        orderType: 'harvest_start', 
+                        payload: { nodeId: target.id } 
+                    }, () => {});
+                    this.addLogEntry(`Queued: Move next to and mine ${target.meta?.resourceType || 'resource'}`, 'info');
+                } else {
+                    this.handleMoveCommand(adj.x, adj.y);
+                }
+            } else {
+                // Fallback: if we couldn't find an adjacent tile, just move toward the click point
+                this.handleMoveCommand(worldX, worldY);
+            }
+            return;
+        }
+
         if (!clickedObject) {
             // Empty space: move command with path + ETA
             this.handleMoveCommand(worldX, worldY);
@@ -3545,11 +3674,21 @@ class GameClient {
         return path;
     }
 
-    // Calculate ETA for movement path
+    // Calculate ETA for movement path (robust against temporary speed buffs)
     calculateETA(path, movementSpeed) {
         if (!path || path.length <= 1) return 0;
         const distance = path.length - 1; // Exclude starting position
-        return Math.ceil(distance / (movementSpeed || 1));
+        // Incorporate flat temporary movement bonus if present in meta
+        let effectiveSpeed = movementSpeed || 1;
+        try {
+            const meta = this.selectedUnit?.meta || {};
+            const nowTurn = this.gameState?.currentTurn;
+            if (typeof meta.movementFlatBonus === 'number') {
+                // If the bonus expires next turn or later, count it once
+                effectiveSpeed += Math.max(0, Math.floor(meta.movementFlatBonus));
+            }
+        } catch {}
+        return Math.ceil(distance / Math.max(1, effectiveSpeed));
     }
 
     // Draw movement paths for all visible ships with movement orders (active and lingering)
@@ -3695,7 +3834,6 @@ class GameClient {
             }
         }
     }
-
     // PHASE 3: Draw movement path for a single ship (supports both old paths and new segments)
     drawSingleMovementPath(ctx, centerX, centerY, ship, isLingering = false) {
         // PHASE 3: Support both old movementPath and new movementSegments  
@@ -4484,7 +4622,6 @@ async function initializeGame(gameId) {
 function selectUnit(unitId) {
     if (gameClient) gameClient.selectUnit(unitId);
 }
-
 function toggleTurnLock() {
     if (!gameClient) return;
     
@@ -5250,7 +5387,6 @@ async function deployStructure(structureType, shipId) {
         gameClient.addLogEntry('Failed to deploy structure', 'error');
     }
 }
-
 // Show sector selection modal for interstellar gate deployment
 async function showSectorSelectionModal(shipId) {
     try {
@@ -5592,13 +5728,16 @@ async function showCargo() {
         
         const cargo = data.cargo;
         
-        // Find adjacent objects for transfer options
+        // Find adjacent objects for transfer options (allow public cargo cans not owned by you)
         const adjacentObjects = gameClient.gameState.objects.filter(obj => {
-            if (obj.id === selectedUnit.id || obj.owner_id !== gameClient.userId) return false;
+            if (obj.id === selectedUnit.id) return false;
             
             const dx = Math.abs(obj.x - selectedUnit.x);
             const dy = Math.abs(obj.y - selectedUnit.y);
-            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+            if (!(dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0))) return false;
+            // Show own objects or public-access objects (e.g., jettisoned cargo cans)
+            if (obj.owner_id === gameClient.userId) return true;
+            try { const m = obj.meta || {}; return !!m.publicAccess; } catch { return false; }
         });
         
         // Create cargo display modal
@@ -5698,21 +5837,20 @@ async function showCargo() {
 // Show transfer modal for resource transfers between objects
 async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
     try {
-        // Get cargo from source object
-        const response = await fetch(`/game/cargo/${fromObjectId}?userId=${gameClient.userId}`);
-        const data = await response.json();
+        // Get cargo from source and destination
+        const [fromRes, toRes] = await Promise.all([
+            fetch(`/game/cargo/${fromObjectId}?userId=${gameClient.userId}`),
+            fetch(`/game/cargo/${toObjectId}?userId=${gameClient.userId}`)
+        ]);
+        const [fromData, toData] = await Promise.all([fromRes.json(), toRes.json()]);
         
-        if (!response.ok) {
-            gameClient.addLogEntry(data.error || 'Failed to get cargo data', 'error');
+        if (!fromRes.ok || !toRes.ok) {
+            gameClient.addLogEntry((fromData.error || toData.error) || 'Failed to get cargo data', 'error');
             return;
         }
         
-        const cargo = data.cargo;
-        
-        if (cargo.items.length === 0) {
-            gameClient.addLogEntry('No resources to transfer', 'warning');
-            return;
-        }
+        const fromCargo = fromData.cargo;
+        const toCargo = toData.cargo;
         
         // Create transfer modal
         const transferDisplay = document.createElement('div');
@@ -5721,12 +5859,13 @@ async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
         const header = document.createElement('div');
         header.innerHTML = `
             <h3>🔄 Transfer Resources</h3>
-            <p>Transfer resources to: <strong>${toObjectName}</strong></p>
+            <p>Between selected object and: <strong>${toObjectName}</strong></p>
         `;
         transferDisplay.appendChild(header);
         
-        // Create list of transferable resources
-        cargo.items.forEach(item => {
+        // Section: From selected -> to target
+        const toSectionTitle = document.createElement('h4'); toSectionTitle.textContent = `Send to ${toObjectName}`; transferDisplay.appendChild(toSectionTitle);
+        fromCargo.items.forEach(item => {
             const transferItem = document.createElement('div');
             transferItem.className = 'transfer-item';
             
@@ -5748,6 +5887,31 @@ async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
             
             transferDisplay.appendChild(transferItem);
         });
+        
+        // Section: From target -> to selected (for public cans etc.)
+        if (toCargo.items && toCargo.items.length > 0) {
+            const fromSectionTitle = document.createElement('h4'); fromSectionTitle.textContent = `Take from ${toObjectName}`; transferDisplay.appendChild(fromSectionTitle);
+            toCargo.items.forEach(item => {
+                const transferItem = document.createElement('div');
+                transferItem.className = 'transfer-item';
+                transferItem.innerHTML = `
+                    <div class="transfer-item-info">
+                        <span class="cargo-icon" style="color: ${item.color_hex}">${item.icon_emoji}</span>
+                        <div class="transfer-details">
+                            <div class="transfer-name">${item.resource_name}</div>
+                            <div class="transfer-available">Available: ${item.quantity} units</div>
+                        </div>
+                    </div>
+                    <div class="transfer-controls">
+                        <input type="number" class="transfer-quantity" min="1" max="${item.quantity}" value="1" id="transfer-from-${item.resource_name}">
+                        <button class="transfer-btn" onclick="performTransfer('${toObjectId}', '${fromObjectId}', '${item.resource_name}', document.getElementById('transfer-from-${item.resource_name}').value, 'Selected')">
+                            Transfer
+                        </button>
+                    </div>
+                `;
+                transferDisplay.appendChild(transferItem);
+            });
+        }
         
         UI.showModal({
             title: '🔄 Transfer Resources',
@@ -6017,7 +6181,6 @@ function initializeFullMap() {
     // Use the same rendering logic as the minimap but larger
     renderFullMapObjects(ctx, canvas, scaleX, scaleY);
 }
-
 // Deterministic galaxy map rendering
 async function initializeGalaxyMap() {
     try {

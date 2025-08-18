@@ -407,7 +407,7 @@ class CargoManager {
      */
     static async transferResources(fromObjectId, toObjectId, resourceName, quantity, userId) {
         try {
-            // Verify both objects exist and are owned by the player
+            // Verify both objects exist. Destination may not be owned (e.g., public cargo cans)
             const fromObject = await new Promise((resolve, reject) => {
                 db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ?', [fromObjectId, userId], (err, obj) => {
                     if (err) reject(err);
@@ -416,14 +416,32 @@ class CargoManager {
             });
             
             const toObject = await new Promise((resolve, reject) => {
-                db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ?', [toObjectId, userId], (err, obj) => {
+                db.get('SELECT * FROM sector_objects WHERE id = ?', [toObjectId], (err, obj) => {
                     if (err) reject(err);
                     else resolve(obj);
                 });
             });
             
             if (!fromObject || !toObject) {
-                return { success: false, error: 'One or both objects not found or not owned by player' };
+                return { success: false, error: 'One or both objects not found' };
+            }
+            // If destination isn't owned by the player, require publicAccess flag
+            if (Number(toObject.owner_id) !== Number(userId)) {
+                try {
+                    const meta = JSON.parse(toObject.meta || '{}');
+                    if (!meta.publicAccess) {
+                        return { success: false, error: 'Destination does not allow public access' };
+                    }
+                } catch {}
+            }
+            // If source isn't owned by the player (e.g., public can), also require publicAccess on source
+            if (Number(fromObject.owner_id) !== Number(userId)) {
+                try {
+                    const meta = JSON.parse(fromObject.meta || '{}');
+                    if (!meta.publicAccess) {
+                        return { success: false, error: 'Source does not allow public access' };
+                    }
+                } catch {}
             }
             
             // Check if objects are adjacent

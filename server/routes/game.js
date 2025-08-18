@@ -1440,8 +1440,8 @@ router.get('/cargo/:objectId', (req, res) => {
     const { objectId } = req.params;
     const { userId } = req.query;
     
-    // Verify object ownership
-    db.get('SELECT type FROM sector_objects WHERE id = ? AND owner_id = ?', [objectId, userId], (err, object) => {
+    // Verify object existence; allow access if owned OR publicAccess meta
+    db.get('SELECT type, meta, owner_id FROM sector_objects WHERE id = ?', [objectId], (err, object) => {
         if (err) {
             console.error('Error verifying object ownership:', err);
             return res.status(500).json({ error: 'Database error' });
@@ -1450,6 +1450,11 @@ router.get('/cargo/:objectId', (req, res) => {
         if (!object) {
             return res.status(404).json({ error: 'Object not found or not owned by player' });
         }
+        let allowed = Number(object.owner_id) === Number(userId);
+        if (!allowed) {
+            try { const m = JSON.parse(object.meta || '{}'); allowed = !!m.publicAccess; } catch {}
+        }
+        if (!allowed) return res.status(404).json({ error: 'Object not found or not owned by player' });
         
         // Get cargo data - use legacy table for ships for backward compatibility
         const useLegacyTable = object.type === 'ship';

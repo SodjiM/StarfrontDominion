@@ -193,8 +193,30 @@ class HarvestingManager {
             };
         }
         
+        // Recalculate harvest rate each turn to respect passives (e.g., rotary_mining_lasers ramp)
+        let effectiveHarvestRate = task.harvest_rate;
+        try {
+            const shipRow = { id: task.ship_id, x: task.ship_x, y: task.ship_y, meta: JSON.stringify({}) };
+            // Load full ship for meta-driven recalculation
+            const fullShip = await new Promise((resolve) => db.get('SELECT id, meta FROM sector_objects WHERE id = ?', [task.ship_id], (e, r) => resolve(r)));
+            if (fullShip) {
+                shipRow.meta = fullShip.meta || '{}';
+            }
+            const nodeRow = { id: task.resource_node_id, meta: JSON.stringify({}), harvest_difficulty: 1.0 };
+            const fullNode = await new Promise((resolve) => db.get('SELECT id, meta, harvest_difficulty FROM resource_nodes WHERE id = ?', [task.resource_node_id], (e, r) => resolve(r)));
+            if (fullNode) {
+                nodeRow.meta = fullNode.meta || '{}';
+                nodeRow.harvest_difficulty = fullNode.harvest_difficulty || 1.0;
+            }
+            effectiveHarvestRate = await this.calculateHarvestRate({ id: task.ship_id, meta: shipRow.meta }, { id: task.resource_node_id, meta: nodeRow.meta, harvest_difficulty: nodeRow.harvest_difficulty });
+            // Persist the current effective rate so UI can show it
+            await new Promise((resolve) => db.run('UPDATE harvesting_tasks SET harvest_rate = ? WHERE id = ?', [effectiveHarvestRate, task.id], () => resolve()));
+        } catch (e) {
+            // If recalculation fails, fall back to last stored rate
+        }
+
         // Calculate actual harvest amount (limited by available resources)
-        const harvestAmount = Math.min(task.harvest_rate, task.resource_amount);
+        const harvestAmount = Math.min(effectiveHarvestRate, task.resource_amount);
         
         // Try to add resources to ship cargo (use legacy method for backward compatibility)
         const cargoResult = await CargoManager.addResourceToShipCargo(task.ship_id, task.resource_name, harvestAmount);
@@ -349,13 +371,19 @@ class HarvestingManager {
      */
     static async createHarvestingTask(shipId, resourceNodeId, startTurn, harvestRate) {
         return new Promise((resolve, reject) => {
+            // Upsert by ship_id to avoid UNIQUE constraint conflicts
             db.run(
                 `INSERT INTO harvesting_tasks (ship_id, resource_node_id, started_turn, harvest_rate, status)
-                 VALUES (?, ?, ?, ?, 'active')`,
+                 VALUES (?, ?, ?, ?, 'active')
+                 ON CONFLICT(ship_id) DO UPDATE SET
+                    resource_node_id = excluded.resource_node_id,
+                    started_turn = excluded.started_turn,
+                    harvest_rate = excluded.harvest_rate,
+                    status = 'active'`,
                 [shipId, resourceNodeId, startTurn, harvestRate],
                 function(err) {
                     if (err) reject(err);
-                    else resolve(this.lastID);
+                    else resolve(this.lastID || 0);
                 }
             );
         });
