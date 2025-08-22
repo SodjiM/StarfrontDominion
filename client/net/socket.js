@@ -34,12 +34,14 @@ function buildHandlers(game) {
             game.addLogEntry(`Player ${data.userId} locked turn ${data.turnNumber}`, 'info');
             if (data.userId === game.userId) {
                 game.turnLocked = true;
-                const lockBtn = document.getElementById('lockTurnBtn');
+                const lockBtn = game._els?.lockTurnBtn || document.getElementById('lockTurnBtn');
                 if (lockBtn) {
                     lockBtn.textContent = '🔒 Turn Locked';
                     lockBtn.classList.add('locked');
                 }
-                if (game.gameState) game.gameState.turnLocked = true;
+                if (game.gameState) {
+                    game.withState && game.withState(state => { state.turnLocked = true; });
+                }
                 game.updateUnitDetails && game.updateUnitDetails();
             }
         },

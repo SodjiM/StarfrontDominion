@@ -145,4 +145,124 @@
 	}
 })();
 
+export function toggleFloatingMiniMap(game) {
+    if (!game._floatingMini) {
+        const parent = game.canvas.parentElement;
+        const container = document.createElement('div');
+        container.id = 'floatingMiniWrap';
+        container.style.position = 'absolute';
+        container.style.zIndex = '2000';
+        container.style.border = '1px solid rgba(100,181,246,0.3)';
+        container.style.borderRadius = '10px';
+        container.style.background = '#0a0f1c';
+        container.style.boxShadow = '0 10px 30px rgba(0,0,0,0.35)';
+        container.style.pointerEvents = 'auto';
+        container.style.overflow = 'hidden';
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.boxSizing = 'border-box';
+        container.style.resize = 'both';
+        container.style.minWidth = '200px';
+        container.style.minHeight = '140px';
+        const initialW = 260, initialH = 180, margin = 12;
+        container.style.width = initialW + 'px';
+        container.style.height = initialH + 'px';
+        container.style.left = margin + 'px';
+        const parentH = parent ? parent.clientHeight : 0;
+        container.style.top = Math.max(0, parentH - margin - initialH) + 'px';
+
+        const header = document.createElement('div');
+        header.style.height = '26px';
+        header.style.background = 'rgba(10, 15, 28, 0.9)';
+        header.style.borderBottom = '1px solid rgba(100,181,246,0.3)';
+        header.style.display = 'flex';
+        header.style.alignItems = 'center';
+        header.style.justifyContent = 'space-between';
+        header.style.padding = '0 8px';
+        header.style.cursor = 'move';
+        header.style.userSelect = 'none';
+        header.innerHTML = '<span style="font-size:12px;color:#cfe4ff;display:flex;align-items:center;gap:6px"><span style="opacity:0.7">⠿</span> Mini-map</span><button title="Close" style="background:none;border:none;color:#cfe4ff;cursor:pointer;font-size:14px;line-height:1">×</button>';
+
+        const closeBtn = header.querySelector('button');
+        closeBtn.addEventListener('click', () => { container.style.display = 'none'; });
+
+        const mini = document.createElement('canvas');
+        mini.style.display = 'block';
+        mini.style.width = '100%';
+        mini.style.height = '100%';
+        mini.width = initialW; mini.height = initialH - 26;
+
+        container.appendChild(header);
+        container.appendChild(mini);
+        parent.appendChild(container);
+
+        const clampWithinParent = () => {
+            if (!parent) return;
+            const maxLeft = Math.max(0, parent.clientWidth - container.offsetWidth);
+            const maxTop = Math.max(0, parent.clientHeight - container.offsetHeight);
+            const left = Math.min(Math.max(0, container.offsetLeft), maxLeft);
+            const top = Math.min(Math.max(0, container.offsetTop), maxTop);
+            container.style.left = left + 'px';
+            container.style.top = top + 'px';
+        };
+
+        game._floatingMini = { container, header, canvas: mini, ctx: mini.getContext('2d'), dragging: false, dragDX:0, dragDY:0 };
+
+        header.addEventListener('mousedown', (e)=>{
+            game._floatingMini.dragging = true;
+            game._floatingMini.dragDX = e.clientX - container.offsetLeft;
+            game._floatingMini.dragDY = e.clientY - container.offsetTop;
+            e.preventDefault();
+        });
+        window.addEventListener('mousemove', (e)=>{
+            const f=game._floatingMini; if (!f||!f.dragging) return;
+            const newLeft = Math.min(Math.max(0, e.clientX - f.dragDX), parent.clientWidth - container.offsetWidth);
+            const newTop = Math.min(Math.max(0, e.clientY - f.dragDY), parent.clientHeight - container.offsetHeight);
+            container.style.left = newLeft + 'px';
+            container.style.top = newTop + 'px';
+        });
+        window.addEventListener('mouseup', ()=>{ if (game._floatingMini) game._floatingMini.dragging=false; });
+
+        const ro = new ResizeObserver(()=>{
+            const borderComp = 2;
+            const contentW = Math.max(1, Math.floor(container.clientWidth - borderComp));
+            const contentH = Math.max(1, Math.floor(container.clientHeight - header.offsetHeight - borderComp));
+            if (mini.width !== contentW || mini.height !== contentH) {
+                mini.width = contentW;
+                mini.height = contentH;
+                renderFloatingMini(game);
+            }
+            clampWithinParent();
+        });
+        ro.observe(container);
+        game._floatingMini.ro = ro;
+        clampWithinParent();
+        renderFloatingMini(game);
+    } else {
+        const visible = game._floatingMini.container.style.display !== 'none';
+        game._floatingMini.container.style.display = visible ? 'none' : 'flex';
+        if (!visible) {
+            const parent = game.canvas.parentElement;
+            const { container } = game._floatingMini;
+            const maxLeft = Math.max(0, parent.clientWidth - container.offsetWidth);
+            const maxTop = Math.max(0, parent.clientHeight - container.offsetHeight);
+            const left = Math.min(Math.max(0, container.offsetLeft), maxLeft);
+            const top = Math.min(Math.max(0, container.offsetTop), maxTop);
+            container.style.left = left + 'px';
+            container.style.top = top + 'px';
+            renderFloatingMini(game);
+        }
+    }
+}
+
+export function renderFloatingMini(game) {
+    if (!game._floatingMini || !game.objects) return;
+    const { canvas, ctx } = game._floatingMini;
+    game.miniCanvas = canvas; game.miniCtx = ctx;
+    if (game._miniBoundCanvas !== game.miniCanvas) {
+        game._miniBound = false;
+        bind(game.miniCanvas, ()=>({ camera: game.camera, tileSize: game.tileSize }), (x,y)=>{ game.camera.x=x; game.camera.y=y; game.render(); });
+    }
+}
+
 

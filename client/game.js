@@ -7,6 +7,7 @@ import { calculateMovementPath as coreCalculateMovementPath, calculateETA as cor
 import { renderUnitDetails as uiRenderUnitDetails } from './ui/UnitDetails.js';
 import { connectSocket as netConnectSocket } from './net/socket.js';
 import { fetchSectorTrails as trailsFetchSectorTrails, handleLingeringTrailsOnTurn } from './features/Trails.js';
+import { renderObjects as renderMapObjects } from './render/objects.js';
 import {
     showWarpConfirmation,
     executeWarpOrder,
@@ -66,6 +67,14 @@ export class GameClient {
         this.turnCountdownTimer = null;
         this.queueMode = false; // If true, right-clicking queues orders
         this._queuedByShipId = new Map(); // Cached queued orders by ship id for UI and map markers
+        this._els = {}; // Simple DOM cache for common elements
+    }
+
+    // Helper to run logic only when gameState is available
+    withState(fn) {
+        const state = this.gameState;
+        if (!state) return;
+        return fn(state);
     }
 
     async fetchSectorTrails() { return trailsFetchSectorTrails(this); }
@@ -189,19 +198,7 @@ export class GameClient {
         netConnectSocket(this);
     }
 
-    // ✅ Atomic Turn Resolution Policy: Removed real-time movement updates
-    // All movement changes now happen atomically after turn resolution via loadGameState()
-    // 
-    // This function is preserved for potential future use (animations, etc.)
-    // but is no longer called during normal gameplay
-    handleMovementUpdate(data) {
-        console.log('⚠️ handleMovementUpdate called - this should not happen with atomic turn resolution');
-        console.log('Movement update data:', data);
-        
-        // Future: Could be used for post-resolution animations
-        // const { objectId, status, newPosition } = data;
-        // this.animateMovementChange(objectId, status, newPosition);
-    }
+    // (Removed) handleMovementUpdate was unused with atomic turn resolution
 
     // Load game state from server
     async loadGameState() {
@@ -214,20 +211,7 @@ export class GameClient {
             const data = await SFApi.State.gameState(this.gameId, this.userId, (this.selectedUnit && this.selectedUnit.sectorInfo?.id) ? this.selectedUnit.sectorInfo.id : undefined);
             
             if (data) {
-                // Parse all meta fields from JSON strings to objects
-                if (data.objects) {
-                    data.objects.forEach(obj => {
-                        if (obj.meta && typeof obj.meta === 'string') {
-                            try {
-                                obj.meta = JSON.parse(obj.meta);
-                            } catch (e) {
-                                console.warn('Failed to parse meta for object:', obj.id, obj.meta);
-                                obj.meta = {};
-                            }
-                        }
-                    });
-                }
-                
+                // Normalization (including meta parsing) handled in core/GameState.normalizeGameState
                 // Preserve current camera and selection while updating state
                 const preserveCamera = { x: this.camera.x, y: this.camera.y };
                 // Normalize state via core/GameState
@@ -277,7 +261,7 @@ export class GameClient {
 
     // Update UI elements with game state
     async updateUI() {
-        if (!this.gameState) return;
+        return this.withState(async () => {
 
         // Check if setup is needed (prevent normal UI until setup complete)
         if (!this.gameState.playerSetup?.setup_completed) {
@@ -286,11 +270,11 @@ export class GameClient {
         }
 
         // Update turn counter
-        document.getElementById('turnCounter').textContent = `Turn ${this.gameState.currentTurn.turn_number}`;
+        (this._els.turnCounter || (this._els.turnCounter = document.getElementById('turnCounter'))).textContent = `Turn ${this.gameState.currentTurn.turn_number}`;
         this.updateTurnCountdown();
         
         // Update game title with sector name
-        const gameTitle = document.getElementById('gameTitle');
+        const gameTitle = (this._els.gameTitle || (this._els.gameTitle = document.getElementById('gameTitle')));
         gameTitle.innerHTML = `🌌 ${this.gameState.sector.name || 'Your System'}`;
         
         // Update player panel
@@ -300,7 +284,7 @@ export class GameClient {
         this.updateSectorOverviewTitle();
         
         // Update turn lock status
-        const lockBtn = document.getElementById('lockTurnBtn');
+        const lockBtn = (this._els.lockTurnBtn || (this._els.lockTurnBtn = document.getElementById('lockTurnBtn')));
         if (this.gameState.turnLocked) {
             lockBtn.textContent = '🔒 Turn Locked';
             lockBtn.classList.add('locked');
@@ -418,6 +402,7 @@ export class GameClient {
             this.selectUnit(this.units[0].id);
             this.isFirstLoad = false;
         }
+    });
     }
 
     updateTurnCountdown() {
@@ -648,6 +633,8 @@ export class GameClient {
                 if (action === 'toggle-mining') { try { SFMining.toggleMining(); } catch {} return; }
                 if (action === 'show-cargo') { try { SFCargo.showCargo(); } catch {} return; }
                 if (action === 'show-build') { build_showBuildModal(); return; }
+                if (action === 'queue-refresh' && unit?.type === 'ship') { this.loadQueueLog && this.loadQueueLog(unit.id, true); return; }
+                if (action === 'queue-clear' && unit?.type === 'ship') { this.clearQueue && this.clearQueue(unit.id); return; }
             }
         });
         if (unit && unit.meta && unit.meta.cargoCapacity) { try { SFCargo.updateCargoStatus(unit.id); } catch {} }
@@ -668,13 +655,7 @@ export class GameClient {
                     });
                 }).catch(()=>{});
         }
-        if (unit.type === 'ship') {
-            this.loadQueueLog(unit.id);
-            const clearBtn = document.getElementById('queueClearBtn');
-            const refreshBtn = document.getElementById('queueRefreshBtn');
-            if (clearBtn) clearBtn.onclick = () => this.clearQueue(unit.id);
-            if (refreshBtn) refreshBtn.onclick = () => this.loadQueueLog(unit.id, true);
-        }
+        // Queue buttons moved to UnitDetails view with data-action handlers
     }
 
     // Ability preview ring + hover (delegated)
@@ -718,8 +699,8 @@ export class GameClient {
         // Draw grid (delegated)
         SFRenderers.grid.drawGrid(ctx, canvas, this.camera, this.tileSize);
         
-        // Draw objects
-        SFRenderers.objects.drawObjects(ctx, canvas, this.objects, this.camera, this.tileSize, this);
+        // Draw objects via renderer orchestrator
+        renderMapObjects(this, ctx, canvas);
         
         // Draw movement paths for all ships with active movement orders
         SFRenderers.movement.drawMovementPaths.call(
@@ -775,50 +756,7 @@ export class GameClient {
 
     // grid handled in SFRenderers.grid
 
-    // Draw objects on the map with proper layering
-    drawObjects(ctx, centerX, centerY) {
-        // Separate objects by type for proper layering
-        const celestialObjects = [];
-        const resourceNodes = [];
-        const shipObjects = [];
-        
-        this.objects.forEach(obj => {
-            const screenX = centerX + (obj.x - this.camera.x) * this.tileSize;
-            const screenY = centerY + (obj.y - this.camera.y) * this.tileSize;
-            
-            // Only process if on screen (with larger buffer for big celestial objects)
-            const buffer = (obj.radius || 1) * this.tileSize + 100; // Extra buffer for large objects
-            if (screenX >= -buffer && screenX <= this.canvas.width + buffer &&
-                screenY >= -buffer && screenY <= this.canvas.height + buffer) {
-                
-                if (obj.type === 'resource_node') {
-                    resourceNodes.push({ obj, screenX, screenY });
-                } else if (this.isCelestialObject(obj)) {
-                    celestialObjects.push({ obj, screenX, screenY });
-                } else {
-                    shipObjects.push({ obj, screenX, screenY });
-                }
-            }
-        });
-        
-        // Sort celestial objects by size (largest first, so they render behind smaller ones)
-        celestialObjects.sort((a, b) => (b.obj.radius || 1) - (a.obj.radius || 1));
-        
-        // Draw celestial objects first (background layer)
-        celestialObjects.forEach(({ obj, screenX, screenY }) => {
-            this.drawObject(ctx, obj, screenX, screenY);
-        });
-        
-        // Draw resource nodes (middle layer)
-        resourceNodes.forEach(({ obj, screenX, screenY }) => {
-            this.drawObject(ctx, obj, screenX, screenY);
-        });
-        
-        // Draw ship objects on top (foreground layer)
-        shipObjects.forEach(({ obj, screenX, screenY }) => {
-            this.drawObject(ctx, obj, screenX, screenY);
-        });
-    }
+    // Draw objects moved to render/objects.js
 
     // Draw a single object with proper celestial scaling
     drawObject(ctx, obj, x, y) {
@@ -883,108 +821,7 @@ export class GameClient {
         return celestialTypes.includes(obj.celestial_type || obj.type);
     }
     
-    // Resolve a player's color palette
-    getPlayerColors(ownerId) {
-        try {
-            const players = this.gameState?.players || [];
-            const p = players.find(pl => pl.userId === ownerId);
-            return {
-                primary: p?.colorPrimary || '#4caf50',
-                secondary: p?.colorSecondary || 'rgba(76, 175, 80, 1)'
-            };
-        } catch { return { primary: '#4caf50', secondary: 'rgba(76,175,80,1)' }; }
-    }
-
-    // Get colors for different object types
-    getObjectColors(obj, isOwned, visibility, isCelestial) {
-        if (!isCelestial) {
-            const palette = this.getPlayerColors(obj.owner_id);
-            if (obj.owner_id) {
-                // Use player palette for any owned non-celestial object
-                return {
-                    border: palette.primary,
-                    background: (palette.secondary.startsWith('#') ? this.hexToRgba(palette.secondary, 0.25) : palette.secondary.replace(/\)$|$/, ', 0.25)').replace('rgba(', 'rgba(')),
-                    text: '#ffffff'
-                };
-            }
-        }
-        
-        if (isCelestial) {
-            return this.getCelestialColors(obj);
-        }
-        
-        if (visibility.dimmed) {
-            return {
-                border: '#64b5f6',
-                background: 'rgba(100, 181, 246, 0.1)',
-                text: '#64b5f6'
-            };
-        }
-        
-        if (visibility.visible) {
-            return {
-                border: '#ff9800',
-                background: 'rgba(255, 152, 0, 0.1)',
-                text: '#ffffff'
-            };
-        }
-        
-        return {
-            border: '#666',
-            background: 'rgba(255, 255, 255, 0.1)',
-            text: '#ffffff'
-        };
-    }
-
-    // Helper: convert hex color to rgba string with given alpha
-    hexToRgba(hex, alpha) {
-        try {
-            const m = hex.replace('#', '');
-            const r = parseInt(m.substring(0, 2), 16);
-            const g = parseInt(m.substring(2, 4), 16);
-            const b = parseInt(m.substring(4, 6), 16);
-            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-        } catch { return hex; }
-    }
-    
-    // Get celestial-specific colors
-    getCelestialColors(obj) {
-        const type = obj.celestial_type || obj.type;
-        
-        switch (type) {
-            case 'star':
-                return {
-                    border: '#FFD700',
-                    background: 'radial-gradient(circle, rgba(255,215,0,0.8) 0%, rgba(255,140,0,0.4) 50%, rgba(255,69,0,0.2) 100%)',
-                    text: '#FFD700',
-                    glow: '#FFD700'
-                };
-            case 'planet':
-                const planetType = obj.meta?.type || 'terrestrial';
-                if (planetType === 'resource-rich') {
-                    return { border: '#8BC34A', background: 'rgba(139, 195, 74, 0.6)', text: '#8BC34A' };
-                } else if (planetType === 'gas-giant') {
-                    return { border: '#9C27B0', background: 'rgba(156, 39, 176, 0.6)', text: '#9C27B0' };
-                }
-                return { border: '#795548', background: 'rgba(121, 85, 72, 0.6)', text: '#795548' };
-            case 'moon':
-                return { border: '#BDBDBD', background: 'rgba(189, 189, 189, 0.5)', text: '#BDBDBD' };
-            case 'belt':
-                // Use more neutral colors; belts are visualized by their resource nodes, not a bold ring
-                return { border: 'rgba(255,255,255,0.08)', background: 'rgba(255, 255, 255, 0.05)', text: '#CCCCCC' };
-            case 'nebula':
-                return { border: '#E91E63', background: 'rgba(233, 30, 99, 0.4)', text: '#E91E63' };
-            case 'wormhole':
-            case 'jump-gate':
-                return { border: '#9C27B0', background: 'rgba(156, 39, 176, 0.7)', text: '#9C27B0', glow: '#9C27B0' };
-            case 'derelict':
-                return { border: '#607D8B', background: 'rgba(96, 125, 139, 0.5)', text: '#607D8B' };
-            case 'graviton-sink':
-                return { border: '#000000', background: 'rgba(0, 0, 0, 0.9)', text: '#FF0000', glow: '#FF0000' };
-            default:
-                return { border: '#64b5f6', background: 'rgba(100, 181, 246, 0.3)', text: '#64b5f6' };
-        }
-    }
+    // Color helpers moved to render/colors.js
     
     // Draw celestial objects with special effects
     // Fallback ship/resource/celestial drawing removed; rely on SFRenderers modules only
@@ -1031,27 +868,7 @@ export class GameClient {
         }
     }
     
-    drawAsteroidBelt(ctx, x, y, size, colors) {
-        // Create a realistic asteroid field with varying densities and sizes
-        const centerDistance = Math.sqrt(Math.pow(this.camera.x - x, 2) + Math.pow(this.camera.y - y, 2));
-        const isNearby = centerDistance < size * 1.5; // Only show details when close
-        
-        if (isNearby && this.tileSize > 8) {
-            // Detailed view - show individual asteroids
-            this.drawDetailedAsteroidField(ctx, x, y, size, colors);
-        } else {
-            // Distant view - instead of a simple outline, render sparse asteroid hints
-            if (size > this.tileSize) {
-                this.drawDistantAsteroids(ctx, x, y, size, colors);
-            }
-            // Optionally, draw a very subtle faint ring just for orientation
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.arc(x, y, size/2, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-    }
+    
     
     drawNebula(ctx, x, y, size, colors) {
         const centerDistance = Math.sqrt(Math.pow(this.camera.x - x, 2) + Math.pow(this.camera.y - y, 2));
@@ -1240,236 +1057,8 @@ export class GameClient {
         }
     }
     
-    // Draw warp target highlight
-    drawWarpTargetHighlight(ctx, x, y, size) {
-        const time = Date.now() / 1000;
-        const pulse = 0.5 + 0.5 * Math.sin(time * 4); // Faster pulse for warp mode
-        
-        // Outer glow ring
-        ctx.strokeStyle = `rgba(138, 43, 226, ${pulse * 0.8})`; // Purple glow
-        ctx.lineWidth = Math.max(3, size * 0.02);
-        ctx.setLineDash([10, 5]);
-        
-        ctx.beginPath();
-        ctx.arc(x, y, size/2 + 15, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        // Inner target ring
-        ctx.strokeStyle = `rgba(255, 255, 255, ${pulse})`;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 3]);
-        
-        ctx.beginPath();
-        ctx.arc(x, y, size/2 + 8, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        ctx.setLineDash([]); // Reset line dash
-        
-        // Warp icon
-        if (size > this.tileSize) {
-            ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
-            ctx.font = `${Math.max(12, this.tileSize * 0.3)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🌌', x, y - size/2 - 20);
-        }
-    }
+    // Warp visuals moved to features/warp.js
     
-    // Draw warp preparation effect on ship
-    drawWarpPreparationEffect(ctx, ship, x, y, size) {
-        const time = Date.now() / 1000;
-        const phase = ship.warpPhase;
-        const preparationTurns = ship.warpPreparationTurns || 0; // current accumulated turns from server
-        const maxPrepTurns = (ship.meta && Number(ship.meta.warpPreparationTurns)) || 2; // blueprint-defined, default 2
-        
-        if (phase === 'preparing') {
-            // Charging effect - intensifies over time
-            const intensity = Math.min(1.0, maxPrepTurns ? (preparationTurns / maxPrepTurns) : 1);
-            const pulse = 0.3 + 0.7 * Math.sin(time * 6) * intensity;
-            
-            // Blue energy rings
-            ctx.strokeStyle = `rgba(0, 191, 255, ${pulse})`;
-            ctx.lineWidth = 3;
-            
-            for (let i = 0; i < 3; i++) {
-                const ringSize = size/2 + 10 + (i * 8) + (Math.sin(time * 3 + i) * 5);
-                ctx.beginPath();
-                ctx.arc(x, y, ringSize, 0, Math.PI * 2);
-                ctx.stroke();
-            }
-            
-            // Central glow
-            ctx.shadowColor = '#00BFFF';
-            ctx.shadowBlur = 20 * intensity;
-            ctx.fillStyle = `rgba(0, 191, 255, ${pulse * 0.3})`;
-            ctx.beginPath();
-            ctx.arc(x, y, size/2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            
-            // Progress indicator
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = '12px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillText(`Charging ${preparationTurns}/${maxPrepTurns}`, x, y + size/2 + 5);
-            
-        } else if (phase === 'ready') {
-            // Ready to warp - steady bright glow
-            ctx.shadowColor = '#FFFFFF';
-            ctx.shadowBlur = 25;
-            ctx.strokeStyle = '#FFFFFF';
-            ctx.lineWidth = 4;
-            
-            ctx.beginPath();
-            ctx.arc(x, y, size/2 + 12, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-            
-            // Ready indicator
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillText('WARP READY', x, y + size/2 + 5);
-        }
-    }
-    
-    // Draw detailed asteroid field when zoomed in
-    drawDetailedAsteroidField(ctx, x, y, size, colors) {
-        // Use object ID as seed for consistent asteroid positions
-        const objId = this.objects.find(obj => obj.x === x && obj.y === y)?.id || 0;
-        const seed = objId * 12345; // Simple seed
-        
-        // Calculate how many asteroids to show based on zoom and size
-        const baseCount = Math.floor(size / 30); // Base density
-        const zoomFactor = Math.min(2, this.tileSize / 20); // More detail when zoomed in
-        const numAsteroids = Math.max(20, Math.floor(baseCount * zoomFactor));
-        
-        // Create multiple density zones within the belt
-        const zones = [
-            { radius: size * 0.3, density: 0.8, minSize: 2, maxSize: 8 }, // Inner dense zone
-            { radius: size * 0.5, density: 1.0, minSize: 3, maxSize: 12 }, // Main belt
-            { radius: size * 0.7, density: 0.6, minSize: 1, maxSize: 6 }, // Outer sparse zone
-        ];
-        
-        zones.forEach((zone, zoneIndex) => {
-            const zoneAsteroids = Math.floor(numAsteroids * zone.density / zones.length);
-            
-            for (let i = 0; i < zoneAsteroids; i++) {
-                // Use seeded random for consistent positions
-                const randSeed = (seed + zoneIndex * 1000 + i) % 9999;
-                const angle = (randSeed % 628) / 100; // 0 to 2π
-                const distanceRand = ((randSeed * 7) % 1000) / 1000; // 0 to 1
-                
-                // Distance within the zone
-                const minRadius = zoneIndex === 0 ? 0 : zones[zoneIndex - 1].radius;
-                const distance = minRadius + distanceRand * (zone.radius - minRadius);
-                
-                const asteroidX = x + Math.cos(angle) * distance;
-                const asteroidY = y + Math.sin(angle) * distance;
-                
-                // Varying asteroid sizes
-                const sizeRand = ((randSeed * 13) % 1000) / 1000;
-                const asteroidSize = zone.minSize + sizeRand * (zone.maxSize - zone.minSize);
-                
-                // Different asteroid types based on size
-                if (asteroidSize > 8) {
-                    this.drawLargeAsteroid(ctx, asteroidX, asteroidY, asteroidSize, colors, randSeed);
-                } else if (asteroidSize > 4) {
-                    this.drawMediumAsteroid(ctx, asteroidX, asteroidY, asteroidSize, colors, randSeed);
-                } else {
-                    this.drawSmallAsteroid(ctx, asteroidX, asteroidY, asteroidSize, colors);
-                }
-            }
-        });
-    }
-    
-    // Draw different asteroid types
-    drawLargeAsteroid(ctx, x, y, size, colors, seed) {
-        ctx.fillStyle = colors.border;
-        ctx.strokeStyle = colors.text;
-        ctx.lineWidth = 1;
-        
-        // Irregular shape
-        const sides = 6 + (seed % 4);
-        ctx.beginPath();
-        for (let i = 0; i < sides; i++) {
-            const angle = (i / sides) * Math.PI * 2;
-            const radiusVariation = 0.7 + ((seed * (i + 1)) % 100) / 300; // 0.7 to 1.0
-            const radius = size * radiusVariation;
-            const px = x + Math.cos(angle) * radius;
-            const py = y + Math.sin(angle) * radius;
-            
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        
-        // Add some surface details
-        if (this.tileSize > 15) {
-            ctx.fillStyle = colors.text;
-            const craters = 2 + (seed % 3);
-            for (let i = 0; i < craters; i++) {
-                const angle = ((seed * (i + 5)) % 628) / 100;
-                const distance = size * 0.3;
-                const craterX = x + Math.cos(angle) * distance;
-                const craterY = y + Math.sin(angle) * distance;
-                const craterSize = size * 0.15;
-                
-                ctx.beginPath();
-                ctx.arc(craterX, craterY, craterSize, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-    }
-    
-    drawMediumAsteroid(ctx, x, y, size, colors, seed) {
-        ctx.fillStyle = colors.border;
-        
-        // Slightly irregular circle
-        const sides = 5 + (seed % 3);
-        ctx.beginPath();
-        for (let i = 0; i < sides; i++) {
-            const angle = (i / sides) * Math.PI * 2;
-            const radiusVariation = 0.8 + ((seed * (i + 2)) % 100) / 500; // 0.8 to 1.0
-            const radius = size * radiusVariation;
-            const px = x + Math.cos(angle) * radius;
-            const py = y + Math.sin(angle) * radius;
-            
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.fill();
-    }
-    
-    drawSmallAsteroid(ctx, x, y, size, colors) {
-        ctx.fillStyle = colors.border;
-        ctx.beginPath();
-        ctx.arc(x, y, size, 0, Math.PI * 2);
-        ctx.fill();
-    }
-    
-    // Draw distant view of asteroids (when zoomed out)
-    drawDistantAsteroids(ctx, x, y, size, colors) {
-        ctx.fillStyle = colors.border;
-        
-        const numPoints = Math.max(8, Math.floor(size / this.tileSize / 3));
-        for (let i = 0; i < numPoints; i++) {
-            const angle = (i / numPoints) * Math.PI * 2 + Math.random() * 0.5;
-            const distance = size * 0.35 + Math.random() * size * 0.3;
-            const pointX = x + Math.cos(angle) * distance;
-            const pointY = y + Math.sin(angle) * distance;
-            const pointSize = 0.5 + Math.random() * 1.5;
-            
-            ctx.beginPath();
-            ctx.arc(pointX, pointY, pointSize, 0, Math.PI * 2);
-            ctx.fill();
-        }
-    }
 
     // Draw selection highlight with ability preview ring if present
     drawSelection(ctx, centerX, centerY) {
@@ -1516,15 +1105,9 @@ export class GameClient {
 
     // One-time binding for minimap click + drag to pan camera
     bindMiniMapInteractions() {
-        if (!this.miniCanvas) return;
-        if (this._miniBound) return;
-        this._miniBound = true;
-        this._miniBoundCanvas = this.miniCanvas;
-        SFMinimap.interactions.bind(
-            this.miniCanvas,
-            () => ({ camera: this.camera, tileSize: this.tileSize }),
-            (x, y) => { this.camera.x = x; this.camera.y = y; this.render(); }
-        );
+        if (!this.miniCanvas || this._miniBound) return;
+        this._miniBound = true; this._miniBoundCanvas = this.miniCanvas;
+        SFMinimap.interactions.bind(this.miniCanvas, () => ({ camera: this.camera, tileSize: this.tileSize }), (x, y) => { this.camera.x = x; this.camera.y = y; this.render(); });
     }
 
     // Setup event listeners
@@ -1612,147 +1195,9 @@ export class GameClient {
     }
 
     // Toggle floating minimap within main map area
-    toggleFloatingMiniMap() {
-        if (!this._floatingMini) {
-            const parent = this.canvas.parentElement;
-            const container = document.createElement('div');
-            container.id = 'floatingMiniWrap';
-            container.style.position = 'absolute';
-            container.style.zIndex = '2000';
-            container.style.border = '1px solid rgba(100,181,246,0.3)';
-            container.style.borderRadius = '10px';
-            container.style.background = '#0a0f1c';
-            container.style.boxShadow = '0 10px 30px rgba(0,0,0,0.35)';
-            container.style.pointerEvents = 'auto';
-            container.style.overflow = 'hidden';
-            container.style.display = 'flex';
-            container.style.flexDirection = 'column';
-            container.style.boxSizing = 'border-box';
-            container.style.resize = 'both';
-            container.style.minWidth = '200px';
-            container.style.minHeight = '140px';
-            // Initial size and position (top/left anchored)
-            const initialW = 260, initialH = 180, margin = 12;
-            container.style.width = initialW + 'px';
-            container.style.height = initialH + 'px';
-            container.style.left = margin + 'px';
-            const parentH = parent ? parent.clientHeight : 0;
-            container.style.top = Math.max(0, parentH - margin - initialH) + 'px';
+    toggleFloatingMiniMap() { try { const mod = require('./ui/minimap.js'); mod.toggleFloatingMiniMap(this); } catch { import('./ui/minimap.js').then(mod => mod.toggleFloatingMiniMap(this)); } }
 
-            // Header used for dragging
-            const header = document.createElement('div');
-            header.style.height = '26px';
-            header.style.background = 'rgba(10, 15, 28, 0.9)';
-            header.style.borderBottom = '1px solid rgba(100,181,246,0.3)';
-            header.style.display = 'flex';
-            header.style.alignItems = 'center';
-            header.style.justifyContent = 'space-between';
-            header.style.padding = '0 8px';
-            header.style.cursor = 'move';
-            header.style.userSelect = 'none';
-            header.innerHTML = '<span style="font-size:12px;color:#cfe4ff;display:flex;align-items:center;gap:6px"><span style="opacity:0.7">⠿</span> Mini-map</span><button title="Close" style="background:none;border:none;color:#cfe4ff;cursor:pointer;font-size:14px;line-height:1">×</button>';
-
-            const closeBtn = header.querySelector('button');
-            closeBtn.addEventListener('click', () => {
-                container.style.display = 'none';
-            });
-
-            const mini = document.createElement('canvas');
-            mini.style.display = 'block';
-            mini.style.width = '100%';
-            mini.style.height = '100%';
-            // Set initial internal size (content area below header)
-            mini.width = initialW;
-            mini.height = initialH - 26;
-
-            container.appendChild(header);
-            container.appendChild(mini);
-            parent.appendChild(container);
-
-            const clampWithinParent = () => {
-                if (!parent) return;
-                const maxLeft = Math.max(0, parent.clientWidth - container.offsetWidth);
-                const maxTop = Math.max(0, parent.clientHeight - container.offsetHeight);
-                const left = Math.min(Math.max(0, container.offsetLeft), maxLeft);
-                const top = Math.min(Math.max(0, container.offsetTop), maxTop);
-                container.style.left = left + 'px';
-                container.style.top = top + 'px';
-            };
-
-            this._floatingMini = { container, header, canvas: mini, ctx: mini.getContext('2d'), dragging: false, dragDX:0, dragDY:0 };
-
-            // Dragging via header
-            header.addEventListener('mousedown', (e)=>{
-                this._floatingMini.dragging = true;
-                this._floatingMini.dragDX = e.clientX - container.offsetLeft;
-                this._floatingMini.dragDY = e.clientY - container.offsetTop;
-                e.preventDefault();
-            });
-            window.addEventListener('mousemove', (e)=>{
-                const f=this._floatingMini; if (!f||!f.dragging) return;
-                const parentRect = parent.getBoundingClientRect();
-                let newLeft = e.clientX - f.dragDX;
-                let newTop = e.clientY - f.dragDY;
-                // Clamp to parent bounds
-                newLeft = Math.min(Math.max(0, newLeft), parent.clientWidth - container.offsetWidth);
-                newTop = Math.min(Math.max(0, newTop), parent.clientHeight - container.offsetHeight);
-                container.style.left = newLeft + 'px';
-                container.style.top = newTop + 'px';
-            });
-            window.addEventListener('mouseup', ()=>{ if (this._floatingMini) this._floatingMini.dragging=false; });
-
-            // Resize observer to keep canvas in sync and keep window in bounds
-            const ro = new ResizeObserver(()=>{
-                // account for borders (2px total) and header height
-                const borderComp = 2; // 1px left + 1px right
-                const contentW = Math.max(1, Math.floor(container.clientWidth - borderComp));
-                const contentH = Math.max(1, Math.floor(container.clientHeight - header.offsetHeight - borderComp));
-                if (mini.width !== contentW || mini.height !== contentH) {
-                    mini.width = contentW;
-                    mini.height = contentH;
-                    this.renderFloatingMini();
-                }
-                clampWithinParent();
-            });
-            ro.observe(container);
-            this._floatingMini.ro = ro;
-
-            // Ensure initial clamp
-            clampWithinParent();
-            this.renderFloatingMini();
-        } else {
-            // Toggle visibility
-            const visible = this._floatingMini.container.style.display !== 'none';
-            this._floatingMini.container.style.display = visible ? 'none' : 'flex';
-            if (!visible) {
-                // Re-clamp on reopen
-                const parent = this.canvas.parentElement;
-                const { container } = this._floatingMini;
-                const maxLeft = Math.max(0, parent.clientWidth - container.offsetWidth);
-                const maxTop = Math.max(0, parent.clientHeight - container.offsetHeight);
-                const left = Math.min(Math.max(0, container.offsetLeft), maxLeft);
-                const top = Math.min(Math.max(0, container.offsetTop), maxTop);
-                container.style.left = left + 'px';
-                container.style.top = top + 'px';
-                this.renderFloatingMini();
-            }
-        }
-    }
-
-    renderFloatingMini() {
-        // Delegate all floating minimap rendering to the unified minimap renderer
-        if (!this._floatingMini || !this.objects) return;
-        // Temporarily point miniCanvas to floating canvas for a consistent look
-        const { canvas, ctx } = this._floatingMini;
-        this.miniCanvas = canvas;
-        this.miniCtx = ctx;
-        // Ensure interactions are bound to the floating canvas (avoid rebinding if already bound)
-        if (this._miniBoundCanvas !== this.miniCanvas) {
-            this._miniBound = false;
-            this.bindMiniMapInteractions();
-        }
-        // minimap rendered via SFMinimap.renderer in render()
-    }
+    renderFloatingMini() { import('./ui/minimap.js').then(mod => mod.renderFloatingMini(this)); }
 
     // Drag-to-pan state
     startDragPan(e) {
@@ -1893,33 +1338,7 @@ export class GameClient {
     // New: return all active statuses in priority order
     getUnitStatuses(meta, unit) { return coreGetUnitStatuses(meta, unit); }
 
-    getStatusLabel(statusKey) {
-        switch (statusKey) {
-            case 'attacking': return '⚔️ Attacking';
-            case 'stealthed': return '🕶️ Stealthed';
-            case 'scanning': return '🔍 Scanning';
-            case 'lowFuel': return '⛽ Low Fuel';
-            case 'constructing': return '🛠️ Constructing';
-            case 'moving': return '➜ Moving';
-            case 'mining': return '⛏️ Mining';
-            case 'docked': return '⚓ Docked';
-            default: return 'Idle';
-        }
-    }
-
-    getStatusClass(statusKey) {
-        switch (statusKey) {
-            case 'attacking': return 'status-attacking';
-            case 'stealthed': return 'status-stealthed';
-            case 'scanning': return 'status-scanning';
-            case 'lowFuel': return 'status-lowFuel';
-            case 'constructing': return 'status-constructing';
-            case 'moving': return 'status-moving';
-            case 'mining': return 'status-mining';
-            case 'docked': return 'status-docked';
-            default: return 'status-idle';
-        }
-    }
+    // Status helpers moved to ui/UnitDetails.js
 
     // Helper to compute inclusive remaining turns with strong guards
     computeRemainingTurns(expiresTurn, currentTurn) {
@@ -1944,78 +1363,7 @@ export class GameClient {
         } catch { return ''; }
     }
 
-    // Build an effects chip using authoritative server statusEffects, with meta mirrors as fallback
-    renderActiveEffectsChip(unit) {
-        try {
-            const meta = unit.meta || {};
-            const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
-            const list = [];
-            // 1) Use server-provided statusEffects if present
-            if (Array.isArray(unit.statusEffects) && unit.statusEffects.length > 0) {
-                for (const eff of unit.statusEffects) {
-                    const data = eff.effectData || {};
-                    // expiresTurn is inclusive; ensure at least 1 turn remains on the expiry turn
-                    const until = this.computeRemainingTurns(eff.expiresTurn, currentTurn);
-                    if (eff.effectKey === 'microthruster_speed' || typeof data.movementFlatBonus === 'number') {
-                        const amt = data.movementFlatBonus ?? 3;
-                        list.push({ name: '+Move', desc: `+${amt} tiles`, turns: until, source: 'Microthruster Shift' });
-                    }
-                    if (eff.effectKey === 'emergency_discharge_buff' || typeof data.evasionBonus === 'number') {
-                        const pct = Math.round((data.evasionBonus ?? 0.5) * 100);
-                        list.push({ name: 'Evasion', desc: `+${pct}%`, turns: until, source: 'Emergency Discharge Vent' });
-                    }
-                    if (eff.effectKey === 'engine_boost' || typeof data.movementBonus === 'number') {
-                        const pct = Math.round((data.movementBonus ?? 1.0) * 100);
-                        list.push({ name: 'Speed', desc: `+${pct}%`, turns: until, source: 'Engine Boost' });
-                    }
-                    if (eff.effectKey === 'repair_over_time' || typeof data.healPercentPerTurn === 'number') {
-                        const pct = Math.round((data.healPercentPerTurn ?? 0.05) * 100);
-                        list.push({ name: 'Regen', desc: `${pct}%/turn`, turns: until, source: 'Jury-Rig Repair' });
-                    }
-                    if (eff.effectKey === 'survey_scanner' || typeof data.scanRangeMultiplier === 'number') {
-                        const mult = data.scanRangeMultiplier ?? 2;
-                        list.push({ name: 'Scan', desc: `x${mult}`, turns: until, source: 'Survey Scanner' });
-                    }
-                    if (eff.effectKey === 'evasion_boost') {
-                        const pct = Math.round((data.evasionBonus ?? 0.8) * 100);
-                        list.push({ name: 'Evasion', desc: `+${pct}%`, turns: until, source: 'Phantom Burn' });
-                    }
-                    if (eff.effectKey === 'accuracy_debuff') {
-                        const pct = Math.round((data.magnitude ?? eff.magnitude ?? 0.2) * 100);
-                        list.push({ name: 'Accuracy', desc: `-${pct}%`, turns: until, source: 'Quarzon Micro-Missiles' });
-                    }
-                }
-            }
-            // 2) Passive hint for Solo Miner's Instinct
-            if (Array.isArray(meta.abilities) && meta.abilities.includes('solo_miners_instinct')) {
-                list.push({ name: '+Move', desc: "+1 tile (Solo Miner's Instinct)", turns: 1, source: 'Passive' });
-            }
-            // 3) Meta mirrors fallback for immediate client feedback
-            if (typeof meta.movementBoostMultiplier === 'number' && meta.movementBoostMultiplier > 1) {
-                const pct = Math.round((meta.movementBoostMultiplier - 1) * 100);
-                const remain = this.computeRemainingTurns(meta.movementBoostExpires, currentTurn);
-                list.push({ name: 'Speed', desc: `+${pct}%`, turns: remain, source: 'Engine Boost' });
-            }
-            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
-                const remain = this.computeRemainingTurns(meta.scanBoostExpires, currentTurn);
-                list.push({ name: 'Scan', desc: `x${meta.scanRangeMultiplier}`, turns: remain, source: 'Survey Scanner' });
-            }
-            if (typeof meta.movementFlatBonus === 'number' && meta.movementFlatBonus > 0) {
-                const remain = this.computeRemainingTurns(meta.movementFlatExpires, currentTurn);
-                list.push({ name: '+Move', desc: `+${meta.movementFlatBonus} tiles`, turns: remain, source: 'Microthruster Shift' });
-            }
-            if (typeof meta.evasionBonus === 'number' && meta.evasionBonus > 0) {
-                const remain = this.computeRemainingTurns(meta.evasionExpires, currentTurn);
-                list.push({ name: 'Evasion', desc: `+${Math.round(meta.evasionBonus*100)}%`, turns: remain, source: 'Emergency Discharge Vent' });
-            }
-
-            const active = list.filter(e => e.turns > 0);
-            if (active.length === 0) return '';
-            const tip = active.map(e => `${e.name} ${e.desc} (${e.turns}T) – ${e.source}`).join('\n');
-            const safeTip = this.escapeAttr(tip);
-            return `<span class=\"chip\" title=\"${safeTip}\">✨ Effects</span>`;
-        } catch { return ''; }
-    }
+    // Effects chip moved to ui/UnitDetails.js
 
     getCargoFill(unit) {
         try {
@@ -2520,88 +1868,8 @@ export class GameClient {
 
 // Players modal: show all players, lock status, and online status
 async function showPlayersModal() {
-    if (!gameClient || !gameClient.socket) {
-        console.warn('[PlayersModal] Aborting: gameClient or socket not ready', {
-            hasGameClient: !!gameClient,
-            hasSocket: !!(gameClient && gameClient.socket)
-        });
-        return;
-    }
-
-    try {
-        console.debug('[PlayersModal] Requesting players list...', {
-            gameId: gameClient.gameId,
-            socketConnected: !!(gameClient.socket && gameClient.socket.connected)
-        });
-        const data = await new Promise((resolve) => {
-            gameClient.socket.timeout(4000).emit('players:list', { gameId: gameClient.gameId }, (err, response) => {
-                if (err) {
-                    console.error('[PlayersModal] Socket ack error:', err);
-                    resolve({ success: false, error: 'Timeout' });
-                } else {
-                    resolve(response);
-                }
-            });
-        });
-
-        console.debug('[PlayersModal] Response:', data);
-        if (!data || !data.success) {
-            UI.showAlert(data?.error || 'Failed to load players');
-            return;
-        }
-
-        const players = data.players || [];
-        const currentTurn = data.currentTurn;
-        console.debug(`[PlayersModal] Players received: count=${players.length}`, players.map(p => ({ userId: p.userId, username: p.username, avatar: p.avatar, colorPrimary: p.colorPrimary, colorSecondary: p.colorSecondary, locked: p.locked, online: p.online })));
-        if (players.length === 0) {
-            console.warn('[PlayersModal] No players returned for game', gameClient.gameId);
-        }
-
-        const container = document.createElement('div');
-        container.innerHTML = `
-            <div class="form-section">
-                <h3>Players (Turn ${currentTurn})</h3>
-                <div style="display:grid; gap:10px;">
-                    ${players.map(p => {
-                        const avatarSrc = p.avatar ? `assets/avatars/${p.avatar}.png` : 'assets/avatars/explorer.png';
-                        const borderColor = p.colorPrimary || '#64b5f6';
-                        return `
-                        <div class=\"asset-item\" style=\"display:flex; align-items:center; justify-content:space-between;\">
-                            <div style=\"display:flex; align-items:center; gap:10px;\">
-                                <img src=\"${avatarSrc}\" alt=\"avatar\" data-avatar=\"1\" style=\"width:36px; height:36px; border-radius:50%; border:2px solid ${borderColor}; object-fit:cover;\">
-                                <div>
-                                    <div class=\"asset-name\">${p.username || 'Player ' + p.userId}</div>
-                                    <div class=\"asset-position\" style=\"display:flex; gap:10px;\">
-                                        <span title=\"Online status\">${renderPresence(p)}</span>
-                                        <span title=\"Turn lock status\">${p.locked ? '🔒 Locked' : '🔓 Unlocked'}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div style=\"text-align:right; color:#888; font-size:0.85em;\">
-                                <!-- Future: government, relations, etc. -->
-                                <div>Gov: —</div>
-                                <div>Relation: —</div>
-                            </div>
-                        </div>`;
-                    }).join('')}
-                </div>
-            </div>
-        `;
-
-        UI.showModal({
-            title: '👥 Players',
-            content: container,
-            actions: [
-                { text: 'Close', style: 'primary', action: () => true }
-            ]
-        });
-        container.querySelectorAll('img[data-avatar]')?.forEach(img => {
-            img.addEventListener('error', () => { img.src = 'assets/avatars/explorer.png'; });
-        });
-    } catch (e) {
-        console.error('Error showing players modal:', e);
-        UI.showAlert('Failed to load players');
-    }
+    const mod = await import('./ui/players-modal.js');
+    return mod.showPlayersModal(gameClient);
 }
 
 // Global game instance

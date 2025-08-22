@@ -93,6 +93,76 @@ export function showWarpTargetSelection(client) {
         window.UI.showModal({ title: '🌌 Warp Target Selection', content: targetList, actions: [{ text:'Cancel', style:'secondary', action: ()=>{ client.addLogEntry('Warp target selection cancelled', 'info'); return true; } }], className:'warp-target-modal' });
 }
 
+export function drawWarpTargetHighlight(game, ctx, x, y, size) {
+        const time = Date.now() / 1000;
+        const pulse = 0.5 + 0.5 * Math.sin(time * 4);
+        ctx.strokeStyle = `rgba(138, 43, 226, ${pulse * 0.8})`;
+        ctx.lineWidth = Math.max(3, size * 0.02);
+        ctx.setLineDash([10, 5]);
+        ctx.beginPath();
+        ctx.arc(x, y, size/2 + 15, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(255, 255, 255, ${pulse})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.arc(x, y, size/2 + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (size > game.tileSize) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
+            ctx.font = `${Math.max(12, game.tileSize * 0.3)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🌌', x, y - size/2 - 20);
+        }
+}
+
+export function drawWarpPreparationEffect(game, ctx, ship, x, y, size) {
+        const time = Date.now() / 1000;
+        const phase = ship.warpPhase;
+        const preparationTurns = ship.warpPreparationTurns || 0;
+        const maxPrepTurns = (ship.meta && Number(ship.meta.warpPreparationTurns)) || 2;
+        if (phase === 'preparing') {
+            const intensity = Math.min(1.0, maxPrepTurns ? (preparationTurns / maxPrepTurns) : 1);
+            const pulse = 0.3 + 0.7 * Math.sin(time * 6) * intensity;
+            ctx.strokeStyle = `rgba(0, 191, 255, ${pulse})`;
+            ctx.lineWidth = 3;
+            for (let i = 0; i < 3; i++) {
+                const ringSize = size/2 + 10 + (i * 8) + (Math.sin(time * 3 + i) * 5);
+                ctx.beginPath();
+                ctx.arc(x, y, ringSize, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.shadowColor = '#00BFFF';
+            ctx.shadowBlur = 20 * intensity;
+            ctx.fillStyle = `rgba(0, 191, 255, ${pulse * 0.3})`;
+            ctx.beginPath();
+            ctx.arc(x, y, size/2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(`Charging ${preparationTurns}/${maxPrepTurns}`, x, y + size/2 + 5);
+        } else if (phase === 'ready') {
+            ctx.shadowColor = '#FFFFFF';
+            ctx.shadowBlur = 25;
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(x, y, size/2 + 12, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('WARP READY', x, y + size/2 + 5);
+        }
+}
+
 export function getWarpTargets(client, ship) {
         const targets = [];
         const celestialObjects = client.objects.filter(obj => client.isCelestialObject(obj));

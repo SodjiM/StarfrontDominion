@@ -42,6 +42,7 @@ export function renderUnitDetails(game, unit, options = {}) {
             ${meta.scanRange ? `<div class="stat-item"><span>Scan Range:</span><span>${game.getEffectiveScanRange(unit)}</span></div>` : ''}
             ${meta.energy !== undefined ? `<div class="stat-item"><span>⚡ Energy:</span><span>${meta.energy}/${meta.maxEnergy || meta.energy} (+${meta.energyRegen || 0}/turn)</span></div>` : ''}
             ${meta.cargoCapacity ? `<div class="stat-item"><span>📦 Cargo:</span><span id="cargoStatus">Loading...</span></div>` : ''}
+            ${renderActiveEffectsChip(game, unit)}
         </div>
         <div style="margin-top: 20px;">
             ${unit.type === 'ship' ? `
@@ -55,7 +56,12 @@ export function renderUnitDetails(game, unit, options = {}) {
                 <button class="sf-btn sf-btn-secondary" data-action="show-cargo">📦 Cargo</button>
             ` : ''}
             ${unit.type === 'ship' ? `
-                <div class="panel-title" style="margin:16px 0 0 0;">🛠️ Abilities</div>
+                <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">
+                    🛠️ Abilities
+                    <span style="flex:1"></span>
+                    <button class="sf-btn sf-btn-xs" data-action="queue-refresh" title="Refresh queue">↻</button>
+                    <button class="sf-btn sf-btn-xs" data-action="queue-clear" title="Clear queue">Clear</button>
+                </div>
                 <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style="color:#888">No abilities</span>'}</div>
                 <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">🧭 Queue</div>
                 <div id="queueLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
@@ -76,6 +82,111 @@ export function renderUnitDetails(game, unit, options = {}) {
     if (unit && unit.meta && unit.meta.cargoCapacity) {
         try { SFCargo.updateCargoStatus(unit.id); } catch {}
     }
+
+    // Populate queue immediately for ships
+    if (unit && unit.type === 'ship') {
+        try { game.loadQueueLog && game.loadQueueLog(unit.id); } catch {}
+    }
+}
+
+export function getStatusLabel(statusKey) {
+    switch (statusKey) {
+        case 'attacking': return '⚔️ Attacking';
+        case 'stealthed': return '🕶️ Stealthed';
+        case 'scanning': return '🔍 Scanning';
+        case 'lowFuel': return '⛽ Low Fuel';
+        case 'constructing': return '🛠️ Constructing';
+        case 'moving': return '➜ Moving';
+        case 'mining': return '⛏️ Mining';
+        case 'docked': return '⚓ Docked';
+        default: return 'Idle';
+    }
+}
+
+export function getStatusClass(statusKey) {
+    switch (statusKey) {
+        case 'attacking': return 'status-attacking';
+        case 'stealthed': return 'status-stealthed';
+        case 'scanning': return 'status-scanning';
+        case 'lowFuel': return 'status-lowFuel';
+        case 'constructing': return 'status-constructing';
+        case 'moving': return 'status-moving';
+        case 'mining': return 'status-mining';
+        case 'docked': return 'status-docked';
+        default: return 'status-idle';
+    }
+}
+
+export function renderActiveEffectsChip(game, unit) {
+    try {
+        const meta = unit.meta || {};
+        const currentTurn = game.gameState?.currentTurn?.turn_number || 0;
+        const list = [];
+        if (Array.isArray(unit.statusEffects) && unit.statusEffects.length > 0) {
+            for (const eff of unit.statusEffects) {
+                const data = eff.effectData || {};
+                const until = computeRemainingTurns(eff.expiresTurn, currentTurn);
+                if (eff.effectKey === 'microthruster_speed' || typeof data.movementFlatBonus === 'number') {
+                    const amt = data.movementFlatBonus ?? 3; list.push({ name: '+Move', desc: `+${amt} tiles`, turns: until, source: 'Microthruster Shift' });
+                }
+                if (eff.effectKey === 'emergency_discharge_buff' || typeof data.evasionBonus === 'number') {
+                    const pct = Math.round((data.evasionBonus ?? 0.5) * 100); list.push({ name: 'Evasion', desc: `+${pct}%`, turns: until, source: 'Emergency Discharge Vent' });
+                }
+                if (eff.effectKey === 'engine_boost' || typeof data.movementBonus === 'number') {
+                    const pct = Math.round((data.movementBonus ?? 1.0) * 100); list.push({ name: 'Speed', desc: `+${pct}%`, turns: until, source: 'Engine Boost' });
+                }
+                if (eff.effectKey === 'repair_over_time' || typeof data.healPercentPerTurn === 'number') {
+                    const pct = Math.round((data.healPercentPerTurn ?? 0.05) * 100); list.push({ name: 'Regen', desc: `${pct}%/turn`, turns: until, source: 'Jury-Rig Repair' });
+                }
+                if (eff.effectKey === 'survey_scanner' || typeof data.scanRangeMultiplier === 'number') {
+                    const mult = data.scanRangeMultiplier ?? 2; list.push({ name: 'Scan', desc: `x${mult}`, turns: until, source: 'Survey Scanner' });
+                }
+                if (eff.effectKey === 'evasion_boost') {
+                    const pct = Math.round((data.evasionBonus ?? 0.8) * 100); list.push({ name: 'Evasion', desc: `+${pct}%`, turns: until, source: 'Phantom Burn' });
+                }
+                if (eff.effectKey === 'accuracy_debuff') {
+                    const pct = Math.round((data.magnitude ?? eff.magnitude ?? 0.2) * 100); list.push({ name: 'Accuracy', desc: `-${pct}%`, turns: until, source: 'Quarzon Micro-Missiles' });
+                }
+            }
+        }
+        if (Array.isArray(meta.abilities) && meta.abilities.includes('solo_miners_instinct')) {
+            list.push({ name: '+Move', desc: "+1 tile (Solo Miner's Instinct)", turns: 1, source: 'Passive' });
+        }
+        if (typeof meta.movementBoostMultiplier === 'number' && meta.movementBoostMultiplier > 1) {
+            const pct = Math.round((meta.movementBoostMultiplier - 1) * 100);
+            const remain = computeRemainingTurns(meta.movementBoostExpires, currentTurn);
+            list.push({ name: 'Speed', desc: `+${pct}%`, turns: remain, source: 'Engine Boost' });
+        }
+        if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+            const remain = computeRemainingTurns(meta.scanBoostExpires, currentTurn);
+            list.push({ name: 'Scan', desc: `x${meta.scanRangeMultiplier}`, turns: remain, source: 'Survey Scanner' });
+        }
+        if (typeof meta.movementFlatBonus === 'number' && meta.movementFlatBonus > 0) {
+            const remain = computeRemainingTurns(meta.movementFlatExpires, currentTurn);
+            list.push({ name: '+Move', desc: `+${meta.movementFlatBonus} tiles`, turns: remain, source: 'Microthruster Shift' });
+        }
+        if (typeof meta.evasionBonus === 'number' && meta.evasionBonus > 0) {
+            const remain = computeRemainingTurns(meta.evasionExpires, currentTurn);
+            list.push({ name: 'Evasion', desc: `+${Math.round(meta.evasionBonus*100)}%`, turns: remain, source: 'Emergency Discharge Vent' });
+        }
+        const active = list.filter(e => e.turns > 0);
+        if (active.length === 0) return '';
+        const tip = active.map(e => `${e.name} ${e.desc} (${e.turns}T) – ${e.source}`).join('\n');
+        const safeTip = escapeAttr(tip);
+        return `<span class=\"chip\" title=\"${safeTip}\">✨ Effects</span>`;
+    } catch { return ''; }
+}
+
+function computeRemainingTurns(expiresTurn, currentTurn) {
+    const e = Number(expiresTurn); const c = Number(currentTurn);
+    if (Number.isFinite(e) && Number.isFinite(c)) { return Math.max(1, Math.floor(e - c + 1)); }
+    return 1;
+}
+
+function escapeAttr(text) {
+    try {
+        return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '&#10;');
+    } catch { return ''; }
 }
 
 

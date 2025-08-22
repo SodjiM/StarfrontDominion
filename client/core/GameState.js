@@ -71,7 +71,8 @@ export function getUnitStatuses(meta, unit) {
             active.add('scanning');
         }
 
-        if (unit.movementStatus === 'active' || unit.movementActive === true || unit.movement_path || m.moving === true) {
+        // Standardize: prefer movementStatus as the single source of truth; treat movementActive as derived
+        if (unit.movementStatus === 'active' || unit.movement_path || m.moving === true) {
             active.add('moving');
         }
 
