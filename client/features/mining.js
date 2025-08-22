@@ -32,10 +32,10 @@ function bindUI() {
                         <div class="resource-details"><span class="resource-amount">${node.resource_amount} available</span><span class="resource-distance">${node.distance} tile${node.distance !== 1 ? 's' : ''} away</span></div>
                     </div>
                     <div class="resource-action"><button class="mine-select-btn">Mine</button></div>`;
-                resourceOption.querySelector('.mine-select-btn').addEventListener('click', () => { startMining(shipId, node.id, node.resource_name); UI.closeModal(); });
+                resourceOption.querySelector('.mine-select-btn').addEventListener('click', () => { startMining(shipId, node.id, node.resource_name); window.UI.closeModal(); });
                 resourceList.appendChild(resourceOption);
             });
-            UI.showModal({ title: '⛏️ Mining Target Selection', content: resourceList, actions: [{ text: 'Cancel', style: 'secondary', action: () => true }], className: 'resource-selection-modal' });
+            window.UI.showModal({ title: '⛏️ Mining Target Selection', content: resourceList, actions: [{ text: 'Cancel', style: 'secondary', action: () => true }], className: 'resource-selection-modal' });
         } catch (error) {
             console.error('Error getting resource nodes:', error);
             client.addLogEntry('Failed to get nearby resources', 'error');

@@ -1039,12 +1039,12 @@ export class GameClient {
                 if (!btn) return;
                 const action = btn.dataset.action;
                 if (action === 'set-move-mode') { this.setMoveMode && this.setMoveMode(); return; }
-                if (action === 'set-warp-mode') { this.setWarpMode && this.setWarpMode(); return; }
+                if (action === 'set-warp-mode') { try { showWarpTargetSelection(this); } catch {} return; }
                 if (action === 'show-travel-options') { this.showInterstellarTravelOptions && this.showInterstellarTravelOptions(); return; }
                 if (action === 'toggle-mining') { try { SFMining.toggleMining(); } catch {} return; }
                 if (action === 'show-cargo') { try { SFCargo.showCargo(); } catch {} return; }
                 if (action === 'show-build') { build_showBuildModal(); return; }
-            }, { once: true });
+            });
         }
 
         // Update cargo status for the SELECTED unit only (avoid background overwrites)
@@ -2179,7 +2179,7 @@ export class GameClient {
             safe(byId('playersStatusBtn'), async () => { try { const mod = await import('./ui/players-modal.js'); mod.showPlayers(); } catch {} });
             safe(byId('openEncyclopediaBtn'), () => { try { if (typeof openEncyclopedia === 'function') openEncyclopedia(); else UI.showAlert('Encyclopedia coming soon'); } catch {} });
             safe(byId('settingsBtn'), () => { try { if (typeof showSettings === 'function') showSettings(); else UI.showAlert('Settings coming soon'); } catch {} });
-            safe(byId('exitGameBtn'), () => { try { if (typeof exitGame === 'function') exitGame(); else window.location.href = 'index.html'; } catch {} });
+            safe(byId('exitGameBtn'), () => { try { if (typeof exitGame === 'function') exitGame(); else window.location.href = '/play'; } catch {} });
             // Map controls
             safe(byId('zoomInBtn'), () => { try { if (typeof zoomIn === 'function') zoomIn(); else { if (this.tileSize < 40) { this.tileSize += 2; this.render(); } } } catch {} });
             safe(byId('zoomOutBtn'), () => { try { if (typeof zoomOut === 'function') zoomOut(); else { if (this.tileSize > 6) { this.tileSize -= 2; this.render(); } } } catch {} });
@@ -3696,7 +3696,7 @@ function setWarpMode() {
         });
         
         if (hasActiveMovement) {
-            gameClient.addLogEntry(`Cannot warp while ship is moving. Movement status: ${unit.movementStatus}`, 'warning');
+            gameClient.addLogEntry(`Cannot warp while ship is moving.`, 'warning');
             return;
         }
         

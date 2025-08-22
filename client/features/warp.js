@@ -1,5 +1,4 @@
 // Warp Controller - ESM version (no globals)
-import * as UI from '../ui/tooltip.js';
 
 export function showWarpConfirmation(client, target) {
         const distance = Math.sqrt(
@@ -23,7 +22,7 @@ export function showWarpConfirmation(client, target) {
                 <div class="warp-warning">⚠️ Warp preparation cannot be interrupted once started</div>
             </div>
         `;
-        UI.showModal({
+        window.UI.showModal({
             title: '🌌 Warp Jump',
             content: modalContent,
             actions: [
@@ -91,7 +90,7 @@ export function showWarpTargetSelection(client) {
             option.querySelector('.warp-select-btn').addEventListener('click', () => { showWarpConfirmation(client, target); });
             targetList.appendChild(option);
         });
-        UI.showModal({ title: '🌌 Warp Target Selection', content: targetList, actions: [{ text:'Cancel', style:'secondary', action: ()=>{ client.addLogEntry('Warp target selection cancelled', 'info'); return true; } }], className:'warp-target-modal' });
+        window.UI.showModal({ title: '🌌 Warp Target Selection', content: targetList, actions: [{ text:'Cancel', style:'secondary', action: ()=>{ client.addLogEntry('Warp target selection cancelled', 'info'); return true; } }], className:'warp-target-modal' });
 }
 
 export function getWarpTargets(client, ship) {

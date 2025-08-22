@@ -1,8 +1,7 @@
 // Build & Shipyard Feature Module (ESM)
 // Exports named functions; no window globals.
 
-import * as SFApi from '../services/api.js';
-import * as UI from '../ui/tooltip.js';
+import '../services/api.js';
 
 function bindUI() {
     const byId = (id) => document.getElementById(id);
@@ -122,7 +121,7 @@ export async function showBuildModal() {
                 </div>
             </div>
         `;
-        UI.showModal({ title: '🔨 Construction Bay', content: buildModal, actions: [{ text:'Close', style:'primary', action: ()=>true }], className:'build-modal-container' });
+        window.UI.showModal({ title: '🔨 Construction Bay', content: buildModal, actions: [{ text:'Close', style:'primary', action: ()=>true }], className:'build-modal-container' });
         buildModal.querySelectorAll('.build-tab').forEach(btn => {
             btn.addEventListener('click', () => switchBuildTab(btn.dataset.tab, buildModal));
         });
@@ -144,7 +143,7 @@ export async function renderShipyard(selectedStation, cargo) {
     const client = window.gameClient; const container = document.getElementById('shipyard-container'); if (!container) return;
     const haveMap = new Map(cargo.items.map(i => [i.resource_name, i.quantity]));
     let blueprints = [];
-    try { const jd = await SFApi.Build.blueprints(); blueprints = jd.blueprints || []; } catch {}
+    try { const jd = await window.SFApi.Build.blueprints(); blueprints = jd.blueprints || []; } catch {}
     const ROLE_TO_REFINED = { 'stealth-scout': 'scout-recon','brawler': 'brawler','sniper': 'sniper-siege','interceptor': 'interceptor','assassin': 'stealth-strike','miner': 'prospector-miner','ecm': 'ecm-disruption','torpedo': 'torpedo-missile','courier': 'logistics','stealth-strike': 'stealth-strike','boarding': 'heavy-assault','miner-raider': 'prospector-miner','ecm-torpedo': 'torpedo-missile','escort': 'escort','siege': 'sniper-siege','fortress': 'fortress','gunline': 'sniper-siege','carrier': 'carrier','beam-destroyer': 'sniper-siege','torpedo-siege': 'torpedo-missile','ecm-fortress': 'ecm-disruption','logistics': 'logistics','repair-tender': 'medical-repair','defensive-carrier': 'carrier','command-artillery': 'command','siege-ecm': 'sniper-siege','logistics-fortress': 'logistics','freighter': 'logistics','colony': 'colony-ship','transport': 'logistics','medical': 'medical-repair','deepcore-miner': 'prospector-miner','gas-harvester': 'gas-harvester','strip-miner': 'prospector-miner','mining-command': 'prospector-miner','salvage': 'salvage','supercarrier': 'carrier','dreadnought': 'heavy-assault','flagship-command': 'flagship','heavy-shield': 'fortress','stealth-battleship': 'stealth-strike','mobile-shipyard': 'logistics','worldship': 'fortress','megafreighter': 'logistics','exploration': 'scout-recon','fleet-anchor': 'fortress','planet-cracker': 'sniper-siege','gas-refinery': 'gas-harvester','prospecting-ark': 'prospector-miner' };
     const REFINED_TO_GROUP = { 'brawler': 'combat','sniper-siege': 'combat','interceptor': 'combat','heavy-assault': 'combat','stealth-strike': 'combat','carrier': 'combat','escort': 'support-utility','command': 'support-utility','medical-repair': 'support-utility','logistics': 'support-utility','scout-recon': 'exploration-expansion','colony-ship': 'exploration-expansion','prospector-miner': 'exploration-expansion','gas-harvester': 'exploration-expansion','salvage': 'exploration-expansion','ecm-disruption': 'specialist','torpedo-missile': 'specialist','fortress': 'specialist','flagship': 'specialist' };
     blueprints = (blueprints || []).map(b => { const refinedRole = b.refinedRole || ROLE_TO_REFINED[b.role] || b.role; const refinedGroup = b.refinedGroup || REFINED_TO_GROUP[refinedRole] || null; return { ...b, refinedRole, refinedGroup }; });
@@ -183,8 +182,8 @@ export async function renderShipyard(selectedStation, cargo) {
                 </div>`;
             wrap.querySelector('button').onclick = async () => {
                 try {
-                    const jd = await SFApi.Build.buildShip(selectedStation.id, bp.id, client.userId, freeBuild);
-                    client.addLogEntry(`Built ${jd.shipName}`, 'success'); UI.closeModal(); await client.loadGameState();
+                    const jd = await window.SFApi.Build.buildShip(selectedStation.id, bp.id, client.userId, freeBuild);
+                    client.addLogEntry(`Built ${jd.shipName}`, 'success'); window.UI.closeModal(); await client.loadGameState();
                 } catch (e) { client.addLogEntry(e?.data?.error || e.message || 'Build failed', 'error'); }
             };
             list.appendChild(wrap);
@@ -206,29 +205,29 @@ export function switchBuildTab(tabName, root) {
 
 export async function buildShip(shipType, cost) {
     const client = window.gameClient; if (!client || !client.selectedUnit) { client?.addLogEntry('No station selected', 'warning'); return; }
-    try { const data = await SFApi.postJson('/game/build-ship', { stationId: client.selectedUnit.id, shipType, cost, userId: client.userId }); client.addLogEntry(`${data.shipName} constructed successfully!`, 'success'); UI.closeModal(); client.socket.emit('get-game-state', { gameId: client.gameId, userId: client.userId }); } catch (error) { console.error('Error building ship:', error); client.addLogEntry(error?.data?.error || 'Failed to build ship', 'error'); }
+    try { const data = await window.SFApi.Build.buildShipLegacy(client.selectedUnit.id, shipType, cost, client.userId); client.addLogEntry(`${data.shipName} constructed successfully!`, 'success'); window.UI.closeModal(); client.socket.emit('get-game-state', { gameId: client.gameId, userId: client.userId }); } catch (error) { console.error('Error building ship:', error); client.addLogEntry(error?.data?.error || 'Failed to build ship', 'error'); }
 }
 
 export async function buildStructure(structureType, cost) {
     const client = window.gameClient; if (!client || !client.selectedUnit) { client?.addLogEntry('No station selected', 'warning'); return; }
-    try { const data = await SFApi.Build.buildStructure(client.selectedUnit.id, structureType, cost, client.userId); client.addLogEntry(`${data.structureName} manufactured successfully!`, 'success'); UI.closeModal(); } catch (error) { console.error('Error building structure:', error); client.addLogEntry(error?.data?.error || 'Failed to build structure', 'error'); }
+    try { const data = await window.SFApi.Build.buildStructure(client.selectedUnit.id, structureType, cost, client.userId); client.addLogEntry(`${data.structureName} manufactured successfully!`, 'success'); window.UI.closeModal(); } catch (error) { console.error('Error building structure:', error); client.addLogEntry(error?.data?.error || 'Failed to build structure', 'error'); }
 }
 
 export async function buildBasicExplorer(cost) {
     const client = window.gameClient; if (!client || !client.selectedUnit) { client?.addLogEntry('No station selected', 'warning'); return; }
-    try { const data = await SFApi.Build.buildShipBasic(client.selectedUnit.id, client.userId); client.addLogEntry(`${data.shipName} constructed successfully!`, 'success'); UI.closeModal(); await client.loadGameState(); } catch (error) { console.error('Error building basic explorer:', error); client.addLogEntry(error?.data?.error || 'Failed to build Explorer', 'error'); }
+    try { const data = await window.SFApi.Build.buildShipBasic(client.selectedUnit.id, client.userId); client.addLogEntry(`${data.shipName} constructed successfully!`, 'success'); window.UI.closeModal(); await client.loadGameState(); } catch (error) { console.error('Error building basic explorer:', error); client.addLogEntry(error?.data?.error || 'Failed to build Explorer', 'error'); }
 }
 
 export async function deployStructure(structureType, shipId) {
     const client = window.gameClient; if (!client || !client.selectedUnit) { client?.addLogEntry('No ship selected', 'warning'); return; }
     if (structureType === 'interstellar-gate') { showSectorSelectionModal(shipId); return; }
-    try { const data = await SFApi.Build.deployStructure(shipId, structureType, client.userId); client.addLogEntry(`${data.structureName} deployed successfully!`, 'success'); UI.closeModal(); client.socket.emit('get-game-state', { gameId: client.gameId, userId: client.userId }); } catch (error) { console.error('Error deploying structure:', error); client.addLogEntry(error?.data?.error || 'Failed to deploy structure', 'error'); }
+    try { const data = await window.SFApi.Build.deployStructure(shipId, structureType, client.userId); client.addLogEntry(`${data.structureName} deployed successfully!`, 'success'); window.UI.closeModal(); client.socket.emit('get-game-state', { gameId: client.gameId, userId: client.userId }); } catch (error) { console.error('Error deploying structure:', error); client.addLogEntry(error?.data?.error || 'Failed to deploy structure', 'error'); }
 }
 
 export async function showSectorSelectionModal(shipId) {
     const client = window.gameClient;
     try {
-        const data = await SFApi.Build.listSectors(client.gameId, client.userId);
+        const data = await window.SFApi.Build.listSectors(client.gameId, client.userId);
         const sectors = data.sectors; const currentSectorId = client.gameState.sector.id;
         const availableSectors = sectors.filter(sector => sector.id !== currentSectorId);
         if (availableSectors.length === 0) { client.addLogEntry('No other sectors available for gate connection', 'warning'); return; }
@@ -246,7 +245,7 @@ export async function showSectorSelectionModal(shipId) {
                     </div>
                 `).join('')}
             </div>`;
-        UI.showModal({ title: '🌀 Interstellar Gate Deployment', content: sectorModal, actions: [{ text: 'Cancel', style: 'secondary', action: () => true }], className: 'sector-selection-modal-container' });
+        window.UI.showModal({ title: '🌀 Interstellar Gate Deployment', content: sectorModal, actions: [{ text: 'Cancel', style: 'secondary', action: () => true }], className: 'sector-selection-modal-container' });
         sectorModal.addEventListener('click', (e) => {
             const row = e.target.closest('[data-action="deploy-gate"]');
             if (!row) return;
@@ -260,7 +259,7 @@ export async function showSectorSelectionModal(shipId) {
 
 export async function deployInterstellarGate(shipId, destinationSectorId, destinationSectorName) {
     const client = window.gameClient;
-    try { const data = await SFApi.Build.deployInterstellarGate(shipId, destinationSectorId, client.userId); client.addLogEntry(`Interstellar Gate deployed! Connected to ${destinationSectorName}`, 'success'); UI.closeModal(); client.socket.emit('get-game-state', { gameId: client.gameId, userId: client.userId }); } catch (error) { console.error('Error deploying interstellar gate:', error); client.addLogEntry(error?.data?.error || 'Failed to deploy interstellar gate', 'error'); }
+    try { const data = await window.SFApi.Build.deployInterstellarGate(shipId, destinationSectorId, client.userId); client.addLogEntry(`Interstellar Gate deployed! Connected to ${destinationSectorName}`, 'success'); window.UI.closeModal(); client.socket.emit('get-game-state', { gameId: client.gameId, userId: client.userId }); } catch (error) { console.error('Error deploying interstellar gate:', error); client.addLogEntry(error?.data?.error || 'Failed to deploy interstellar gate', 'error'); }
 }
 
 bindUI();

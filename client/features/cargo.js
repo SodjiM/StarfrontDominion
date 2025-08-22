@@ -83,7 +83,7 @@ function bindUI() {
                     return;
                 }
             });
-            UI.showModal({ title: `📦 ${unitType} Cargo`, content: cargoDisplay, actions: [{ text:'Close', style:'primary', action: ()=>true }], className: 'cargo-modal' });
+            window.UI.showModal({ title: `📦 ${unitType} Cargo`, content: cargoDisplay, actions: [{ text:'Close', style:'primary', action: ()=>true }], className: 'cargo-modal' });
         } catch (error) { console.error('Error getting cargo:', error); client.addLogEntry('Failed to get cargo information', 'error'); }
     }
 
@@ -133,7 +133,7 @@ function bindUI() {
                 const qty = document.getElementById(inputId)?.value;
                 performTransfer(fromId, toId, res, qty, toName);
             });
-            UI.showModal({ title:'🔄 Transfer Resources', content: transferDisplay, actions:[{ text:'Cancel', style:'secondary', action:()=>true }], className:'transfer-modal' });
+            window.UI.showModal({ title:'🔄 Transfer Resources', content: transferDisplay, actions:[{ text:'Cancel', style:'secondary', action:()=>true }], className:'transfer-modal' });
         } catch (error) { console.error('Error showing transfer modal:', error); client.addLogEntry('Failed to show transfer options', 'error'); }
     }
 
@@ -144,7 +144,7 @@ function bindUI() {
             const result = await SFApi.Cargo.transfer(parseInt(fromObjectId), parseInt(toObjectId), resourceName, transferQuantity, client.userId);
             if (result && result.success) {
                 client.addLogEntry(`Successfully transferred ${transferQuantity} ${resourceName} to ${toObjectName}`, 'success');
-                UI.closeModal();
+                window.UI.closeModal();
                 if (client.selectedUnit && client.selectedUnit.id === fromObjectId) { setTimeout(() => showCargo(), 100); }
             } else { client.addLogEntry(result?.error || 'Transfer failed', 'error'); }
         } catch (error) { console.error('Error performing transfer:', error); client.addLogEntry(error?.data?.error || 'Failed to transfer resources', 'error'); }

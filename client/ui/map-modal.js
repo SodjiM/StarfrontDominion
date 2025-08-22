@@ -37,7 +37,7 @@ export function openMapModal() {
                 </div>
                 <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.</div>
             </div>`;
-        UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:820 });
+        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:820 });
         // Bind tab switching without globals
         bindTabEvents(modalContent);
         setTimeout(() => { try { initializeFullMap(); loadGalaxyData(); populateSystemFacts(); } catch (e) { console.error('map init error', e); } }, 100);

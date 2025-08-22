@@ -463,7 +463,8 @@
         function logout() {
             localStorage.removeItem('userId');
             localStorage.removeItem('username');
-            window.location.href = 'index.html';
+            // Send users to the legacy login page under /play to avoid SPA 404
+            window.location.href = 'login.html';
         }
 
         // Initialize
