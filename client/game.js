@@ -1,6 +1,31 @@
 // Starfront: Dominion - Game Client Logic
 
-class GameClient {
+import * as SFMining from './features/mining.js';
+import * as SFCargo from './features/cargo.js';
+import {
+    showWarpConfirmation,
+    executeWarpOrder,
+    enterWarpMode,
+    showWarpTargetSelection,
+    getWarpTargets,
+    getWarpTargetIcon,
+    getWarpTargetType,
+    isAdjacentToInterstellarGate,
+    getAdjacentInterstellarGates
+} from './features/warp.js';
+import {
+    showBuildModal as build_showBuildModal,
+    renderShipyard as build_renderShipyard,
+    switchBuildTab as build_switchBuildTab,
+    buildShip as build_buildShip,
+    buildStructure as build_buildStructure,
+    buildBasicExplorer as build_buildBasicExplorer,
+    deployStructure as build_deployStructure,
+    showSectorSelectionModal as build_showSectorSelectionModal,
+    deployInterstellarGate as build_deployInterstellarGate
+} from './features/build.js';
+
+export class GameClient {
     constructor() {
         this.gameId = null;
         this.userId = null;
@@ -43,8 +68,7 @@ class GameClient {
             const sectorId = this.gameState?.sector?.id;
             const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
             if (!sectorId) return;
-            const resp = await fetch(`/game/sector/${sectorId}/trails?sinceTurn=${currentTurn}&maxAge=10`);
-            const data = await resp.json();
+            const data = await SFApi.State.sectorTrails(sectorId, currentTurn, 10);
             if (!data || !Array.isArray(data.segments)) return;
             const byTurn = this.trailBuffer.byTurn;
             const minTurn = currentTurn - 9;
@@ -91,6 +115,8 @@ class GameClient {
         
         // Setup event listeners
         this.setupEventListeners();
+        // Bind UI controls migrated from inline HTML
+        this.bindUIControls();
         
         console.log(`🎮 Game ${gameId} initialized for user ${this.userId}`);
     }
@@ -236,25 +262,35 @@ class GameClient {
         });
 
         this.socket.on('turn-resolved', (data) => {
-            this.addLogEntry(`Turn ${data.turnNumber} resolved! Starting turn ${data.nextTurn}`, 'success');
-            this.loadGameState(); // Refresh game state
-            this.fetchSectorTrails();
-            // Tick senate meter +1% per resolved turn
-            this.incrementSenateProgress(1);
-            // Append combat logs for the resolved turn to Activity Log
-            try {
-                fetch(`/combat/logs/${this.gameId}/${data.turnNumber}`)
-                    .then(r => r.ok ? r.json() : Promise.reject())
-                    .then(payload => {
-                        const rows = Array.isArray(payload?.logs) ? payload.logs : [];
-                        rows.forEach(log => {
-                            const kind = (log.event_type === 'kill') ? 'success' : (log.event_type === 'ability' || log.event_type === 'status') ? 'info' : 'info';
-                            this.addLogEntry(log.summary || 'Combat event', kind);
-                        });
-                    })
-                    .catch(() => {});
-            } catch {}
-            setTimeout(() => this.refreshAbilityCooldowns(), 50);
+            // First: refresh state and render; hide overlay immediately after
+            Promise.resolve()
+                .then(() => this.loadGameState())
+                .then(() => {
+                    this.addLogEntry(`Turn ${data.turnNumber} resolved! Starting turn ${data.nextTurn}`, 'success');
+                })
+                .then(() => {
+                    // Defer heavier/non-critical work to next tick
+                    setTimeout(() => {
+                        // Trails refresh (if needed)
+                        try { this.fetchSectorTrails(); } catch {}
+                        // Senate meter tick
+                        try { this.incrementSenateProgress(1); } catch {}
+                        // Combat logs
+                        try {
+                            SFApi.State.combatLogs(this.gameId, data.turnNumber)
+                                .then(payload => {
+                                    const rows = Array.isArray(payload?.logs) ? payload.logs : [];
+                                    rows.forEach(log => {
+                                        const kind = (log.event_type === 'kill') ? 'success' : (log.event_type === 'ability' || log.event_type === 'status') ? 'info' : 'info';
+                                        this.addLogEntry(log.summary || 'Combat event', kind);
+                                    });
+                                })
+                                .catch(() => {});
+                        } catch {}
+                        // Ability cooldown refresh slightly later
+                        setTimeout(() => this.refreshAbilityCooldowns(), 50);
+                    }, 0);
+                });
         });
 
         this.socket.on('ability-queued', (payload) => {
@@ -372,10 +408,9 @@ class GameClient {
             if (this.selectedUnit && this.selectedUnit.sectorInfo?.id) {
                 url = `/game/${this.gameId}/state/${this.userId}/sector/${this.selectedUnit.sectorInfo.id}`;
             }
-            const response = await fetch(url);
-            const data = await response.json();
+            const data = await SFApi.State.gameState(this.gameId, this.userId, (this.selectedUnit && this.selectedUnit.sectorInfo?.id) ? this.selectedUnit.sectorInfo.id : undefined);
             
-            if (response.ok) {
+            if (data) {
                 // Parse all meta fields from JSON strings to objects
                 if (data.objects) {
                     data.objects.forEach(obj => {
@@ -392,14 +427,14 @@ class GameClient {
                 
                 // Preserve current camera and selection while updating state
                 const preserveCamera = { x: this.camera.x, y: this.camera.y };
-                this.gameState = data;
+                // Normalize state (meta parsing etc.) in one place
+                const normalized = (window.SFNormalizers && typeof SFNormalizers.normalizeGameState === 'function') ? SFNormalizers.normalizeGameState(data) : data;
+                this.gameState = normalized;
                 this.updateUI();
                 this.camera.x = preserveCamera.x;
                 this.camera.y = preserveCamera.y;
                 this.render();
                 console.log('🎮 Game state loaded:', data);
-            } else {
-                this.addLogEntry(`Error: ${data.error}`, 'error');
             }
         } catch (error) {
             console.error('Failed to load game state:', error);
@@ -411,17 +446,8 @@ class GameClient {
     async fetchMovementHistory(shipId = null, turns = 10) {
         try {
             const url = `/game/${this.gameId}/movement-history/${this.userId}${shipId ? `?shipId=${shipId}&turns=${turns}` : `?turns=${turns}`}`;
-            const response = await fetch(url);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            const data = await response.json();
-            
-            if (!data.success) {
-                throw new Error(data.error || 'Failed to fetch movement history');
-            }
+            const data = await SFApi.State.movementHistory(this.gameId, this.userId, shipId, turns);
+            if (!data.success) throw new Error(data.error || 'Failed to fetch movement history');
             
             console.log(`📜 Fetched ${data.movementHistory.length} movement history segments (${data.turnsRequested} turns)`);
             
@@ -448,12 +474,12 @@ class GameClient {
     }
 
     // Update UI elements with game state
-    updateUI() {
+    async updateUI() {
         if (!this.gameState) return;
 
         // Check if setup is needed (prevent normal UI until setup complete)
         if (!this.gameState.playerSetup?.setup_completed) {
-            this.showSetupModal();
+            try { const mod = await import('./ui/setup-modal.js'); mod.showSetupModal(this); } catch {}
             return; // Don't show game UI until setup complete
         }
 
@@ -465,10 +491,8 @@ class GameClient {
         const gameTitle = document.getElementById('gameTitle');
         gameTitle.innerHTML = `🌌 ${this.gameState.sector.name || 'Your System'}`;
         
-        // Update player avatar
-        this.updatePlayerAvatar();
-        // Update player information card (identity, stats, actions)
-        this.updatePlayerInformationPanel();
+        // Update player panel
+        try { const mod = await import('./ui/player-panel.js'); mod.updatePlayerPanel(this); } catch {}
         
         // Update sector overview title
         this.updateSectorOverviewTitle();
@@ -486,8 +510,7 @@ class GameClient {
         }
 
         // Update units list - load from all sectors
-        this.attachFleetToolbarHandlers();
-        this.updateMultiSectorFleet();
+        try { const mod = await import('./ui/fleet-list.js'); mod.updateFleetList(this); } catch {}
 
         this.objects = this.gameState.objects;
 
@@ -676,88 +699,9 @@ class GameClient {
         } catch {}
     }
 
-    // Update player avatar display
-    updatePlayerAvatar() {
-        const avatarImg = document.getElementById('playerAvatar');
-        if (!avatarImg || !this.gameState?.playerSetup) return;
-        
-        const avatar = this.gameState.playerSetup.avatar;
-        if (avatar) {
-            avatarImg.src = `assets/avatars/${avatar}.png`;
-            avatarImg.alt = `${avatar} avatar`;
-        }
-    }
+    // player panel handled in SFUI.playerPanel
 
-    // Update the bottom-left player information card
-    updatePlayerInformationPanel() {
-        const setup = this.gameState?.playerSetup || {};
-        // Commander name from session
-        const username = (Session.getUser()?.username) || 'Commander';
-        const nameEl = document.getElementById('commanderName');
-        if (nameEl) nameEl.textContent = username;
-        // Keep chat/name cache in sync with UI
-        try { if (this.userId) this.playerNameById.set(Number(this.userId), username); } catch {}
-
-        // System name subtitle
-        const sysEl = document.getElementById('systemNameLabel');
-        if (sysEl) sysEl.textContent = setup.systemName || '—';
-
-        // Color swatch
-        const swatch = document.getElementById('playerColorSwatch');
-        if (swatch) {
-            swatch.style.background = setup.colorPrimary || '#64b5f6';
-            const secondary = setup.colorSecondary || '#9c27b0';
-            swatch.style.boxShadow = `0 0 10px 2px ${secondary}`;
-        }
-
-        // Avatar image (mini)
-        const mini = document.getElementById('playerAvatarMini');
-        if (mini && setup.avatar) {
-            mini.src = `assets/avatars/${setup.avatar}.png`;
-            mini.alt = `${setup.avatar} avatar`;
-        }
-
-        // Stats: credits (placeholder), ships, stations, senators (placeholder)
-        const creditsEl = document.getElementById('creditsChip');
-        if (creditsEl) creditsEl.textContent = '—'; // TODO: hook real credits when available
-
-        const senatorsEl = document.getElementById('senatorsChip');
-        if (senatorsEl) senatorsEl.textContent = '—'; // TODO: hook real senators count
-
-        const shipsEl = document.getElementById('shipsChip');
-        const stationsEl = document.getElementById('stationsChip');
-        const pilotsEl = document.getElementById('pilotsChip');
-        const pilotsBreakdownEl = document.getElementById('pilotBreakdown');
-
-        if (this.lastFleet && Array.isArray(this.lastFleet)) {
-            const ships = this.lastFleet.filter(u => u.type === 'ship').length;
-            const stations = this.lastFleet.filter(u => u.type === 'station').length;
-            if (shipsEl) shipsEl.textContent = String(ships);
-            if (stationsEl) stationsEl.textContent = String(stations);
-        } else {
-            if (shipsEl) shipsEl.textContent = '…';
-            if (stationsEl) stationsEl.textContent = '…';
-        }
-
-        // Pilots display
-        const stats = this.gameState?.pilotStats;
-        if (stats && pilotsEl) {
-            pilotsEl.textContent = `${Math.max(0, stats.available || 0)} / ${stats.capacity || 0}`;
-            if (pilotsBreakdownEl) {
-                const buckets = Array.isArray(stats.respawnsByTurn) ? stats.respawnsByTurn
-                    .slice(0, 3)
-                    .map(b => `${b.turnsLeft}t:${b.count}`)
-                    .join(', ') : '';
-                pilotsBreakdownEl.textContent = `Active ${stats.active || 0} • Dead ${stats.dead || 0}${buckets ? ' • ' + buckets : ''}`;
-            }
-        } else {
-            if (pilotsEl) pilotsEl.textContent = '—';
-            if (pilotsBreakdownEl) pilotsBreakdownEl.textContent = '';
-        }
-
-        // Senate ring
-        this.applySenateProgressToUI();
-    }
+    // player panel handled in SFUI.playerPanel
 
     // Senate progress persistence helpers
     senateStorageKey() {
@@ -940,13 +884,8 @@ class GameClient {
         // Load ability definitions from server registry (once per session)
         if (!window.AbilityDefs) {
             try {
-                const res = await fetch('/game/abilities');
-                const data = await res.json();
-                if (res.ok && data && data.abilities) {
-                    window.AbilityDefs = data.abilities;
-                } else {
-                    window.AbilityDefs = {};
-                }
+                const data = await SFApi.Abilities.list();
+                if (data && data.abilities) { window.AbilityDefs = data.abilities; } else { window.AbilityDefs = {}; }
             } catch { window.AbilityDefs = {}; }
         }
         const abilityDefs = window.AbilityDefs;
@@ -962,6 +901,12 @@ class GameClient {
                 abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${disabled} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
             }
         });
+
+        // Determine if this unit can mine (support legacy ships where canMine may be missing)
+        const canMine = (unit.type === 'ship') && (
+            (meta && meta.canMine === true) ||
+            (meta && meta.canMine === undefined && (Number(meta.harvestRate) > 0))
+        );
 
         detailsContainer.innerHTML = `
             <div class="unit-info">
@@ -1041,30 +986,30 @@ class GameClient {
             
             <div style="margin-top: 20px;">
                 ${unit.type === 'ship' ? `
-                    <button class="sf-btn sf-btn-secondary" onclick="setMoveMode()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" data-action="set-move-mode" ${this.turnLocked ? 'disabled' : ''}>
                         🎯 Set Destination
                     </button>
-                    <button class="sf-btn sf-btn-secondary" onclick="setWarpMode()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" data-action="set-warp-mode" ${this.turnLocked ? 'disabled' : ''}>
                         🌌 Warp
                     </button>
                     ${this.isAdjacentToInterstellarGate(unit) ? `
-                        <button class="sf-btn sf-btn-secondary" onclick="showInterstellarTravelOptions()" ${this.turnLocked ? 'disabled' : ''}>
+                        <button class="sf-btn sf-btn-secondary" data-action="show-travel-options" ${this.turnLocked ? 'disabled' : ''}>
                             🌀 Interstellar Travel
                         </button>
                     ` : ''}
-                    <button class="sf-btn sf-btn-secondary" id="mineBtn" onclick="toggleMining()" ${this.turnLocked || !meta.canMine ? 'disabled' : ''}>
-                        ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (meta.canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}
+                    <button class="sf-btn sf-btn-secondary" id="mineBtn" data-action="toggle-mining" ${this.turnLocked || !canMine ? 'disabled' : ''}>
+                        ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}
                     </button>
-                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" data-action="show-cargo" ${this.turnLocked ? 'disabled' : ''}>
                         📦 Cargo
                     </button>
                     
                 ` : ''}
                 ${(unit.type === 'station') ? `
-                    <button class="sf-btn sf-btn-secondary" onclick="showBuildModal()" ${this.turnLocked ? 'disabled' : ''}>
+                    <button class="sf-btn sf-btn-secondary" data-action="show-build" ${this.turnLocked ? 'disabled' : ''}>
                         🏗️ Build
                     </button>
-                    <button class="sf-btn sf-btn-secondary" onclick="showCargo()" ${this.turnLocked ? '' : ''}>
+                    <button class="sf-btn sf-btn-secondary" data-action="show-cargo" ${this.turnLocked ? '' : ''}>
                         📦 Cargo
                     </button>
                 ` : ''}
@@ -1086,9 +1031,25 @@ class GameClient {
             </div>
         `;
         
+        // Delegate unit action buttons in the panel
+        const unitPanel = unitDetails;
+        if (unitPanel) {
+            unitPanel.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-action]');
+                if (!btn) return;
+                const action = btn.dataset.action;
+                if (action === 'set-move-mode') { this.setMoveMode && this.setMoveMode(); return; }
+                if (action === 'set-warp-mode') { this.setWarpMode && this.setWarpMode(); return; }
+                if (action === 'show-travel-options') { this.showInterstellarTravelOptions && this.showInterstellarTravelOptions(); return; }
+                if (action === 'toggle-mining') { try { SFMining.toggleMining(); } catch {} return; }
+                if (action === 'show-cargo') { try { SFCargo.showCargo(); } catch {} return; }
+                if (action === 'show-build') { build_showBuildModal(); return; }
+            }, { once: true });
+        }
+
         // Update cargo status for the SELECTED unit only (avoid background overwrites)
         if (this.selectedUnit && unit && unit.id === this.selectedUnit.id && unit.meta && unit.meta.cargoCapacity) {
-            updateCargoStatus(unit.id);
+            try { SFCargo.updateCargoStatus(unit.id); } catch {}
         }
 
         // Wire ability buttons with cooldown state
@@ -1102,8 +1063,7 @@ class GameClient {
             });
             // Fetch cooldowns and disable buttons where applicable
             if (this.selectedUnit) {
-                fetch(`/game/ability-cooldowns/${this.selectedUnit.id}`)
-                    .then(r => r.json())
+                SFApi.Abilities.cooldowns(this.selectedUnit.id)
                     .then(data => {
                         const cooldowns = new Map((data.cooldowns || []).map(c => [c.ability_key, c.available_turn]));
                         const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
@@ -1130,57 +1090,20 @@ class GameClient {
         }
     }
 
-    // Ability preview ring + hover
-    previewAbilityRange(abilityKey) { this.abilityPreview = abilityKey; this.render(); }
-    clearAbilityPreview() {
-        // Do not clear the ring if a position-target ability is currently awaiting a click
-        if (this.pendingAbility && this.pendingAbility.def?.target === 'position') return;
-        this.abilityPreview = null; this.abilityHover = null; this.render();
-    }
+    // Ability preview ring + hover (delegated)
+    previewAbilityRange(abilityKey) { if (window.SFAbilities) return SFAbilities.previewAbilityRange(this, abilityKey); this.abilityPreview = abilityKey; this.render(); }
+    clearAbilityPreview() { if (window.SFAbilities) return SFAbilities.clearAbilityPreview(this); }
 
     // Utility: check if a tile is occupied by any object
     isTileOccupied(x, y) {
         return this.objects?.some?.(o => o.x === x && o.y === y) || false;
     }
 
-    // Generic position-ability hover computation (reusable for any ability with target==='position')
-    computePositionAbilityHover(abilityKey, worldX, worldY) {
-        const unit = this.selectedUnit;
-        const def = (window.AbilityDefs || {})[abilityKey];
-        if (!unit || !def) return null;
-        const dx = worldX - unit.x;
-        const dy = worldY - unit.y;
-        const dist = Math.hypot(dx, dy);
-        // Default rule: within range and destination tile unoccupied
-        const inRange = !def.range || dist <= def.range;
-        const free = !this.isTileOccupied(worldX, worldY);
-        const valid = inRange && free;
-        return { x: worldX, y: worldY, valid, inRange, free };
-    }
+    // Generic position-ability hover computation (delegated)
+    computePositionAbilityHover(abilityKey, worldX, worldY) { if (window.SFAbilities) return SFAbilities.computePositionAbilityHover(this, abilityKey, worldX, worldY); return null; }
 
-    // Refresh ability cooldowns on-demand
-    async refreshAbilityCooldowns() {
-        const container = document.getElementById('abilityButtons');
-        if (!container || !this.selectedUnit) return;
-        try {
-            const res = await fetch(`/game/ability-cooldowns/${this.selectedUnit.id}`);
-            const data = await res.json();
-            const cooldowns = new Map((data.cooldowns || []).map(c => [c.ability_key, c.available_turn]));
-            const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
-            container.querySelectorAll('button[data-ability]').forEach(btn => {
-                const key = btn.getAttribute('data-ability');
-                const available = cooldowns.get(key);
-                if (available && Number(available) > Number(currentTurn)) {
-                    btn.disabled = true;
-                    btn.classList.add('sf-btn-disabled');
-                    btn.title = (btn.title || '') + ` (Cooldown: ready on turn ${available})`;
-                } else if (!this.turnLocked) {
-                    btn.disabled = false;
-                    btn.classList.remove('sf-btn-disabled');
-                }
-            });
-        } catch {}
-    }
+    // Refresh ability cooldowns on-demand (delegated)
+    async refreshAbilityCooldowns() { if (window.SFAbilities) return SFAbilities.refreshAbilityCooldowns(this); }
 
     // Compute effective movement speed client-side for UI only
     getEffectiveMovementSpeed(unit) {
@@ -1222,163 +1145,53 @@ class GameClient {
         const tilesX = Math.ceil(canvas.width / this.tileSize);
         const tilesY = Math.ceil(canvas.height / this.tileSize);
         
-        // Draw grid
-        this.drawGrid(ctx, centerX, centerY, tilesX, tilesY);
+        // Draw grid (delegated)
+        SFRenderers.grid.drawGrid(ctx, canvas, this.camera, this.tileSize);
         
         // Draw objects
-        this.drawObjects(ctx, centerX, centerY);
+        SFRenderers.objects.drawObjects(ctx, canvas, this.objects, this.camera, this.tileSize, this);
         
         // Draw movement paths for all ships with active movement orders
-        this.drawMovementPaths(ctx, centerX, centerY);
+        SFRenderers.movement.drawMovementPaths.call(
+            this,
+            ctx,
+            canvas,
+            this.objects,
+            this.userId,
+            this.camera,
+            this.tileSize,
+            this.selectedUnit,
+            this.gameState,
+            this.trailBuffer
+        );
         
         // Draw selection highlight
         this.drawSelection(ctx, centerX, centerY);
         
         // Draw fog of war overlay last for clarity
         if (this.fogEnabled) {
-            this.drawFogOfWar(ctx, centerX, centerY);
+            this.fogOffscreen = SFRenderers.fog.drawFogOfWar(ctx, canvas, this.objects, this.userId, this.camera, this.tileSize, this.fogOffscreen);
         }
 
         // Render mini-map
-        this.renderMiniMap();
-    }
-
-    // Queue ability activation
-    queueAbility(abilityKey) {
-        if (!this.selectedUnit || this.turnLocked) return;
-        const def = (window.AbilityDefs || {})[abilityKey];
-        if (!def) return;
-        if (def.target === 'self') {
-            this.socket.emit('activate-ability', { gameId: this.gameId, casterId: this.selectedUnit.id, abilityKey });
-            this.addLogEntry(`Queued ${def.name}`, 'info');
-            console.log(`🧪 Ability queued: key=${abilityKey} name=${def.name} ship=${this.selectedUnit.id}`);
-            // Optimistic UI: show Microthruster Shift effect immediately on the current turn
-            if (abilityKey === 'microthruster_shift') {
-                try {
-                    const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
-                    this.selectedUnit.meta = this.selectedUnit.meta || {};
-                    this.selectedUnit.meta.movementFlatBonus = Math.max(this.selectedUnit.meta.movementFlatBonus || 0, 3);
-                    this.selectedUnit.meta.movementFlatExpires = Number(currentTurn) + 1;
-                    this.render();
-                } catch {}
-            }
-            // For self-cast, keep preview off
-            this.abilityPreview = null; this.abilityHover = null; this.pendingAbility = null;
-        } else if (def.target === 'position') {
-            // Next click on the map will provide position
-            this.pendingAbility = { key: abilityKey, def };
-            this.addLogEntry(`Select position for ${def.name}`, 'info');
-            // Keep range ring visible until user clicks a position or cancels by clicking outside range
-            this.abilityPreview = abilityKey;
-        } else {
-            // Enemy/ally target
-            this.pendingAbility = { key: abilityKey, def };
-            this.addLogEntry(`Select target for ${def.name}`, 'info');
+        if (this.miniCanvas) {
+            // Share main canvas size so viewport calculation is accurate
+            this.miniCanvas._mainWidth = canvas.width;
+            this.miniCanvas._mainHeight = canvas.height;
+            SFMinimap.renderer.renderMiniMap(this.miniCtx, this.miniCanvas, this.objects, this.userId, this.camera, this.tileSize, this.gameState);
         }
     }
 
-    // Simple combat log fetch
+    // Queue ability activation (delegated)
+    queueAbility(abilityKey) { if (window.SFAbilities) return SFAbilities.queueAbility(this, abilityKey); }
+
+    // Delegates to SFUI.queuePanel when available
     async loadQueueLog(shipId, force) {
-        try {
-            // Optional: use cached if not force
-            if (!force && this._queuedByShipId.has(shipId)) {
-                this.renderQueueList(shipId, this._queuedByShipId.get(shipId));
-                return;
-            }
-            const orders = await new Promise((resolve) => {
-                this.socket.timeout(3000).emit('queue:list', { gameId: this.gameId, shipId }, (err, data) => {
-                    if (err || !data?.success) resolve([]); else resolve(data.orders || []);
-                });
-            });
-            this._queuedByShipId.set(shipId, orders);
-            this.renderQueueList(shipId, orders);
-        } catch (e) {
-            const el = document.getElementById('queueLog');
-            if (el) el.innerHTML = '<div class=\"log-entry error\">Failed to load queue</div>';
-        }
+        try { const mod = await import('./ui/queue-panel.js'); return mod.loadQueueLog(this, shipId, force); } catch {}
     }
+    clearQueue(shipId) { try { const modp = import('./ui/queue-panel.js'); modp.then(mod => mod.clearQueue(this, shipId)); } catch {} }
 
-    renderQueueList(shipId, orders) {
-        const el = document.getElementById('queueLog');
-        if (!el) return;
-        if (!orders || orders.length === 0) {
-            el.innerHTML = '<div class="log-entry">Queue is empty</div>';
-            return;
-        }
-        const items = orders.map((o, idx) => {
-            let label = o.order_type;
-            try {
-                const p = o.payload ? JSON.parse(o.payload) : {};
-                if (o.order_type === 'move' && p?.destination) label = `#${idx+1} Move to (${p.destination.x},${p.destination.y})`;
-                else if (o.order_type === 'warp' && p?.destination) label = `#${idx+1} Warp to (${p.destination.x},${p.destination.y})`;
-                else if (o.order_type === 'harvest_start') label = `#${idx+1} Start mining (node ${p?.nodeId || '?'})`;
-                else if (o.order_type === 'harvest_stop') label = `#${idx+1} Stop mining`;
-            } catch {}
-            return `<div class="log-entry" data-qid="${o.id}">
-                <span>${label}</span>
-                <button class="sf-btn sf-btn-xs" data-remove="${o.id}">✖</button>
-            </div>`;
-        }).join('');
-        el.innerHTML = items;
-        // Wire remove buttons
-        el.querySelectorAll('button[data-remove]').forEach(btn => {
-            btn.onclick = () => {
-                const id = Number(btn.getAttribute('data-remove'));
-                this.socket.emit('queue:remove', { gameId: this.gameId, shipId, id }, (resp) => {
-                    this.loadQueueLog(shipId, true);
-                });
-            };
-        });
-    }
-
-    clearQueue(shipId) {
-        this.socket.emit('queue:clear', { gameId: this.gameId, shipId }, (resp) => {
-            this.loadQueueLog(shipId, true);
-        });
-    }
-
-    // Draw fog of war: dim everything, then punch radial gradients around owned sensors
-    drawFogOfWar(ctx, centerX, centerY) {
-        const ownedSensors = (this.objects || []).filter(obj => obj.owner_id === this.userId && (obj.type === 'ship' || obj.type === 'station' || obj.type === 'sensor-tower'));
-        if (ownedSensors.length === 0) return;
-        const canvas = this.canvas;
-        // Create offscreen buffer if needed
-        if (!this.fogOffscreen || this.fogOffscreen.width !== canvas.width || this.fogOffscreen.height !== canvas.height) {
-            this.fogOffscreen = document.createElement('canvas');
-            this.fogOffscreen.width = canvas.width;
-            this.fogOffscreen.height = canvas.height;
-        }
-        const fctx = this.fogOffscreen.getContext('2d');
-        // Base dark overlay
-        fctx.clearRect(0, 0, this.fogOffscreen.width, this.fogOffscreen.height);
-        fctx.fillStyle = 'rgba(0,0,0,0.6)';
-        fctx.fillRect(0, 0, this.fogOffscreen.width, this.fogOffscreen.height);
-        // Punch out gradients for each sensor
-        fctx.globalCompositeOperation = 'destination-out';
-        ownedSensors.forEach(sensor => {
-            const meta = sensor.meta || {};
-            let scanRange = meta.scanRange || 5;
-            // Apply temporary multiplier hint if present (set by server when survey_scanner active)
-            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
-                scanRange = Math.ceil(scanRange * meta.scanRangeMultiplier);
-            }
-            const screenX = Math.round((sensor.x - this.camera.x) * this.tileSize + centerX);
-            const screenY = Math.round((sensor.y - this.camera.y) * this.tileSize + centerY);
-            const radiusPx = scanRange * this.tileSize;
-            const gradient = fctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, Math.max(1, radiusPx));
-            // Fully clear near center, fade to no-clear at edge for a hazy boundary
-            gradient.addColorStop(0, 'rgba(0,0,0,1)');
-            gradient.addColorStop(0.7, 'rgba(0,0,0,0.4)');
-            gradient.addColorStop(1, 'rgba(0,0,0,0)');
-            fctx.fillStyle = gradient;
-            fctx.beginPath();
-            fctx.arc(screenX, screenY, Math.max(1, radiusPx), 0, Math.PI * 2);
-            fctx.fill();
-        });
-        fctx.globalCompositeOperation = 'source-over';
-        // Draw the fog layer on top
-        ctx.drawImage(this.fogOffscreen, 0, 0);
-    }
+    // fog-of-war handled in SFRenderers.fog
 
     // Update sector overview title
     updateSectorOverviewTitle() {
@@ -1390,32 +1203,7 @@ class GameClient {
         }
     }
 
-    // Draw grid
-    drawGrid(ctx, centerX, centerY, tilesX, tilesY) {
-        ctx.strokeStyle = 'rgba(100, 181, 246, 0.1)';
-        ctx.lineWidth = 1;
-        
-        const startX = this.camera.x - Math.floor(tilesX / 2);
-        const startY = this.camera.y - Math.floor(tilesY / 2);
-        
-        // Draw vertical lines
-        for (let i = 0; i <= tilesX; i++) {
-            const x = centerX + (i - tilesX / 2) * this.tileSize;
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, this.canvas.height);
-            ctx.stroke();
-        }
-        
-        // Draw horizontal lines
-        for (let i = 0; i <= tilesY; i++) {
-            const y = centerY + (i - tilesY / 2) * this.tileSize;
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(this.canvas.width, y);
-            ctx.stroke();
-        }
-    }
+    // grid handled in SFRenderers.grid
 
     // Draw objects on the map with proper layering
     drawObjects(ctx, centerX, centerY) {
@@ -1502,11 +1290,23 @@ class GameClient {
         
         // Draw different object types
         if (obj.type === 'resource_node') {
+            if (window.SFRenderers && SFRenderers.resource) {
+                SFRenderers.resource.drawResourceNode(ctx, obj, x, y, renderSize, colors);
+            } else {
             this.drawResourceNode(ctx, obj, x, y, renderSize, colors);
+            }
         } else if (isCelestial) {
+            if (window.SFRenderers && SFRenderers.celestial) {
+                SFRenderers.celestial.drawCelestialObject(ctx, obj, x, y, renderSize, colors, visibility, this);
+            } else {
             this.drawCelestialObject(ctx, obj, x, y, renderSize, colors, visibility);
+            }
+        } else {
+            if (window.SFRenderers && SFRenderers.ship) {
+                SFRenderers.ship.drawShipObject(ctx, obj, x, y, renderSize, colors, visibility, isOwned);
         } else {
             this.drawShipObject(ctx, obj, x, y, renderSize, colors, visibility, isOwned);
+            }
         }
         
         // Restore context
@@ -2348,310 +2148,88 @@ class GameClient {
         }
     }
     // Render mini-map
-    renderMiniMap() {
-        this.ensureMiniCanvasRef();
-        if (!this.miniCanvas || !this.objects) return;
-        
-        const ctx = this.miniCtx;
-        const canvas = this.miniCanvas;
-        
-        // Clear mini-map
-        ctx.fillStyle = '#0a0a1a';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Draw sector boundary
-        ctx.strokeStyle = 'rgba(100, 181, 246, 0.3)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-        
-        // Scale objects to mini-map
-        const scaleX = canvas.width / 5000;
-        const scaleY = canvas.height / 5000;
-        
-        // Separate objects by type for better rendering
-        const celestialObjects = this.objects.filter(obj => this.isCelestialObject(obj));
-        const resourceNodes = this.objects.filter(obj => obj.type === 'resource_node');
-        const shipObjects = this.objects.filter(obj => !this.isCelestialObject(obj) && obj.type !== 'resource_node');
-        
-        // Draw celestial objects (but skip large field overlays for belts/nebulae)
-        celestialObjects.forEach(obj => {
-            const x = obj.x * scaleX;
-            const y = obj.y * scaleY;
-            const radius = obj.radius || 1;
-            const meta = obj.meta || {};
-            const celestialType = meta.celestialType || obj.celestial_type;
-            
-            // Skip drawing large circles for belts and nebulae - we'll show resource nodes instead
-            if (celestialType === 'belt' || celestialType === 'nebula') {
-                return;
-            }
-            
-            // Calculate size based on object type and importance
-            let size;
-            if (celestialType === 'star') {
-                size = Math.max(4, Math.min(radius * scaleX * 0.8, canvas.width * 0.08)); // Stars are prominent
-            } else if (celestialType === 'planet') {
-                size = Math.max(3, Math.min(radius * scaleX * 1.2, canvas.width * 0.06)); // Planets are visible
-            } else if (celestialType === 'moon') {
-                size = Math.max(2, Math.min(radius * scaleX * 1.5, canvas.width * 0.04)); // Moons are small but visible
-            } else {
-                size = Math.max(1, Math.min(radius * scaleX * 2, canvas.width * 0.05)); // Other objects
-            }
-            
-            // Get celestial colors
-            const colors = this.getCelestialColors(obj);
-            ctx.fillStyle = colors.border;
-            
-            if (celestialType === 'star' || celestialType === 'planet' || celestialType === 'moon') {
-                // Important objects - circles with better visibility
-                ctx.beginPath();
-                ctx.arc(x, y, size/2, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Add a subtle glow for stars and planets
-                if (celestialType === 'star' || celestialType === 'planet') {
-                    ctx.strokeStyle = colors.border;
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                }
-            } else {
-                // Small objects - squares
-                ctx.fillRect(x - size/2, y - size/2, size, size);
-            }
-        });
-        
-        // Draw resource nodes as small dots clustered by type
-        const resourceFieldLabels = new Map(); // Track field centers for labels
-        
-        resourceNodes.forEach(obj => {
-            const x = obj.x * scaleX;
-            const y = obj.y * scaleY;
-            const meta = obj.meta || {};
-            const resourceType = meta.resourceType || 'unknown';
-            const parentId = obj.parent_object_id;
-            
-            // Choose color based on resource type
-            let nodeColor;
-            switch (resourceType) {
-                case 'rock':
-                    nodeColor = '#8D6E63'; // Brown for rocks
-                    break;
-                case 'gas':
-                    nodeColor = '#9C27B0'; // Purple for gas
-                    break;
-                case 'energy':
-                    nodeColor = '#FFD54F'; // Yellow for energy
-                    break;
-                case 'salvage':
-                    nodeColor = '#A1887F'; // Gray-brown for salvage
-                    break;
-                default:
-                    nodeColor = '#757575'; // Gray for unknown
-            }
-            
-            ctx.fillStyle = nodeColor;
-            ctx.beginPath();
-            ctx.arc(x, y, 1, 0, Math.PI * 2); // Small 1px dots
-            ctx.fill();
-            
-            // Track field centers for labeling
-            if (parentId && (resourceType === 'rock' || resourceType === 'gas')) {
-                if (!resourceFieldLabels.has(parentId)) {
-                    resourceFieldLabels.set(parentId, {
-                        x: 0, y: 0, count: 0, type: resourceType, parentId: parentId
-                    });
-                }
-                const field = resourceFieldLabels.get(parentId);
-                field.x += x;
-                field.y += y;
-                field.count++;
-            }
-        });
-        
-        // Draw field labels for asteroid belts and nebulae
-        resourceFieldLabels.forEach((field, parentId) => {
-            const centerX = field.x / field.count;
-            const centerY = field.y / field.count;
-            
-            // Find the parent celestial object to get its name
-            const parentObject = celestialObjects.find(obj => obj.id === parentId);
-            if (parentObject) {
-                const parentMeta = parentObject.meta || {};
-                const celestialType = parentMeta.celestialType || parentObject.celestial_type;
-                
-                let fieldName = '';
-                if (field.type === 'rock' && celestialType === 'belt') {
-                    fieldName = parentMeta.name || 'Asteroid Belt';
-                } else if (field.type === 'gas' && celestialType === 'nebula') {
-                    fieldName = parentMeta.name || 'Nebula Field';
-                }
-                
-                if (fieldName) {
-                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-                    ctx.font = '8px Arial';
-                    ctx.textAlign = 'center';
-                    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-                    ctx.shadowBlur = 1;
-                    ctx.fillText(fieldName, centerX, centerY + 15);
-                    ctx.shadowBlur = 0;
-                }
-            }
-        });
-        
-        // Draw ships and stations on top
-        shipObjects.forEach(obj => {
-            const x = obj.x * scaleX;
-            const y = obj.y * scaleY;
-            const size = Math.max(2, 4 * scaleX);
-            
-            ctx.fillStyle = obj.owner_id === this.userId ? '#4caf50' : '#ff5722';
-            ctx.fillRect(x - size/2, y - size/2, size, size);
-        });
-        
-        // Minimap: always show full information; do not apply fog of war here
-        
-        // Draw camera viewport
-        const viewWidth = (this.canvas.width / this.tileSize) * scaleX;
-        const viewHeight = (this.canvas.height / this.tileSize) * scaleY;
-        const viewX = this.camera.x * scaleX - viewWidth/2;
-        const viewY = this.camera.y * scaleY - viewHeight/2;
-        
-        ctx.strokeStyle = '#ffeb3b';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(viewX, viewY, viewWidth, viewHeight);
-        
-        // Add system name at bottom of mini-map
-        if (this.gameState && this.gameState.sector.name) {
-            ctx.fillStyle = '#64b5f6';
-            ctx.font = '11px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText(
-                this.gameState.sector.name, 
-                canvas.width / 2, 
-                canvas.height - 4
-            );
-        }
-
-        // Click-to-pan: set handler once
-        // No binding here; handled in bindMiniMapInteractions()
-    }
+    // (delegated to SFMinimap.renderer)
 
     // One-time binding for minimap click + drag to pan camera
     bindMiniMapInteractions() {
-        // Ensure we have a reference
         if (!this.miniCanvas) return;
         if (this._miniBound) return;
         this._miniBound = true;
         this._miniBoundCanvas = this.miniCanvas;
-        let dragging = false;
-        const toWorld = (mx, my) => ({
-            x: Math.round((mx / this.miniCanvas.width) * 5000),
-            y: Math.round((my / this.miniCanvas.height) * 5000)
-        });
-        const handle = (clientX, clientY) => {
-            const rect = this.miniCanvas.getBoundingClientRect();
-            const scaleX = this.miniCanvas.width / rect.width;
-            const scaleY = this.miniCanvas.height / rect.height;
-            const mx = Math.max(0, Math.min(this.miniCanvas.width, (clientX - rect.left) * scaleX));
-            const my = Math.max(0, Math.min(this.miniCanvas.height, (clientY - rect.top) * scaleY));
-            const w = toWorld(mx, my);
-            this.camera.x = w.x;
-            this.camera.y = w.y;
-            this.render();
-        };
-        this.miniCanvas.addEventListener('mousedown', (e) => { dragging = true; handle(e.clientX, e.clientY); });
-        window.addEventListener('mouseup', () => { dragging = false; });
-        this.miniCanvas.addEventListener('mousemove', (e) => { if (dragging) handle(e.clientX, e.clientY); });
-        this.miniCanvas.addEventListener('click', (e) => { handle(e.clientX, e.clientY); });
-        // Prevent text selection while dragging
-        this.miniCanvas.addEventListener('dragstart', (e) => e.preventDefault());
+        SFMinimap.interactions.bind(
+            this.miniCanvas,
+            () => ({ camera: this.camera, tileSize: this.tileSize }),
+            (x, y) => { this.camera.x = x; this.camera.y = y; this.render(); }
+        );
     }
 
     // Setup event listeners
     setupEventListeners() {
-        // Canvas click for selection/movement
-        this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
-        
-        // Canvas right-click: keep movement, remove attack
-        this.canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            this.handleCanvasRightClick(e);
-        });
-        
-        // Mouse move for cursor feedback, tooltip, and drag-pan
-        this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
-        this.canvas.addEventListener('mousedown', (e) => this.startDragPan(e));
-        this.canvas.addEventListener('mouseup', () => this.stopDragPan());
-        this.canvas.addEventListener('mouseleave', () => this.stopDragPan());
-        this.canvas.addEventListener('mousemove', (e) => this.handleDragPan(e));
-        this.canvas.addEventListener('mouseleave', () => this.hideMapTooltip());
-        
-        // Mouse wheel for zooming
-        this.canvas.addEventListener('wheel', (e) => this.handleCanvasWheel(e));
-        
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => this.handleKeyboard(e));
-        document.addEventListener('keyup', (e) => this.handleKeyUp(e));
+        SFInput.mouse.bind(this.canvas, this);
+        SFInput.keyboard.bind(document, this);
+    }
+
+    // Bind DOM controls (migrated from inline onclicks in game.html)
+    bindUIControls() {
+        try {
+            const byId = (id) => document.getElementById(id);
+            const safe = (el, fn) => { if (el) el.addEventListener('click', fn); };
+            // Top bar
+            safe(byId('lockTurnBtn'), () => { try { this.lockCurrentTurn(); } catch {} });
+            safe(byId('playersStatusBtn'), async () => { try { const mod = await import('./ui/players-modal.js'); mod.showPlayers(); } catch {} });
+            safe(byId('openEncyclopediaBtn'), () => { try { if (typeof openEncyclopedia === 'function') openEncyclopedia(); else UI.showAlert('Encyclopedia coming soon'); } catch {} });
+            safe(byId('settingsBtn'), () => { try { if (typeof showSettings === 'function') showSettings(); else UI.showAlert('Settings coming soon'); } catch {} });
+            safe(byId('exitGameBtn'), () => { try { if (typeof exitGame === 'function') exitGame(); else window.location.href = 'index.html'; } catch {} });
+            // Map controls
+            safe(byId('zoomInBtn'), () => { try { if (typeof zoomIn === 'function') zoomIn(); else { if (this.tileSize < 40) { this.tileSize += 2; this.render(); } } } catch {} });
+            safe(byId('zoomOutBtn'), () => { try { if (typeof zoomOut === 'function') zoomOut(); else { if (this.tileSize > 6) { this.tileSize -= 2; this.render(); } } } catch {} });
+            safe(byId('floatingMiniBtn'), () => { this.toggleFloatingMiniMap(); });
+            safe(byId('openMapBtn'), async () => { try { const mod = await import('./ui/map-ui.js'); mod.openMap(); } catch {} });
+            // Player panel actions via modules
+            safe(byId('playerAssetsBtn'), async () => { try { const mod = await import('./ui/assets-modal.js'); mod.showAssets(); } catch {} });
+            safe(byId('senateBtn'), async () => { try { const mod = await import('./ui/senate.js'); mod.showSenate(); } catch {} });
+            // Chat remains in game.html script; button bound there too via SFCargo fallback if needed
+        } catch {}
+    }
+
+    // Lock the current turn (instance method; replaces global helper)
+    lockCurrentTurn() {
+        if (!this.gameState?.playerSetup?.setup_completed) {
+            this.addLogEntry('Complete system setup before locking turn', 'warning');
+            UI.showAlert('Please complete your system setup first!');
+            return;
+        }
+        const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+        if (this.turnLocked) {
+            this.addLogEntry('Cannot unlock turn once locked', 'warning');
+            return;
+        }
+        if (this.socket) {
+            this.socket.emit('lock-turn', this.gameId, this.userId, currentTurn);
+        }
+        this.addLogEntry(`Turn ${currentTurn} locked`, 'success');
+        const lockBtn = document.getElementById('lockTurnBtn');
+        if (lockBtn) {
+            lockBtn.textContent = '🔒 Turn Locked';
+            lockBtn.classList.add('locked');
+        }
+        this.turnLocked = true;
     }
 
     // Create tooltip overlay element for map hover
     createMapTooltip() {
         if (this._tooltipEl) return;
-        const parent = this.canvas?.parentElement;
-        if (!parent) return;
-        const tip = document.createElement('div');
-        tip.id = 'mapTooltip';
-        tip.style.position = 'absolute';
-        tip.style.zIndex = '2500';
-        tip.style.pointerEvents = 'none';
-        tip.style.background = 'rgba(10, 15, 28, 0.95)';
-        tip.style.border = '1px solid rgba(100,181,246,0.35)';
-        tip.style.borderRadius = '8px';
-        tip.style.padding = '6px 8px';
-        tip.style.color = '#e0f2ff';
-        tip.style.fontSize = '12px';
-        tip.style.display = 'none';
-        tip.style.boxShadow = '0 6px 18px rgba(0,0,0,0.35)';
-        parent.appendChild(tip);
-        this._tooltipEl = tip;
+        if (!this.canvas) return;
+        this._tooltipEl = SFTooltip.create(this.canvas);
     }
     // Update tooltip content/position
     updateMapTooltip(obj, mouseX, mouseY) {
-        if (!this._tooltipEl) return;
-        if (!obj) {
-            this._tooltipEl.style.display = 'none';
-            return;
-        }
-        const meta = obj.meta || {};
-        const name = meta.name || obj.type || 'Unknown';
-        const shipType = obj.type === 'resource_node' ? (meta.resourceType || 'resource_node') : (meta.shipType || meta.class || obj.subtype || obj.type);
-        const ownerName = this.getOwnerName(obj.owner_id);
-        const hp = (meta.hp != null && meta.maxHp != null) ? `${meta.hp}/${meta.maxHp}` : (meta.hp != null ? String(meta.hp) : '—');
-        const lines = [
-            `${name}`,
-            `Type: ${shipType || '—'}`,
-        ];
-        if (obj.type === 'resource_node') {
-            const amt = (meta.resourceAmount != null) ? meta.resourceAmount : (meta.amount != null ? meta.amount : undefined);
-            if (meta.resourceType) lines.push(`Resource: ${meta.resourceType}`);
-            if (amt != null) lines.push(`Amount: ${amt}`);
-        } else {
-            lines.push(`Owner: ${ownerName || obj.owner_id || '—'}`);
-            lines.push(`HP: ${hp}`);
-        }
-        this._tooltipEl.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
-        // offset tooltip near cursor
-        const parentRect = this.canvas.getBoundingClientRect();
-        const left = Math.min(parentRect.width - 180, mouseX + 12);
-        const top = Math.min(parentRect.height - 80, mouseY + 12);
-        this._tooltipEl.style.left = `${left}px`;
-        this._tooltipEl.style.top = `${top}px`;
-        this._tooltipEl.style.display = 'block';
+        if (!this._tooltipEl || !this.canvas) return;
+        SFTooltip.update(this._tooltipEl, this.canvas, obj, mouseX, mouseY, this.getOwnerName.bind(this));
     }
 
     hideMapTooltip() {
-        if (this._tooltipEl) this._tooltipEl.style.display = 'none';
+        SFTooltip.hide(this._tooltipEl);
     }
 
     // Resolve owner name from cache or fallback
@@ -2820,7 +2398,7 @@ class GameClient {
             this._miniBound = false;
             this.bindMiniMapInteractions();
         }
-        this.renderMiniMap();
+        // minimap rendered via SFMinimap.renderer in render()
     }
 
     // Drag-to-pan state
@@ -2860,7 +2438,7 @@ class GameClient {
             this._dragPan.movedEnough = true;
         }
         this.render();
-        this.renderMiniMap();
+        // minimap rendered via SFMinimap.renderer in render()
     }
 
     // Handle mouse movement for cursor feedback
@@ -2923,12 +2501,7 @@ class GameClient {
 
         try {
             // Load the full fleet across all sectors
-            const response = await fetch(`/game/player-fleet?gameId=${this.gameId}&userId=${this.userId}`);
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to load fleet');
-            }
+            const data = await SFApi.Players.playerFleet(this.gameId, this.userId);
 
             const fleet = data.fleet;
             
@@ -2936,13 +2509,13 @@ class GameClient {
                 unitsList.classList.remove('loading');
                 unitsList.innerHTML = '<div class="no-units">No units found</div>';
                 this.lastFleet = [];
-                this.updatePlayerInformationPanel();
+                try { const mod = await import('./ui/player-panel.js'); mod.updatePlayerPanel(this); } catch {}
                 return;
             }
 
             // Cache for stats strip and other UI
             this.lastFleet = fleet;
-            this.updatePlayerInformationPanel();
+            try { const mod = await import('./ui/player-panel.js'); mod.updatePlayerPanel(this); } catch {}
 
             // Group units by sector
             const unitsBySector = {};
@@ -2980,7 +2553,7 @@ class GameClient {
 
                 html += `
                     <div class="sector-group">
-                        <div class="sector-header ${isCurrentSector ? 'current-sector' : ''}" onclick="gameClient.toggleSectorCollapse('${sectorName.replace(/'/g, "\'")}')" data-sector="${sectorName}">
+                        <div class="sector-header ${isCurrentSector ? 'current-sector' : ''}" data-action="toggle-sector" data-sector="${sectorName}">
                             <span class="chevron">▶</span>
                             <span class="sector-icon">${isCurrentSector ? '📍' : '🌌'}</span>
                             <span class="sector-name">${sectorName}</span>
@@ -3020,8 +2593,8 @@ class GameClient {
                     const eta = this.getEta(unit);
                     
                     html += `
-                        <div class="unit-item ${isSelected ? 'selected' : ''} ${!inCurrentSector ? 'remote-unit' : ''}" 
-                             onclick="gameClient.selectRemoteUnit(${unit.id}, ${unit.sector_id}, '${sectorName}', ${inCurrentSector})">
+                        <div class="unit-item ${isSelected ? 'selected' : ''} ${!inCurrentSector ? 'remote-unit' : ''}"
+                             data-action="select-remote-unit" data-unit-id="${unit.id}" data-sector-id="${unit.sector_id}" data-sector-name="${sectorName}" data-in-current="${inCurrentSector}">
                             <div class="unit-header">
                                 <span class="unit-icon">${this.getUnitIcon(unit.type)}</span>
                                 <span class="unit-name">${meta.name || unit.type}</span>
@@ -3032,7 +2605,7 @@ class GameClient {
                                 <span class="chip ${this.getStatusClass(status)}">${this.getStatusLabel(status)}</span>
                                 ${unit.type==='ship' && cargoFill!=null ? `<span class="chip">📦 ${cargoFill}</span>` : ''}
                                 ${eta ? `<span class="chip">⏱️ ETA ${eta}</span>` : ''}
-                                <span class="favorite ${this.isFavoriteUnit(unit.id)?'active':''}" onclick="event.stopPropagation();gameClient.toggleFavoriteUnit(${unit.id});">⭐</span>
+                                <span class="favorite ${this.isFavoriteUnit(unit.id)?'active':''}" data-action="toggle-favorite" data-unit-id="${unit.id}">⭐</span>
                             </div>
                         </div>
                     `;
@@ -3046,6 +2619,22 @@ class GameClient {
 
             unitsList.classList.remove('loading');
             unitsList.innerHTML = html;
+            // Delegate fleet interactions
+            unitsList.addEventListener('click', (e) => {
+                const fav = e.target.closest('[data-action="toggle-favorite"]');
+                if (fav) { e.stopPropagation(); const id = Number(fav.dataset.unitId); this.toggleFavoriteUnit(id); this.updateMultiSectorFleet(); return; }
+                const header = e.target.closest('[data-action="toggle-sector"]');
+                if (header) { const sectorName = header.dataset.sector; this.toggleSectorCollapse(sectorName); return; }
+                const row = e.target.closest('[data-action="select-remote-unit"]');
+                if (row) {
+                    const unitId = Number(row.dataset.unitId);
+                    const sectorId = Number(row.dataset.sectorId);
+                    const sectorName = row.dataset.sectorName;
+                    const inCurrent = String(row.dataset.inCurrent) === 'true';
+                    this.selectRemoteUnit(unitId, sectorId, sectorName, inCurrent);
+                    return;
+                }
+            });
 
             // Update cargo status for ships in current sector (only displayed as chip; keep for right panel accuracy)
             if (this.gameState?.objects) {
@@ -3054,7 +2643,7 @@ class GameClient {
                 );
                 currentSectorShips.forEach(ship => {
                     if (this.selectedUnit && ship.id === this.selectedUnit.id) {
-                        updateCargoStatus(ship.id);
+                        try { SFCargo.updateCargoStatus(ship.id); } catch {}
                     }
                 });
             }
@@ -3090,7 +2679,7 @@ class GameClient {
         switch (unitType) {
             case 'ship': return '🚢';
             case 'station': return '🏭';
-            case 'station': return '🛰️';
+            case 'starbase': return '🛰️';
             case 'storage-structure': return '📦';
             case 'warp-beacon': return '🌌';
             case 'interstellar-gate': return '🌀';
@@ -3106,21 +2695,8 @@ class GameClient {
         } else {
             // Unit is in remote sector, switch to that sector
             try {
-                const response = await fetch('/game/switch-sector', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        gameId: this.gameId,
-                        userId: this.userId,
-                        sectorId: sectorId
-                    })
-                });
-
-                const data = await response.json();
-                
-                if (response.ok) {
+                const data = await SFApi.State.switchSector(this.gameId, this.userId, sectorId);
+                if (data) {
                     // Update game state to new sector
                     const preserveCamera = { x: this.camera.x, y: this.camera.y };
                     this.gameState = data.gameState;
@@ -3131,15 +2707,13 @@ class GameClient {
                     this.camera.x = preserveCamera.x;
                     this.camera.y = preserveCamera.y;
                     this.render();
-                    this.renderMiniMap();
+                    // minimap rendered via SFMinimap.renderer in render()
                     this.updateSectorOverviewTitle();
                     
                     // Select the unit in the new sector
                     setTimeout(() => {
                         this.selectUnit(unitId);
                     }, 100);
-                } else {
-                    this.addLogEntry(data.error || 'Failed to switch sectors', 'error');
                 }
             } catch (error) {
                 console.error('Error switching sectors:', error);
@@ -3386,33 +2960,11 @@ class GameClient {
         }
     }
 
-    // Check if a ship is adjacent to an interstellar gate
-    isAdjacentToInterstellarGate(ship) {
-        if (!ship || !this.objects) return false;
-        
-        const adjacentGates = this.objects.filter(obj => {
-            if (obj.type !== 'interstellar-gate') return false;
-            
-            const dx = Math.abs(obj.x - ship.x);
-            const dy = Math.abs(obj.y - ship.y);
-            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
-        });
-        
-        return adjacentGates.length > 0;
-    }
+    // Check if a ship is adjacent to an interstellar gate (delegated)
+    isAdjacentToInterstellarGate(ship) { return isAdjacentToInterstellarGate(this, ship); }
 
-    // Get adjacent interstellar gates
-    getAdjacentInterstellarGates(ship) {
-        if (!ship || !this.objects) return [];
-        
-        return this.objects.filter(obj => {
-            if (obj.type !== 'interstellar-gate') return false;
-            
-            const dx = Math.abs(obj.x - ship.x);
-            const dy = Math.abs(obj.y - ship.y);
-            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
-        });
-    }
+    // Get adjacent interstellar gates (delegated)
+    getAdjacentInterstellarGates(ship) { return getAdjacentInterstellarGates(this, ship); }
 
     // Handle mouse wheel for zooming
     handleCanvasWheel(e) {
@@ -3851,633 +3403,30 @@ class GameClient {
         return Math.ceil(distance / Math.max(1, effectiveSpeed));
     }
 
-    // Draw movement paths for all visible ships with movement orders (active and lingering)
-    drawMovementPaths(ctx, centerX, centerY) {
-        // STAGE 2 & 4: Include both active and completed movements with safety checks
-        const activeShips = this.objects.filter(obj => 
-            obj.type === 'ship' && 
-            obj.movementPath && 
-            obj.movementPath.length > 1 && // Safety: ensure valid path
-            obj.movementActive &&
-            obj.movementStatus === 'active' &&
-            (obj.visibilityStatus?.visible || obj.owner_id === this.userId)
-        );
-        
-        // Deprecated: do not infer server lingering from objects; sector trails will be drawn below
-        const serverLingeringShips = [];
-        
-        // FIX 4: Debug logging for lingering trails
-        if (serverLingeringShips.length > 0) {
-            console.log(`🔍 Found ${serverLingeringShips.length} server lingering ships:`, 
-                serverLingeringShips.map(s => ({
-                    id: s.id, 
-                    name: s.meta?.name, 
-                    status: s.movementStatus,
-                    pathLength: s.movementPath?.length,
-                    visible: s.visibilityStatus?.visible,
-                    owned: s.owner_id === this.userId
-                }))
-            );
-        }
-        
-        // PHASE 3: Include client-side lingering trails (both old and new format)
-        const clientLingeringShips = this.clientLingeringTrails.filter(trail => {
-            const hasValidPath = (trail.movementPath && trail.movementPath.length > 1) || (trail.movementSegments && trail.movementSegments.length > 0);
-            return hasValidPath; // always draw client fallback trails
-        });
-        
-        if (clientLingeringShips.length > 0) {
-            const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
-            console.log(`🔍 Found ${clientLingeringShips.length} client lingering trails:`, 
-                clientLingeringShips.map(t => ({
-                    shipId: t.shipId, 
-                    name: t.meta?.name, 
-                    pathLength: t.movementPath?.length,
-                    ageInTurns: currentTurn - (t.createdOnTurn || 0),
-                    createdOnTurn: t.createdOnTurn
-                }))
-            );
-        }
-        
-        const allLingeringShips = [...serverLingeringShips, ...clientLingeringShips];
-        
-        // STAGE 4: Safety check - ensure no ship appears in both lists
-        const activeShipIds = new Set(activeShips.map(s => s.id));
-        const filteredLingeringShips = allLingeringShips.filter(ship => !activeShipIds.has(ship.id || ship.shipId));
-        
-        if (allLingeringShips.length !== filteredLingeringShips.length) {
-            console.log(`🛡️ Filtered ${allLingeringShips.length - filteredLingeringShips.length} ships with conflicting active/lingering status`);
-        }
-        
-        if (activeShips.length > 0 || filteredLingeringShips.length > 0) {
-            console.log(`🎨 Drawing ${activeShips.length} active trails + ${filteredLingeringShips.length} lingering trails`);
-        }
-        
-        // Draw sector-level lingering trails from trailBuffer (always visible)
-        const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
-        const minTurn = currentTurn - 9;
-        for (let t = minTurn; t <= currentTurn; t++) {
-            const segs = this.trailBuffer.byTurn.get(t) || [];
-            const age = currentTurn - t;
-            const alpha = Math.max(0.06, 0.28 - age * 0.02);
-            ctx.save();
-            ctx.strokeStyle = `rgba(100, 181, 246, ${alpha})`;
-            ctx.lineWidth = 2;
-            ctx.setLineDash([]);
-            segs.forEach(seg => {
-                const x1 = centerX + (seg.from.x - this.camera.x) * this.tileSize;
-                const y1 = centerY + (seg.from.y - this.camera.y) * this.tileSize;
-                const x2 = centerX + (seg.to.x - this.camera.x) * this.tileSize;
-                const y2 = centerY + (seg.to.y - this.camera.y) * this.tileSize;
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.stroke();
-                // Direction chevrons at segment end
-                const vx = x2 - x1, vy = y2 - y1;
-                const len = Math.hypot(vx, vy) || 1;
-                const ux = vx / len, uy = vy / len;
-                const ah = Math.max(2, this.tileSize * 0.25);
-                const px = x2 - ux * ah, py = y2 - uy * ah;
-                ctx.beginPath();
-                ctx.moveTo(x2, y2);
-                ctx.lineTo(px + (-uy) * ah * 0.4, py + (ux) * ah * 0.4);
-                ctx.moveTo(x2, y2);
-                ctx.lineTo(px + (uy) * ah * 0.4, py + (-ux) * ah * 0.4);
-                ctx.stroke();
-            });
-            ctx.restore();
-        }
-        // Draw client lingering trails next (behind active trails)
-        filteredLingeringShips.forEach(ship => {
-            this.drawSingleMovementPath(ctx, centerX, centerY, ship, true);
-        });
-        
-        // Draw active trails on top
-        activeShips.forEach(ship => {
-            this.drawSingleMovementPath(ctx, centerX, centerY, ship, false); // false = active
-        });
-
-        // Draw queued order markers for selected owned ship
-        if (this.selectedUnit && this.selectedUnit.type === 'ship' && this.selectedUnit.owner_id === this.userId) {
-            const shipId = this.selectedUnit.id;
-            const orders = this._queuedByShipId.get(shipId) || [];
-            if (orders.length > 0) {
-                ctx.save();
-                let index = 1;
-                orders.forEach((o) => {
-                    try {
-                        const p = o.payload ? JSON.parse(o.payload) : {};
-                        let dest = null;
-                        if (o.order_type === 'move' && p?.destination) dest = p.destination;
-                        if (o.order_type === 'warp' && p?.destination) dest = p.destination;
-                        // For harvest_start, we could draw a small pickaxe icon near the node (skipped for now)
-                        if (dest) {
-                            const sx = centerX + (dest.x - this.camera.x) * this.tileSize;
-                            const sy = centerY + (dest.y - this.camera.y) * this.tileSize;
-                            // Marker circle
-                            ctx.fillStyle = '#ffd54f';
-                            ctx.beginPath();
-                            ctx.arc(sx, sy, 6, 0, Math.PI * 2);
-                            ctx.fill();
-                            // Number label
-                            ctx.fillStyle = '#1a1a1a';
-                            ctx.font = '10px Arial';
-                            ctx.textAlign = 'center';
-                            ctx.textBaseline = 'middle';
-                            ctx.fillText(String(index), sx, sy);
-                            index++;
-                        }
-                    } catch {}
-                });
-                ctx.restore();
-            }
-        }
-    }
-    // PHASE 3: Draw movement path for a single ship (supports both old paths and new segments)
-    drawSingleMovementPath(ctx, centerX, centerY, ship, isLingering = false) {
-        // PHASE 3: Support both old movementPath and new movementSegments  
-        const hasOldPath = ship.movementPath && ship.movementPath.length > 1;
-        const hasNewSegments = ship.movementSegments && ship.movementSegments.length > 0;
-        
-        if (!hasOldPath && !hasNewSegments) return;
-        
-        // FIX 4: Additional safety checks for consistent rendering
-        if (isLingering && ship.movementStatus === 'active') {
-            console.warn(`⚠️ Skipping rendering of active ship ${ship.id} as lingering trail`);
-            return;
-        }
-        
-        if (!isLingering && ship.movementStatus === 'completed' && !ship.movementActive) {
-            console.warn(`⚠️ Skipping rendering of completed ship ${ship.id} as active trail`);
-            return;
-        }
-        
-        const isSelected = this.selectedUnit && this.selectedUnit.id === ship.id;
-        const isOwned = ship.owner_id === this.userId;
-        const isAccurate = ship.isAccurate === true; // PHASE 3: Check if this is accurate trail
-        
-        ctx.save();
-        
-        // PHASE 3: Enhanced visual distinction for different trail types
-        if (isLingering) {
-            // Lingering trails - different styles for accurate vs fallback
-            if (isAccurate) {
-                // Accurate trails (from actual movement history) - solid faded lines
-                if (isSelected) {
-                    ctx.strokeStyle = '#fff59d'; // Faded yellow for selected accurate
-                    ctx.lineWidth = 2;
-                    ctx.globalAlpha = 0.5;
-                } else if (isOwned) {
-                    ctx.strokeStyle = '#a5d6a7'; // Slightly brighter green for accurate owned
-                    ctx.lineWidth = 1.5;
-                    ctx.globalAlpha = 0.4;
-                } else {
-                    ctx.strokeStyle = '#ef9a9a'; // Slightly brighter red for accurate enemy
-                    ctx.lineWidth = 1.5;
-                    ctx.globalAlpha = 0.35;
-                }
-                ctx.setLineDash([2, 4]); // Shorter dashes for accurate trails
-            } else {
-                // Fallback trails (from planned paths) - more faded, longer dashes
-                if (isSelected) {
-                    ctx.strokeStyle = '#fff9c4'; // Very faded yellow for selected fallback
-                    ctx.lineWidth = 1.5;
-                    ctx.globalAlpha = 0.3;
-                } else if (isOwned) {
-                    ctx.strokeStyle = '#c8e6c9'; // Standard faded green for fallback owned
-                    ctx.lineWidth = 1;
-                    ctx.globalAlpha = 0.25;
-                } else {
-                    ctx.strokeStyle = '#ffcdd2'; // Standard faded red for fallback enemy
-                    ctx.lineWidth = 1;
-                    ctx.globalAlpha = 0.2;
-                }
-                ctx.setLineDash([3, 8]); // Longer dashes for fallback effect
-            }
-        } else {
-            // Active trails - normal bright styling (unchanged)
-            if (isSelected) {
-                // Selected unit - bright yellow (regardless of ownership)
-                ctx.strokeStyle = '#ffeb3b';
-                ctx.lineWidth = 3;
-                ctx.globalAlpha = 1.0;
-            } else if (isOwned) {
-                // Own ship - green/yellow
-                ctx.strokeStyle = '#8bc34a';
-                ctx.lineWidth = 2;
-                ctx.globalAlpha = 0.8;
-            } else {
-                // Enemy ship - red/orange
-                ctx.strokeStyle = '#f44336';
-                ctx.lineWidth = 2;
-                ctx.globalAlpha = 0.7;
-            }
-            ctx.setLineDash([5, 5]); // Normal dashes for active trails
-        }
-        
-        // PHASE 3: Draw path - support both old path format and new segments format
-        if (hasNewSegments) {
-            // Draw segments (accurate movement history)
-            ship.movementSegments.forEach(segment => {
-                ctx.beginPath();
-                const fromScreenX = centerX + (segment.from.x - this.camera.x) * this.tileSize;
-                const fromScreenY = centerY + (segment.from.y - this.camera.y) * this.tileSize;
-                const toScreenX = centerX + (segment.to.x - this.camera.x) * this.tileSize;
-                const toScreenY = centerY + (segment.to.y - this.camera.y) * this.tileSize;
-                
-                ctx.moveTo(fromScreenX, fromScreenY);
-                ctx.lineTo(toScreenX, toScreenY);
-                ctx.stroke();
-            });
-        } else if (hasOldPath) {
-            // Draw traditional path (planned route)
-            const path = ship.movementPath;
-            ctx.beginPath();
-            for (let i = 0; i < path.length; i++) {
-                const tile = path[i];
-                const screenX = centerX + (tile.x - this.camera.x) * this.tileSize;
-                const screenY = centerY + (tile.y - this.camera.y) * this.tileSize;
-                
-                if (i === 0) {
-                    ctx.moveTo(screenX, screenY);
-                } else {
-                    ctx.lineTo(screenX, screenY);
-                }
-            }
-            ctx.stroke();
-        }
-        
-        // Draw current position marker (ship's actual current tile)
-        const currentScreenX = centerX + (ship.x - this.camera.x) * this.tileSize;
-        const currentScreenY = centerY + (ship.y - this.camera.y) * this.tileSize;
-        
-        ctx.setLineDash([]);
-        
-        // STAGE 2: Different markers for lingering vs active trails
-        if (!isLingering) {
-            // Only draw current position marker for active trails
-            if (isSelected) {
-                ctx.fillStyle = '#4caf50'; // Green for selected
-            } else if (isOwned) {
-                ctx.fillStyle = '#66bb6a'; // Light green for owned
-            } else {
-                ctx.fillStyle = '#ef5350'; // Light red for enemy
-            }
-            
-            ctx.beginPath();
-            ctx.arc(currentScreenX, currentScreenY, isSelected ? 7 : 5, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        
-        // PHASE 3: Draw destination marker (support both old path and new segments)
-        let destinationPoint = null;
-        
-        if (hasNewSegments && ship.movementSegments.length > 0) {
-            // For segments, use the last segment's 'to' position as destination
-            const lastSegment = ship.movementSegments[ship.movementSegments.length - 1];
-            destinationPoint = lastSegment.to;
-        } else if (hasOldPath) {
-            // For old paths, use the last point as destination
-            const path = ship.movementPath;
-            destinationPoint = path[path.length - 1];
-        }
-        
-        if (destinationPoint) {
-            const destScreenX = centerX + (destinationPoint.x - this.camera.x) * this.tileSize;
-            const destScreenY = centerY + (destinationPoint.y - this.camera.y) * this.tileSize;
-            
-            if (isLingering) {
-                // Faded destination markers for lingering trails
-                if (isSelected) {
-                    ctx.fillStyle = '#fff59d'; // Faded yellow
-                } else if (isOwned) {
-                    ctx.fillStyle = '#c8e6c9'; // Faded green  
-                } else {
-                    ctx.fillStyle = '#ffcdd2'; // Faded red
-                }
-                ctx.globalAlpha = 0.3; // Extra fading for destination
-                ctx.beginPath();
-                ctx.arc(destScreenX, destScreenY, 4, 0, Math.PI * 2); // Smaller marker
-                ctx.fill();
-            } else {
-                // Normal bright destination markers for active trails
-                if (isSelected) {
-                    ctx.fillStyle = '#ffeb3b'; // Yellow for selected
-                } else if (isOwned) {
-                    ctx.fillStyle = '#8bc34a'; // Green for owned
-                } else {
-                    ctx.fillStyle = '#f44336'; // Red for enemy
-                }
-                
-                ctx.beginPath();
-                ctx.arc(destScreenX, destScreenY, isSelected ? 8 : 6, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Draw ETA near destination (only for active trails and owned ships)
-                if (isSelected || isOwned) {
-                    // PHASE 3: Use server-provided ETA, fallback to path calculation if available
-                    let eta = ship.movementETA;
-                    let usingServerETA = ship.movementETA !== undefined;
-                    
-                    // If no server ETA and we have old path format, calculate it
-                    if (eta === undefined && hasOldPath) {
-                        const path = ship.movementPath;
-                        eta = this.calculateETA(path, ship.meta.movementSpeed || 1);
-                        usingServerETA = false;
-                    } else if (eta === undefined) {
-                        // For segments format, we don't calculate ETA (should come from server)
-                        eta = 0;
-                        usingServerETA = false;
-                    }
-                    
-                    // Debug logging for ETA source (only once per render to avoid spam)
-                    if (isSelected && !this._lastETADebug || this._lastETADebug !== `${ship.id}-${eta}`) {
-                        console.log(`📊 ETA Display: Ship ${ship.id} showing ${eta}T (${usingServerETA ? 'server-provided' : 'client-calculated'})`);
-                        this._lastETADebug = `${ship.id}-${eta}`;
-                    }
-                    
-                    if (eta > 0) {
-                        ctx.fillStyle = '#ffffff';
-                        ctx.font = '12px Arial';
-                        ctx.textAlign = 'center';
-                        ctx.fillText(`ETA: ${eta}T`, destScreenX, destScreenY - 15);
-                    }
-                }
-            }
-        }
-        
-        ctx.restore();
-    }
+    // (delegated to SFRenderers.movement)
+    // (delegated to SFRenderers.movement)
 
 
     
-    // Show warp confirmation dialog
-    showWarpConfirmation(target) {
-        const distance = Math.sqrt(
-            Math.pow(this.selectedUnit.x - target.x, 2) + 
-            Math.pow(this.selectedUnit.y - target.y, 2)
-        );
-        
-        const modalContent = document.createElement('div');
-        const requiredPrep = (this.selectedUnit?.meta && typeof this.selectedUnit.meta.warpPreparationTurns === 'number')
-            ? this.selectedUnit.meta.warpPreparationTurns
-            : 2;
-        modalContent.innerHTML = `
-            <div class="warp-confirmation">
-                <h3>🌌 Warp Jump Confirmation</h3>
-                <div class="warp-info">
-                    <p><strong>Ship:</strong> ${this.selectedUnit.meta.name}</p>
-                    <p><strong>Destination:</strong> ${target.meta.name || target.type}</p>
-                    <p><strong>Distance:</strong> ${Math.round(distance)} tiles</p>
-                    <p><strong>Preparation Time:</strong> ${requiredPrep} turn${requiredPrep === 1 ? '' : 's'}</p>
-                    <p><strong>Jump Time:</strong> Instant</p>
-                </div>
-                <div class="warp-warning">
-                    ⚠️ Warp preparation cannot be interrupted once started
-                </div>
-            </div>
-        `;
-        
-        UI.showModal({
-            title: '🌌 Warp Jump',
-            content: modalContent,
-            actions: [
-                {
-                    text: 'Cancel',
-                    style: 'secondary',
-                    action: () => true // Close modal
-                },
-                {
-                    text: 'Engage Warp Drive',
-                    style: 'primary',
-                    action: () => this.executeWarpOrder(target)
-                }
-            ]
-        });
-    }
+    // Show warp confirmation dialog (delegated)
+    showWarpConfirmation(target) { return showWarpConfirmation(this, target); }
     
-    // Execute warp order
-    executeWarpOrder(target) {
-        console.log(`🌌 Initiating warp from (${this.selectedUnit.x},${this.selectedUnit.y}) to ${target.meta.name} at (${target.x},${target.y})`);
-        
-        if (this.queueMode) {
-            this.socket.emit('queue-order', {
-                gameId: this.gameId,
-                shipId: this.selectedUnit.id,
-                orderType: 'warp',
-                payload: { targetId: target.id, destination: { x: target.x, y: target.y }, targetName: target.meta.name }
-            }, (resp) => {
-                if (resp && resp.success) {
-                    this.addLogEntry(`Queued: Warp to ${target.meta.name}`, 'success');
-                } else {
-                    this.addLogEntry(`Failed to queue warp: ${resp?.error || 'error'}`, 'error');
-                }
-            });
-            return true;
-        } else {
-            // Send warp order to server immediately
-            this.socket.emit('warp-ship', {
-                gameId: this.gameId,
-                shipId: this.selectedUnit.id,
-                targetId: target.id,
-                targetX: target.x,
-                targetY: target.y,
-                shipName: this.selectedUnit.meta.name,
-                targetName: target.meta.name
-            });
-            
-            this.addLogEntry(`${this.selectedUnit.meta.name} engaging warp drive. Target: ${target.meta.name}`, 'success');
-            return true; // Close modal
-        }
-    }
+    // Execute warp order (delegated)
+    executeWarpOrder(target) { return executeWarpOrder(this, target); }
     
-    // Enter warp target selection mode - show popup menu
-    enterWarpMode() {
-        this.showWarpTargetSelection();
-    }
+    // Enter warp target selection mode - delegated
+    enterWarpMode() { return enterWarpMode(this); }
     
-    // Show warp target selection popup
-    showWarpTargetSelection() {
-        const ship = this.selectedUnit;
-        if (!ship) return;
-        
-        // Get all possible warp targets
-        const warpTargets = this.getWarpTargets(ship);
-        
-        if (warpTargets.length === 0) {
-            this.addLogEntry('No warp targets available in this sector', 'warning');
-            return;
-        }
-        
-        // Create target selection content
-        const targetList = document.createElement('div');
-        targetList.className = 'warp-target-list';
-        
-        // Add header
-        const header = document.createElement('div');
-        header.className = 'warp-target-header';
-        header.innerHTML = `
-            <h3>🌌 Select Warp Destination</h3>
-            <p>Choose where ${ship.meta.name} should warp to:</p>
-        `;
-        targetList.appendChild(header);
-        
-        // Add target options
-        warpTargets.forEach(target => {
-            const targetOption = document.createElement('div');
-            targetOption.className = 'warp-target-option';
-            
-            const distance = Math.sqrt(
-                Math.pow(ship.x - target.x, 2) + 
-                Math.pow(ship.y - target.y, 2)
-            );
-            
-            const targetIcon = this.getWarpTargetIcon(target);
-            const targetType = this.getWarpTargetType(target);
-            
-            targetOption.innerHTML = `
-                <div class="warp-target-info">
-                    <div class="warp-target-name">
-                        ${targetIcon} ${target.meta.name || target.type}
-                    </div>
-                    <div class="warp-target-details">
-                        <span class="warp-target-type">${targetType}</span>
-                        <span class="warp-target-distance">${Math.round(distance)} tiles away</span>
-                    </div>
-                </div>
-                <div class="warp-target-action">
-                    <button class="warp-select-btn">Select</button>
-                </div>
-            `;
-            
-            // Add click handler
-            const selectBtn = targetOption.querySelector('.warp-select-btn');
-            selectBtn.addEventListener('click', () => {
-                this.showWarpConfirmation(target);
-            });
-            
-            targetList.appendChild(targetOption);
-        });
-        
-        // Show modal with target list
-        UI.showModal({
-            title: '🌌 Warp Target Selection',
-            content: targetList,
-            actions: [
-                {
-                    text: 'Cancel',
-                    style: 'secondary',
-                    action: () => {
-                        this.addLogEntry('Warp target selection cancelled', 'info');
-                        return true; // Close modal
-                    }
-                }
-            ],
-            className: 'warp-target-modal'
-        });
-    }
+    // Show warp target selection popup (delegated)
+    showWarpTargetSelection() { return showWarpTargetSelection(this); }
     
-    // Get all available warp targets for a ship
-    getWarpTargets(ship) {
-        const targets = [];
-        
-        // Add celestial objects
-        const celestialObjects = this.objects.filter(obj => this.isCelestialObject(obj));
-        targets.push(...celestialObjects);
-        
-        // Add player-owned structures (starbases, stations, etc.)
-        const playerStructures = this.objects.filter(obj => 
-            obj.owner_id === this.userId && 
-            (obj.type === 'station') && 
-            obj.id !== ship.id // Don't include the ship itself
-        );
-        targets.push(...playerStructures);
-        
-        // Add warp beacons
-        const warpBeacons = this.objects.filter(obj => 
-            obj.type === 'warp-beacon' && 
-            (obj.owner_id === this.userId || obj.meta?.publicAccess === true)
-        );
-        targets.push(...warpBeacons);
-        
-        // Add interstellar gates
-        const interstellarGates = this.objects.filter(obj => 
-            obj.type === 'interstellar-gate' && 
-            (obj.owner_id === this.userId || obj.meta?.publicAccess === true)
-        );
-        targets.push(...interstellarGates);
-        
-        // Sort by distance
-        targets.sort((a, b) => {
-            const distA = Math.sqrt(Math.pow(ship.x - a.x, 2) + Math.pow(ship.y - a.y, 2));
-            const distB = Math.sqrt(Math.pow(ship.x - b.x, 2) + Math.pow(ship.y - b.y, 2));
-            return distA - distB;
-        });
-        
-        return targets;
-    }
-    // Get icon for warp target type
-    getWarpTargetIcon(target) {
-        if (target.celestial_type) {
-            // Celestial objects
-            switch (target.celestial_type) {
-                case 'star': return '⭐';
-                case 'planet': return '🪐';
-                case 'moon': return '🌙';
-                case 'belt': return '☄️';
-                case 'nebula': return '🌌';
-                case 'wormhole': return '🕳️';
-                case 'derelict': return '🛸';
-                default: return '🌟';
-            }
-        } else {
-            // Player structures
-            switch (target.type) {
-                case 'station': return '🏭';
-                case 'station': return '🛰️';
-                case 'warp-beacon': return '🌌';
-                case 'storage-structure': return '📦';
-                case 'interstellar-gate': return '🌀';
-                default: return '🏗️';
-            }
-        }
-    }
+    // Get all available warp targets for a ship (delegated)
+    getWarpTargets(ship) { return getWarpTargets(this, ship); }
+    // Get icon for warp target type (delegated)
+    getWarpTargetIcon(target) { return getWarpTargetIcon(target); }
     
-    // Get readable type name for warp target
-    getWarpTargetType(target) {
-        if (target.celestial_type) {
-            // Celestial objects
-            switch (target.celestial_type) {
-                case 'star': return 'Star System';
-                case 'planet': return 'Planet';
-                case 'moon': return 'Moon';
-                case 'belt': return 'Asteroid Belt';
-                case 'nebula': return 'Nebula';
-                case 'wormhole': return 'Wormhole';
-                case 'derelict': return 'Derelict';
-                default: return 'Celestial Object';
-            }
-        } else {
-            // Player structures
-            if (target.owner_id === this.userId) {
-                switch (target.type) {
-                    case 'station': return 'Your Station';
-                    case 'station': return 'Your Station';
-                    case 'warp-beacon': return 'Your Warp Beacon';
-                    case 'storage-structure': return 'Your Storage';
-                    case 'interstellar-gate': return 'Your Interstellar Gate';
-                    default: return 'Your Structure';
-                }
-            } else if (target.type === 'warp-beacon' && target.meta?.publicAccess === true) {
-                return 'Public Warp Beacon';
-            } else if (target.type === 'interstellar-gate' && target.meta?.publicAccess === true) {
-                return `Gate to ${target.meta?.destinationSectorName || 'Unknown Sector'}`;
-            } else {
-                return 'Allied Structure';
-            }
-        }
-    }
+    // Get readable type name for warp target (delegated)
+    getWarpTargetType(target) { return getWarpTargetType(this, target); }
     
     // Exit warp target selection mode
     exitWarpMode() {
@@ -4506,191 +3455,7 @@ class GameClient {
         }
     }
 
-    // Show setup modal for first-time player configuration
-    showSetupModal() {
-        const setupForm = this.createSetupForm();
-        
-        UI.showModal({
-            title: '🚀 Initialize Your Solar System',
-            content: setupForm,
-            allowClose: false, // Force completion
-            actions: [
-                {
-                    text: 'Complete Setup',
-                    style: 'primary',
-                    action: () => this.submitSetup()
-                }
-            ]
-        });
-    }
-
-    // Create the setup form HTML
-    createSetupForm() {
-        const form = document.createElement('div');
-        form.className = 'setup-form';
-        form.innerHTML = `
-            <div class="form-section">
-                <h3>👤 Choose Your Avatar</h3>
-                <div class="avatar-grid" id="avatarGrid">
-                    ${this.createAvatarSelector()}
-                </div>
-            </div>
-
-            <div class="form-section">
-                <h3>🎨 Color Scheme</h3>
-                <div class="color-picker-group">
-                    <div class="color-picker">
-                        <label for="primaryColor">Primary Color:</label>
-                        <input type="color" id="primaryColor" value="#64b5f6">
-                    </div>
-                    <div class="color-picker">
-                        <label for="secondaryColor">Secondary Color:</label>
-                        <input type="color" id="secondaryColor" value="#42a5f5">
-                    </div>
-                </div>
-            </div>
-
-            <div class="form-section">
-                <h3>🌌 Solar System Name</h3>
-                <input type="text" id="systemName" class="form-input" placeholder="Enter system name..." maxlength="30" required>
-            </div>
-
-            
-        `;
-
-        // Add event listeners after creating the form
-        setTimeout(() => {
-            this.attachSetupEventListeners();
-        }, 100);
-
-        return form;
-    }
-
-    // Create avatar selector options
-    createAvatarSelector() {
-        const avatars = [
-            { id: 'commander', name: 'Commander' },
-            { id: 'explorer', name: 'Explorer' },
-            { id: 'merchant', name: 'Merchant' },
-            { id: 'scientist', name: 'Scientist' },
-            { id: 'warrior', name: 'Warrior' },
-            { id: 'diplomat', name: 'Diplomat' }
-        ];
-        
-        return avatars.map(avatar => `
-            <div class="avatar-option" data-avatar="${avatar.id}">
-                <img src="assets/avatars/${avatar.id}.png" alt="${avatar.name}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiM2NGI1ZjYiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI4IiB5PSI4Ij4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxOVYyMEgzVjE5TDUgMTcuMjVWMTFIMTBWMTIuNUgxNFYxMUgxOVYxNy4yNUwyMSAxOVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K'; this.onerror=null;">
-                <span>${avatar.name}</span>
-            </div>
-        `).join('');
-    }
-
-    // Archetype selection removed; server assigns randomly
-
-    // Attach event listeners to setup form elements
-    attachSetupEventListeners() {
-        // Avatar selection
-        document.querySelectorAll('.avatar-option').forEach(option => {
-            option.addEventListener('click', () => {
-                document.querySelectorAll('.avatar-option').forEach(o => o.classList.remove('selected'));
-                option.classList.add('selected');
-            });
-        });
-
-        // Archetype selection removed
-
-        // Auto-focus system name input
-        const systemNameInput = document.getElementById('systemName');
-        if (systemNameInput) {
-            systemNameInput.focus();
-        }
-    }
-
-    // Submit setup data to server
-    async submitSetup() {
-        const selectedAvatar = document.querySelector('.avatar-option.selected')?.dataset.avatar;
-        const selectedArchetype = null; // server-assigned
-        const primaryColor = document.getElementById('primaryColor')?.value;
-        const secondaryColor = document.getElementById('secondaryColor')?.value;
-        const systemName = document.getElementById('systemName')?.value?.trim();
-
-        // Validate form
-        if (!selectedAvatar) {
-            UI.showAlert('Please select an avatar');
-            return false;
-        }
-        // No archetype validation; server assigns
-        if (!systemName) {
-            UI.showAlert('Please enter a system name');
-            return false;
-        }
-        if (systemName.length > 30) {
-            UI.showAlert('System name too long (max 30 characters)');
-            return false;
-        }
-
-        try {
-            console.log('Submitting setup data:', {
-                userId: this.userId,
-                avatar: selectedAvatar,
-                colorPrimary: primaryColor,
-                colorSecondary: secondaryColor,
-                systemName: systemName
-            });
-
-            const response = await fetch(`/game/setup/${this.gameId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    userId: this.userId,
-                    avatar: selectedAvatar,
-                    colorPrimary: primaryColor,
-                    colorSecondary: secondaryColor,
-                    systemName: systemName
-                })
-            });
-
-            console.log('Setup response status:', response.status);
-
-            if (!response.ok) {
-                // Try to get error message from response
-                let errorMessage = 'Setup failed';
-                try {
-                    const errorData = await response.text();
-                    console.error('Setup error response:', errorData);
-                    
-                    // Try to parse as JSON
-                    try {
-                        const jsonError = JSON.parse(errorData);
-                        errorMessage = jsonError.error || errorMessage;
-                    } catch (e) {
-                        // Not JSON, use the text as error
-                        errorMessage = errorData || errorMessage;
-                    }
-                } catch (e) {
-                    console.error('Error reading response:', e);
-                }
-                
-                UI.showAlert(`Setup failed: ${errorMessage}`);
-                return false;
-            }
-
-            const data = await response.json();
-            console.log('Setup success response:', data);
-
-            this.addLogEntry('System setup completed successfully!', 'success');
-            // Reload game state to reflect setup completion (pins to selected unit sector if any)
-            await this.loadGameState();
-            return true; // Allow modal to close
-
-        } catch (error) {
-            console.error('Setup network error:', error);
-            UI.showAlert(`Connection failed: ${error.message}. Please try again.`);
-            return false;
-        }
-    }
+    // setup modal handled in SFUI.setupModal
 }
 
 // Players modal: show all players, lock status, and online status
@@ -4743,7 +3508,7 @@ async function showPlayersModal() {
                         return `
                         <div class=\"asset-item\" style=\"display:flex; align-items:center; justify-content:space-between;\">
                             <div style=\"display:flex; align-items:center; gap:10px;\">
-                                <img src=\"${avatarSrc}\" alt=\"avatar\" style=\"width:36px; height:36px; border-radius:50%; border:2px solid ${borderColor}; object-fit:cover;\" onerror=\"this.src='assets/avatars/explorer.png'\">
+                                <img src=\"${avatarSrc}\" alt=\"avatar\" data-avatar=\"1\" style=\"width:36px; height:36px; border-radius:50%; border:2px solid ${borderColor}; object-fit:cover;\">
                                 <div>
                                     <div class=\"asset-name\">${p.username || 'Player ' + p.userId}</div>
                                     <div class=\"asset-position\" style=\"display:flex; gap:10px;\">
@@ -4770,6 +3535,9 @@ async function showPlayersModal() {
                 { text: 'Close', style: 'primary', action: () => true }
             ]
         });
+        container.querySelectorAll('img[data-avatar]')?.forEach(img => {
+            img.addEventListener('error', () => { img.src = 'assets/avatars/explorer.png'; });
+        });
     } catch (e) {
         console.error('Error showing players modal:', e);
         UI.showAlert('Failed to load players');
@@ -4782,6 +3550,8 @@ let gameClient = null;
 // Initialize game
 async function initializeGame(gameId) {
     gameClient = new GameClient();
+    // Expose to feature modules (IIFE) that access window.gameClient
+    if (typeof window !== 'undefined') { window.gameClient = gameClient; }
     await gameClient.initialize(gameId);
     // Start idle heartbeat to report activity for presence
     try {
@@ -4945,7 +3715,7 @@ function setWarpMode() {
 // Active scan removed; abilities now drive scanning via buffs like 'survey_scanner'.
 
 // Show build modal with tabbed interface
-async function showBuildModal() {
+async function showBuildModal() { return build_showBuildModal();
     if (!gameClient || !gameClient.selectedUnit) {
         gameClient?.addLogEntry('No station selected', 'warning');
         return;
@@ -4959,14 +3729,7 @@ async function showBuildModal() {
 
     // Get station cargo to check available resources
     try {
-        const response = await fetch(`/game/cargo/${selectedStation.id}?userId=${gameClient.userId}`);
-        const data = await response.json();
-        
-        if (!response.ok) {
-            gameClient.addLogEntry(data.error || 'Failed to get station cargo', 'error');
-            return;
-        }
-
+        const data = await SFApi.Cargo.getCargo(selectedStation.id, gameClient.userId);
         const cargo = data.cargo;
         const rockQuantity = cargo.items.find(item => item.resource_name === 'rock')?.quantity || 0;
         
@@ -5155,7 +3918,7 @@ async function showBuildModal() {
     }
 }
 // Render the Shipyard UI inside the build modal
-async function renderShipyard(selectedStation, cargo) {
+async function renderShipyard(selectedStation, cargo) { return build_renderShipyard(selectedStation, cargo);
     const container = document.getElementById('shipyard-container');
     if (!container) return;
     const haveMap = new Map(cargo.items.map(i => [i.resource_name, i.quantity]));
@@ -5163,9 +3926,8 @@ async function renderShipyard(selectedStation, cargo) {
     // Fetch full blueprint list from server
     let blueprints = [];
     try {
-        const resp = await fetch('/game/blueprints');
-        const jd = await resp.json();
-        if (resp.ok) blueprints = jd.blueprints || [];
+        const jd = await SFApi.Build.blueprints();
+        blueprints = jd.blueprints || [];
     } catch {}
     // Client-side fallback mapping if server doesn't provide refined fields
     const ROLE_TO_REFINED = {
@@ -5392,14 +4154,13 @@ async function renderShipyard(selectedStation, cargo) {
                     <button class="build-btn ${(canBuild||freeBuild)?'':'disabled'}" ${(canBuild||freeBuild)?'':'disabled'}>Build${freeBuild?' (Free)':''}</button>
                 </div>`;
             wrap.querySelector('button').onclick = async () => {
-                const resp = await fetch('/game/build-ship', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ stationId: selectedStation.id, blueprintId: bp.id, userId: gameClient.userId, freeBuild }) });
-                const jd = await resp.json();
-                if (!resp.ok) {
-                    gameClient.addLogEntry(jd.error || 'Build failed', 'error');
-                } else {
+                try {
+                    const jd = await SFApi.Build.buildShip(selectedStation.id, bp.id, gameClient.userId, freeBuild);
                     gameClient.addLogEntry(`Built ${jd.shipName}`, 'success');
                     UI.closeModal();
                     await gameClient.loadGameState();
+                } catch (e) {
+                    gameClient.addLogEntry((e && e.data && e.data.error) || e.message || 'Build failed', 'error');
                 }
             };
             list.appendChild(wrap);
@@ -5413,7 +4174,7 @@ async function renderShipyard(selectedStation, cargo) {
 }
 
 // Switch between build tabs
-function switchBuildTab(tabName) {
+function switchBuildTab(tabName) { return build_switchBuildTab(tabName);
     // Update tab buttons
     document.querySelectorAll('.build-tab').forEach(tab => {
         tab.classList.remove('active');
@@ -5428,107 +4189,60 @@ function switchBuildTab(tabName) {
 }
 
 // Build a ship
-async function buildShip(shipType, cost) {
+async function buildShip(shipType, cost) { return build_buildShip(shipType, cost);
     if (!gameClient || !gameClient.selectedUnit) {
         gameClient?.addLogEntry('No station selected', 'warning');
         return;
     }
 
     try {
-        const response = await fetch('/game/build-ship', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                stationId: gameClient.selectedUnit.id,
-                shipType: shipType,
-                cost: cost,
-                userId: gameClient.userId
-            })
-        });
-
-        const data = await response.json();
-        
-        if (response.ok) {
-            gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
-            UI.closeModal();
-            // Refresh game state to show new ship
-            gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
-        } else {
-            gameClient.addLogEntry(data.error || 'Failed to build ship', 'error');
-        }
-
+        const data = await SFApi.Build.buildShipLegacy(gameClient.selectedUnit.id, shipType, cost, gameClient.userId);
+        gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
+        UI.closeModal();
+        // Refresh game state to show new ship
+        gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
     } catch (error) {
         console.error('Error building ship:', error);
-        gameClient.addLogEntry('Failed to build ship', 'error');
+        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to build ship', 'error');
     }
 }
 
 // Build a structure (as cargo item)
-async function buildStructure(structureType, cost) {
+async function buildStructure(structureType, cost) { return build_buildStructure(structureType, cost);
     if (!gameClient || !gameClient.selectedUnit) {
         gameClient?.addLogEntry('No station selected', 'warning');
         return;
     }
 
     try {
-        const response = await fetch('/game/build-structure', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                stationId: gameClient.selectedUnit.id,
-                structureType: structureType,
-                cost: cost,
-                userId: gameClient.userId
-            })
-        });
-
-        const data = await response.json();
-        
-        if (response.ok) {
-            gameClient.addLogEntry(`${data.structureName} manufactured successfully!`, 'success');
-            UI.closeModal();
-        } else {
-            gameClient.addLogEntry(data.error || 'Failed to build structure', 'error');
-        }
-
+        const data = await SFApi.Build.buildStructure(gameClient.selectedUnit.id, structureType, cost, gameClient.userId);
+        gameClient.addLogEntry(`${data.structureName} manufactured successfully!`, 'success');
+        UI.closeModal();
     } catch (error) {
         console.error('Error building structure:', error);
-        gameClient.addLogEntry('Failed to build structure', 'error');
+        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to build structure', 'error');
     }
 }
 
 // Build a test Explorer for 1 rock
-async function buildBasicExplorer(cost) {
+async function buildBasicExplorer(cost) { return build_buildBasicExplorer(cost);
     if (!gameClient || !gameClient.selectedUnit) {
         gameClient?.addLogEntry('No station selected', 'warning');
         return;
     }
     try {
-        const response = await fetch('/game/build-basic-explorer', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stationId: gameClient.selectedUnit.id, userId: gameClient.userId })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
-            UI.closeModal();
-            await gameClient.loadGameState();
-        } else {
-            gameClient.addLogEntry(data.error || 'Failed to build Explorer', 'error');
-        }
+        const data = await SFApi.Build.buildShipBasic(gameClient.selectedUnit.id, gameClient.userId);
+        gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
+        UI.closeModal();
+        await gameClient.loadGameState();
     } catch (error) {
         console.error('Error building basic explorer:', error);
-        gameClient.addLogEntry('Failed to build Explorer', 'error');
+        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to build Explorer', 'error');
     }
 }
 
 // Deploy a structure from ship cargo
-async function deployStructure(structureType, shipId) {
+async function deployStructure(structureType, shipId) { return build_deployStructure(structureType, shipId);
     if (!gameClient || !gameClient.selectedUnit) {
         gameClient?.addLogEntry('No ship selected', 'warning');
         return;
@@ -5541,46 +4255,21 @@ async function deployStructure(structureType, shipId) {
     }
 
     try {
-        const response = await fetch('/game/deploy-structure', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                shipId: shipId,
-                structureType: structureType,
-                userId: gameClient.userId
-            })
-        });
-
-        const data = await response.json();
-        
-        if (response.ok) {
-            gameClient.addLogEntry(`${data.structureName} deployed successfully!`, 'success');
-            UI.closeModal();
-            // Refresh game state to show new structure
-            gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
-        } else {
-            gameClient.addLogEntry(data.error || 'Failed to deploy structure', 'error');
-        }
-
+        const data = await SFApi.Build.deployStructure(shipId, structureType, gameClient.userId);
+        gameClient.addLogEntry(`${data.structureName} deployed successfully!`, 'success');
+        UI.closeModal();
+        // Refresh game state to show new structure
+        gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
     } catch (error) {
         console.error('Error deploying structure:', error);
-        gameClient.addLogEntry('Failed to deploy structure', 'error');
+        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to deploy structure', 'error');
     }
 }
 // Show sector selection modal for interstellar gate deployment
-async function showSectorSelectionModal(shipId) {
+async function showSectorSelectionModal(shipId) { return build_showSectorSelectionModal(shipId);
     try {
         // Fetch all available sectors
-        const response = await fetch(`/game/sectors?gameId=${gameClient.gameId}&userId=${gameClient.userId}`);
-        const data = await response.json();
-        
-        if (!response.ok) {
-            gameClient.addLogEntry(data.error || 'Failed to get sector list', 'error');
-            return;
-        }
-
+        const data = await SFApi.Build.listSectors(gameClient.gameId, gameClient.userId);
         const sectors = data.sectors;
         const currentSectorId = gameClient.gameState.sector.id;
         
@@ -5603,7 +4292,7 @@ async function showSectorSelectionModal(shipId) {
             
             <div class="sector-list">
                 ${availableSectors.map(sector => `
-                    <div class="sector-option" onclick="deployInterstellarGate(${shipId}, ${sector.id}, '${sector.name}')">
+                    <div class="sector-option" data-action="deploy-gate" data-ship-id="${shipId}" data-destination-id="${sector.id}" data-destination-name="${sector.name}">
                         <div class="sector-info">
                             <div class="sector-name">🌌 ${sector.name}</div>
                             <div class="sector-details">
@@ -5631,6 +4320,15 @@ async function showSectorSelectionModal(shipId) {
             ],
             className: 'sector-selection-modal-container'
         });
+        // Delegate connect action
+        sectorModal.addEventListener('click', (e) => {
+            const row = e.target.closest('[data-action="deploy-gate"]');
+            if (!row) return;
+            const sId = Number(row.dataset.shipId);
+            const destId = Number(row.dataset.destinationId);
+            const destName = row.dataset.destinationName;
+            deployInterstellarGate(sId, destId, destName);
+        });
 
     } catch (error) {
         console.error('Error showing sector selection:', error);
@@ -5639,34 +4337,16 @@ async function showSectorSelectionModal(shipId) {
 }
 
 // Deploy interstellar gate with selected destination sector
-async function deployInterstellarGate(shipId, destinationSectorId, destinationSectorName) {
+async function deployInterstellarGate(shipId, destinationSectorId, destinationSectorName) { return build_deployInterstellarGate(shipId, destinationSectorId, destinationSectorName);
     try {
-        const response = await fetch('/game/deploy-interstellar-gate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                shipId: shipId,
-                destinationSectorId: destinationSectorId,
-                userId: gameClient.userId
-            })
-        });
-
-        const data = await response.json();
-        
-        if (response.ok) {
-            gameClient.addLogEntry(`Interstellar Gate deployed! Connected to ${destinationSectorName}`, 'success');
-            UI.closeModal();
-            // Refresh game state to show new structure
-            gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
-        } else {
-            gameClient.addLogEntry(data.error || 'Failed to deploy interstellar gate', 'error');
-        }
-
+        const data = await SFApi.Build.deployInterstellarGate(shipId, destinationSectorId, gameClient.userId);
+        gameClient.addLogEntry(`Interstellar Gate deployed! Connected to ${destinationSectorName}`, 'success');
+        UI.closeModal();
+        // Refresh game state to show new structure
+        gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
     } catch (error) {
         console.error('Error deploying interstellar gate:', error);
-        gameClient.addLogEntry('Failed to deploy interstellar gate', 'error');
+        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to deploy interstellar gate', 'error');
     }
 }
 
@@ -5698,7 +4378,7 @@ function showInterstellarTravelOptions() {
             ${adjacentGates.map(gate => {
                 const gateMeta = gate.meta || {};
                 return `
-                    <div class="gate-option" onclick="travelThroughGate(${gate.id}, '${gateMeta.destinationSectorName || 'Unknown Sector'}')">
+                    <div class="gate-option" data-action="travel-gate" data-gate-id="${gate.id}" data-destination-name="${gateMeta.destinationSectorName || 'Unknown Sector'}">
                         <div class="gate-info">
                             <div class="gate-name">🌀 ${gateMeta.name || 'Interstellar Gate'}</div>
                             <div class="gate-destination">
@@ -5726,6 +4406,15 @@ function showInterstellarTravelOptions() {
         ],
         className: 'interstellar-travel-modal-container'
     });
+    // Delegate travel clicks
+    travelModal.addEventListener('click', (e) => {
+        const row = e.target.closest('[data-action="travel-gate"]');
+        if (row) {
+            const gateId = Number(row.dataset.gateId);
+            const destName = row.dataset.destinationName || 'Unknown Sector';
+            travelThroughGate(gateId, destName);
+        }
+    });
 }
 
 // Travel through an interstellar gate
@@ -5736,33 +4425,18 @@ async function travelThroughGate(gateId, destinationName) {
     }
 
     try {
-        const response = await fetch('/game/interstellar-travel', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                shipId: gameClient.selectedUnit.id,
-                gateId: gateId,
-                userId: gameClient.userId
-            })
-        });
-
-        const data = await response.json();
-        
-        if (response.ok) {
+        const data = await SFApi.Travel.interstellarTravel(gameClient.selectedUnit.id, gateId, gameClient.userId);
+        if (data) {
             gameClient.addLogEntry(`${gameClient.selectedUnit.meta.name} traveled to ${destinationName}!`, 'success');
             UI.closeModal();
             
             // The ship has moved to a different sector, so we need to refresh the entire game state
             gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
-        } else {
-            gameClient.addLogEntry(data.error || 'Failed to travel through gate', 'error');
         }
 
     } catch (error) {
         console.error('Error traveling through gate:', error);
-        gameClient.addLogEntry('Failed to travel through gate', 'error');
+        gameClient.addLogEntry(error?.data?.error || 'Failed to travel through gate', 'error');
     }
 }
 
@@ -5789,20 +4463,14 @@ async function toggleMining() {
             shipId: ship.id
         });
     } else {
-        // Start mining - show resource selection
-        await showResourceSelection(ship.id);
+        // Start mining - delegate to module if available
+        try { SFMining.showResourceSelection(ship.id); } catch {}
     }
 }
 
 async function showResourceSelection(shipId) {
     try {
-        const response = await fetch(`/game/resource-nodes/${gameClient.gameId}/${shipId}?userId=${gameClient.userId}`);
-        const data = await response.json();
-        
-        if (!response.ok) {
-            gameClient.addLogEntry(data.error || 'Failed to get resource nodes', 'error');
-            return;
-        }
+        const data = await SFApi.Resources.listNearbyNodes(gameClient.gameId, shipId, gameClient.userId);
         
         if (data.resourceNodes.length === 0) {
             gameClient.addLogEntry('No mineable resources nearby. Move closer to asteroid rocks, gas clouds, or other resources.', 'warning');
@@ -5841,7 +4509,7 @@ async function showResourceSelection(shipId) {
             
             const mineBtn = resourceOption.querySelector('.mine-select-btn');
             mineBtn.addEventListener('click', () => {
-                startMining(shipId, node.id, node.resource_name);
+                try { SFMining.startMining(shipId, node.id, node.resource_name); } catch {}
                 UI.closeModal();
             });
             
@@ -5900,14 +4568,7 @@ async function showCargo() {
     const unitType = selectedUnit.type === 'ship' ? 'Ship' : 'Structure';
     
     try {
-        const response = await fetch(`/game/cargo/${selectedUnit.id}?userId=${gameClient.userId}`);
-        const data = await response.json();
-        
-        if (!response.ok) {
-            gameClient.addLogEntry(data.error || 'Failed to get cargo data', 'error');
-            return;
-        }
-        
+        const data = await SFApi.Cargo.getCargo(selectedUnit.id, gameClient.userId);
         const cargo = data.cargo;
         
         // Find adjacent objects for transfer options (allow public cargo cans not owned by you)
@@ -5951,7 +4612,7 @@ async function showCargo() {
                 const transferBtn = document.createElement('button');
                 transferBtn.className = 'transfer-target-btn';
                 transferBtn.innerHTML = `${gameClient.getUnitIcon(obj.type)} ${obj.meta.name || obj.type} (${obj.x}, ${obj.y})`;
-                transferBtn.onclick = () => showTransferModal(selectedUnit.id, obj.id, obj.meta.name || obj.type);
+                transferBtn.onclick = () => { try { SFCargo.showTransferModal(selectedUnit.id, obj.id, obj.meta.name || obj.type); } catch {} };
                 transferSection.appendChild(transferBtn);
             });
             
@@ -5986,9 +4647,7 @@ async function showCargo() {
                             Value: ${item.quantity * (item.base_value || 1)}
                         </div>
                         ${isDeployable ? `
-                            <button class="deploy-btn" onclick="deployStructure('${item.resource_name}', ${selectedUnit.id})">
-                                🚀 Deploy
-                            </button>
+                            <button class="deploy-btn" data-action="deploy-structure" data-resource="${item.resource_name}" data-ship-id="${selectedUnit.id}">🚀 Deploy</button>
                         ` : ''}
                     </div>
                 `;
@@ -6009,6 +4668,13 @@ async function showCargo() {
             ],
             className: 'cargo-modal'
         });
+        cargoDisplay.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action="deploy-structure"]');
+            if (btn) {
+                const res = btn.dataset.resource; const sId = Number(btn.dataset.shipId);
+                return build_deployStructure(res, sId);
+            }
+        });
         
     } catch (error) {
         console.error('Error getting cargo:', error);
@@ -6020,17 +4686,11 @@ async function showCargo() {
 async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
     try {
         // Get cargo from source and destination
-        const [fromRes, toRes] = await Promise.all([
-            fetch(`/game/cargo/${fromObjectId}?userId=${gameClient.userId}`),
-            fetch(`/game/cargo/${toObjectId}?userId=${gameClient.userId}`)
+        const [fromData, toData] = await Promise.all([
+            SFApi.Cargo.getCargo(fromObjectId, gameClient.userId),
+            SFApi.Cargo.getCargo(toObjectId, gameClient.userId)
         ]);
-        const [fromData, toData] = await Promise.all([fromRes.json(), toRes.json()]);
-        
-        if (!fromRes.ok || !toRes.ok) {
-            gameClient.addLogEntry((fromData.error || toData.error) || 'Failed to get cargo data', 'error');
-            return;
-        }
-        
+
         const fromCargo = fromData.cargo;
         const toCargo = toData.cargo;
         
@@ -6061,7 +4721,7 @@ async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
                 </div>
                 <div class="transfer-controls">
                     <input type="number" class="transfer-quantity" min="1" max="${item.quantity}" value="1" id="transfer-${item.resource_name}">
-                    <button class="transfer-btn" onclick="performTransfer('${fromObjectId}', '${toObjectId}', '${item.resource_name}', document.getElementById('transfer-${item.resource_name}').value, '${toObjectName}')">
+                    <button class="transfer-btn" data-action="transfer" data-from-id="${fromObjectId}" data-to-id="${toObjectId}" data-resource="${item.resource_name}" data-input-id="transfer-${item.resource_name}" data-to-name="${toObjectName}">
                         Transfer
                     </button>
                 </div>
@@ -6086,7 +4746,7 @@ async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
                     </div>
                     <div class="transfer-controls">
                         <input type="number" class="transfer-quantity" min="1" max="${item.quantity}" value="1" id="transfer-from-${item.resource_name}">
-                        <button class="transfer-btn" onclick="performTransfer('${toObjectId}', '${fromObjectId}', '${item.resource_name}', document.getElementById('transfer-from-${item.resource_name}').value, 'Selected')">
+                        <button class="transfer-btn" data-action="transfer" data-from-id="${toObjectId}" data-to-id="${fromObjectId}" data-resource="${item.resource_name}" data-input-id="transfer-from-${item.resource_name}" data-to-name="Selected">
                             Transfer
                         </button>
                     </div>
@@ -6107,6 +4767,15 @@ async function showTransferModal(fromObjectId, toObjectId, toObjectName) {
             ],
             className: 'transfer-modal'
         });
+        transferDisplay.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action="transfer"]');
+            if (!btn) return;
+            const fromId = Number(btn.dataset.fromId);
+            const toId = Number(btn.dataset.toId);
+            const res = btn.dataset.resource; const inputId = btn.dataset.inputId; const toName = btn.dataset.toName || 'Target';
+            const qty = document.getElementById(inputId)?.value;
+            try { SFCargo.performTransfer(fromId, toId, res, qty, toName); } catch {}
+        });
         
     } catch (error) {
         console.error('Error showing transfer modal:', error);
@@ -6124,54 +4793,32 @@ async function performTransfer(fromObjectId, toObjectId, resourceName, quantity,
     }
     
     try {
-        const response = await fetch('/game/transfer', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                fromObjectId: parseInt(fromObjectId),
-                toObjectId: parseInt(toObjectId),
-                resourceName: resourceName,
-                quantity: transferQuantity,
-                userId: gameClient.userId
-            })
-        });
-        
-        const result = await response.json();
-        
-        if (response.ok && result.success) {
+        const result = await SFApi.Cargo.transfer(parseInt(fromObjectId), parseInt(toObjectId), resourceName, transferQuantity, gameClient.userId);
+        if (result && result.success) {
             gameClient.addLogEntry(`Successfully transferred ${transferQuantity} ${resourceName} to ${toObjectName}`, 'success');
-            UI.closeModal(); // Close transfer modal
-            
-            // Refresh cargo display if still open
+            UI.closeModal();
             if (gameClient.selectedUnit && gameClient.selectedUnit.id === fromObjectId) {
-                setTimeout(() => showCargo(), 100); // Small delay to ensure modal closes first
+                setTimeout(() => showCargo(), 100);
             }
         } else {
-            gameClient.addLogEntry(result.error || 'Transfer failed', 'error');
+            gameClient.addLogEntry((result && result.error) || 'Transfer failed', 'error');
         }
-        
     } catch (error) {
         console.error('Error performing transfer:', error);
-        gameClient.addLogEntry('Failed to transfer resources', 'error');
+        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to transfer resources', 'error');
     }
 }
 
 // Update cargo status in unit panel
 async function updateCargoStatus(shipId) {
     try {
-        const response = await fetch(`/game/cargo/${shipId}?userId=${gameClient.userId}`);
-        const data = await response.json();
-        
-        if (response.ok) {
-            const cargoElement = document.getElementById('cargoStatus');
-            if (cargoElement) {
-                const cargo = data.cargo;
-                const percentFull = Math.round((cargo.spaceUsed / cargo.capacity) * 100);
-                cargoElement.innerHTML = `${cargo.spaceUsed}/${cargo.capacity} (${percentFull}%)`;
-                cargoElement.style.color = percentFull >= 90 ? '#FF5722' : percentFull >= 70 ? '#FF9800' : '#4CAF50';
-            }
+        const data = await SFApi.Cargo.getCargo(shipId, gameClient.userId);
+        const cargoElement = document.getElementById('cargoStatus');
+        if (cargoElement) {
+            const cargo = data.cargo;
+            const percentFull = Math.round((cargo.spaceUsed / cargo.capacity) * 100);
+            cargoElement.innerHTML = `${cargo.spaceUsed}/${cargo.capacity} (${percentFull}%)`;
+            cargoElement.style.color = percentFull >= 90 ? '#FF5722' : percentFull >= 70 ? '#FF9800' : '#4CAF50';
         }
     } catch (error) {
         console.error('Error updating cargo status:', error);
@@ -6179,78 +4826,7 @@ async function updateCargoStatus(shipId) {
 }
 
 // Map modal functions
-function openMapModal() {
-    if (!gameClient) return;
-    
-    const modalContent = document.createElement('div');
-    modalContent.innerHTML = `
-        <div class="map-tabs" style="display:flex; gap:8px; align-items:center; padding: 12px 16px 8px 16px;">
-            <button class="map-tab active sf-btn sf-btn-secondary" onclick="switchMapTab('solar-system')">
-                🌌 Solar System
-            </button>
-            <button class="map-tab sf-btn sf-btn-secondary" onclick="switchMapTab('galaxy')">
-                🌌 Galaxy
-            </button>
-        </div>
-        
-        <div id="solar-system-tab" class="map-tab-content" style="height: calc(100% - 56px); overflow: hidden; padding: 8px 14px 12px;">
-            <div style="display:flex; flex-direction:column; height:100%; min-width:0;">
-                <div style="margin: 0 0 6px 0; flex: 0 0 auto;">
-                    <h3 style="color: #64b5f6; margin: 0 0 6px 0;">🌌 ${gameClient.gameState?.sector?.name || 'Current Solar System'}</h3>
-                    <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
-                </div>
-                <div style="flex:1 1 auto; min-height:0; display:grid; grid-template-columns: 3fr 1fr; gap:14px; align-items:stretch;">
-                    <div style="display:flex; flex-direction:column; min-width:0;">
-                        <div style="flex:1; min-height:0;">
-                            <canvas id="fullMapCanvas" class="full-map-canvas" style="width:100%; height:100%; display:block;"></canvas>
-                        </div>
-                    </div>
-                    <div id="systemFacts" style="background:#0b1220; border:1px solid rgba(100,181,246,0.25); border-radius:8px; padding:12px; color:#e3f2fd; overflow:hidden;">
-                        <h4 style="margin:0 0 8px 0; color:#9ecbff;">System Facts</h4>
-                        <div id="sysMetaSummary" style="font-size:13px; line-height:1.6;">
-                            Loading...
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div id="galaxy-tab" class="map-tab-content hidden" style="height: calc(100% - 56px); overflow:hidden; padding: 12px 16px 16px;">
-            <div style="margin-bottom: 10px;">
-                <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 Galaxy Overview</h3>
-                <p style="color: #ccc; margin: 0; font-size: 0.9em;">All known solar systems in the galaxy</p>
-            </div>
-            <div style="height: calc(100% - 52px); min-height: 280px;">
-                <canvas id="galaxyCanvas" class="full-map-canvas" style="height:100%; width:100%; display:block;"></canvas>
-            </div>
-            <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">
-                ● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.
-            </div>
-        </div>
-    `;
-    
-    UI.showModal({
-        title: '🗺️ Strategic Map',
-        content: modalContent,
-        actions: [
-            {
-                text: 'Close',
-                style: 'secondary',
-                action: () => true
-            }
-        ],
-        className: 'map-modal',
-        width: 1280,
-        height: 820
-    });
-    
-    // Initialize the solar system map after modal is shown
-    setTimeout(() => {
-        initializeFullMap();
-        loadGalaxyData();
-        populateSystemFacts();
-    }, 100);
-}
+ 
 
 // Populate the System Facts panel (type, mineral ratios, unique, wildcards, gate slots)
 async function populateSystemFacts() {
@@ -6261,10 +4837,7 @@ async function populateSystemFacts() {
         const systemId = sector.id;
         // Fetch server-side computed facts (we can implement the endpoint later; for now, build from client data if present)
         let facts = null;
-        try {
-            const res = await fetch(`/game/system/${systemId}/facts`);
-            if (res.ok) facts = await res.json();
-        } catch {}
+        try { facts = await SFApi.State.systemFacts(systemId); } catch {}
         if (!facts) {
             // Fallback: compute basic surface facts from objects we have
             const all = gameClient.objects || [];
@@ -6316,358 +4889,11 @@ async function populateSystemFacts() {
     }
 }
 
-function switchMapTab(tabName) {
-    // Update tab buttons
-    document.querySelectorAll('.map-tab').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    event.target.classList.add('active');
-    
-    // Update tab content
-    document.querySelectorAll('.map-tab-content').forEach(content => {
-        content.classList.add('hidden');
-    });
-    document.getElementById(tabName + '-tab').classList.remove('hidden');
-    
-    // Refresh map if switching to solar system tab
-    if (tabName === 'solar-system') {
-        setTimeout(() => initializeFullMap(), 50);
-    } else if (tabName === 'galaxy') {
-        setTimeout(() => initializeGalaxyMap(), 50);
-    }
-}
+ 
 
-function initializeFullMap() {
-    const canvas = document.getElementById('fullMapCanvas');
-    if (!canvas || !gameClient || !gameClient.objects) return;
-    
-    const ctx = canvas.getContext('2d');
-    // Size canvas to container exactly (no internal scrollbars)
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    
-    // Clear canvas
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw sector boundary (legend removed)
-    ctx.strokeStyle = 'rgba(100, 181, 246, 0.3)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
-    
-    // Scale objects to full map
-    const scaleX = canvas.width / 5000;
-    const scaleY = canvas.height / 5000;
-    
-    // Use the same rendering logic as the minimap but larger
-    renderFullMapObjects(ctx, canvas, scaleX, scaleY);
-}
-// Deterministic galaxy map rendering
-async function initializeGalaxyMap() {
-    try {
-        const canvas = document.getElementById('galaxyCanvas');
-        if (!canvas || !gameClient) return;
-        // Fit canvas to container
-        const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width;
-        canvas.height = Math.max(360, rect.height);
-        const w = canvas.width, h = canvas.height;
+ 
 
-        // Fetch graph from server
-        const res = await fetch(`/game/${gameClient.gameId}/galaxy-graph`);
-        const graph = await res.json();
-        if (!graph || !Array.isArray(graph.systems)) return;
-
-        // Build nodes/links
-        const systems = graph.systems;
-        const gates = graph.gates || [];
-
-        // Degree centrality for quick choke highlighting
-        const deg = new Map(systems.map(s => [s.id, 0]));
-        gates.forEach(g => {
-            if (deg.has(g.source)) deg.set(g.source, deg.get(g.source) + 1);
-            if (deg.has(g.target)) deg.set(g.target, deg.get(g.target) + 1);
-        });
-        let maxDeg = 1; deg.forEach(v => { if (v > maxDeg) maxDeg = v; });
-        const centrality = new Map();
-        deg.forEach((v, k) => centrality.set(k, v / maxDeg));
-
-        // Seeded RNG based on gameId+graph
-        function hashString(s) {
-            let h = 2166136261 >>> 0;
-            for (let i=0; i<s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-            return (h >>> 0);
-        }
-        function graphKey(systems, gates, gameId) {
-            const nodesStr = systems.map(s => s.id).sort().join('|');
-            const edgesStr = gates.map(e => `${e.source}>${e.target}`).sort().join('|');
-            return `${gameId}::${nodesStr}::${edgesStr}`;
-        }
-        const seed = hashString(graphKey(systems, gates, gameClient.gameId));
-        let s = seed >>> 0;
-        const rand = () => (s = Math.imul(s ^ (s >>> 15), 2246822507) + 0x9e3779b9) >>> 0, rand01 = () => (rand() / 0xffffffff);
-
-        // Simple deterministic force-like relaxation
-        const nodes = systems.map(sys => ({ id: sys.id, name: sys.name, x: rand01()*w, y: rand01()*h, vx: 0, vy: 0 }));
-        const id2 = new Map(nodes.map(n => [n.id, n]));
-        const links = gates.filter(e => id2.has(e.source) && id2.has(e.target)).map(e => ({ s: id2.get(e.source), t: id2.get(e.target) }));
-
-        const linkDist = Math.min(w, h) / 10;
-        for (let iter=0; iter<300; iter++) {
-            // Link springs
-            links.forEach(L => {
-                const dx = L.t.x - L.s.x, dy = L.t.y - L.s.y;
-                const d = Math.hypot(dx, dy) || 0.0001;
-                const k = 0.05; // spring strength
-                const f = k * (d - linkDist);
-                const fx = f * (dx/d), fy = f * (dy/d);
-                L.t.vx -= fx; L.t.vy -= fy;
-                L.s.vx += fx; L.s.vy += fy;
-            });
-            // Node repulsion
-            for (let i=0; i<nodes.length; i++) {
-                for (let j=i+1; j<nodes.length; j++) {
-                    const A = nodes[i], B = nodes[j];
-                    const dx = B.x - A.x, dy = B.y - A.y;
-                    const d2 = dx*dx + dy*dy + 0.01;
-                    const rep = 2000 / d2; // tweak repulsion
-                    const invd = 1/Math.sqrt(d2);
-                    const fx = rep * dx * invd, fy = rep * dy * invd;
-                    A.vx -= fx; A.vy -= fy; B.vx += fx; B.vy += fy;
-                }
-            }
-            // Damping + bounds
-            nodes.forEach(N => {
-                N.vx *= 0.85; N.vy *= 0.85;
-                N.x += N.vx; N.y += N.vy;
-                N.x = Math.max(30, Math.min(w-30, N.x));
-                N.y = Math.max(30, Math.min(h-30, N.y));
-            });
-        }
-
-        // Render
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0,0,w,h);
-        ctx.fillStyle = '#0b0f1a'; ctx.fillRect(0,0,w,h);
-        // Links
-        ctx.strokeStyle = 'rgba(100,181,246,0.35)'; ctx.lineWidth = 1.25;
-        links.forEach(L => { ctx.beginPath(); ctx.moveTo(L.s.x, L.s.y); ctx.lineTo(L.t.x, L.t.y); ctx.stroke(); });
-        // Nodes + always-on labels
-        nodes.forEach(N => {
-            const c = centrality.get(N.id) || 0;
-            const r = 6 + 10*c;
-            const grad = ctx.createRadialGradient(N.x, N.y, 0, N.x, N.y, r);
-            grad.addColorStop(0, `rgba(255,255,255,${0.85 - 0.5*c})`);
-            grad.addColorStop(1, `rgba(100,181,246,0.9)`);
-            ctx.fillStyle = grad;
-            ctx.beginPath(); ctx.arc(N.x, N.y, r, 0, Math.PI*2); ctx.fill();
-            ctx.strokeStyle = c > 0.6 ? '#ffca28' : '#64b5f6';
-            ctx.lineWidth = c > 0.6 ? 2 : 1; ctx.stroke();
-
-            // Label every node (clamped to view)
-            const name = N.name || String(N.id);
-            ctx.font = '11px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillStyle = '#e3f2fd';
-            ctx.shadowColor = 'rgba(0,0,0,0.9)';
-            ctx.shadowBlur = 3;
-            let labelX = N.x;
-            let labelY = N.y - (r + 6);
-            if (labelY < 12) labelY = N.y + r + 12; // if too close to top, render below
-            // Clamp to canvas bounds horizontally
-            const metrics = ctx.measureText(name);
-            const half = metrics.width / 2;
-            if (labelX - half < 6) labelX = 6 + half;
-            if (labelX + half > w - 6) labelX = w - 6 - half;
-            ctx.fillText(name, labelX, labelY);
-            ctx.shadowBlur = 0;
-        });
-    } catch (e) {
-        console.error('initializeGalaxyMap error:', e);
-        const list = document.getElementById('galaxyLegend');
-        if (list) list.innerText = 'Failed to render galaxy map';
-    }
-}
-
-function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
-    if (!gameClient || !gameClient.objects) return;
-    
-    // Separate objects by type
-    const celestialObjects = gameClient.objects.filter(obj => gameClient.isCelestialObject(obj));
-    const resourceNodes = gameClient.objects.filter(obj => obj.type === 'resource_node');
-    const shipObjects = gameClient.objects.filter(obj => !gameClient.isCelestialObject(obj) && obj.type !== 'resource_node');
-    
-    // Draw celestial objects (skip large field overlays for belts/nebulae)
-    celestialObjects.forEach(obj => {
-        const x = obj.x * scaleX;
-        const y = obj.y * scaleY;
-        const radius = obj.radius || 1;
-        const meta = obj.meta || {};
-        const celestialType = meta.celestialType || obj.celestial_type;
-        
-        // Skip drawing large circles for belts and nebulae
-        if (celestialType === 'belt' || celestialType === 'nebula') {
-            return;
-        }
-        
-        // Calculate size for full map (larger than minimap)
-        let size;
-        if (celestialType === 'star') {
-            size = Math.max(8, Math.min(radius * scaleX * 0.6, canvas.width * 0.06));
-        } else if (celestialType === 'planet') {
-            size = Math.max(6, Math.min(radius * scaleX * 1.0, canvas.width * 0.04));
-        } else if (celestialType === 'moon') {
-            size = Math.max(4, Math.min(radius * scaleX * 1.2, canvas.width * 0.03));
-        } else {
-            size = Math.max(3, Math.min(radius * scaleX * 1.5, canvas.width * 0.04));
-        }
-        
-        // Get celestial colors
-        const colors = gameClient.getCelestialColors(obj);
-        ctx.fillStyle = colors.border;
-        
-        if (celestialType === 'star' || celestialType === 'planet' || celestialType === 'moon') {
-            // Important objects - circles with better visibility
-            ctx.beginPath();
-            ctx.arc(x, y, size/2, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Add glow effect for stars and planets
-            if (celestialType === 'star' || celestialType === 'planet') {
-                ctx.strokeStyle = colors.border;
-                ctx.lineWidth = 1;
-                ctx.stroke();
-            }
-            
-            // Add labels for important objects (always show for planets, stars if big enough)
-            if (celestialType === 'planet' || size > 8) {
-                ctx.fillStyle = '#ffffff';
-                ctx.font = celestialType === 'planet' ? '11px Arial' : '10px Arial';
-                ctx.textAlign = 'center';
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-                ctx.shadowBlur = 2;
-                ctx.fillText(meta.name || celestialType, x, y + size/2 + 14);
-                ctx.shadowBlur = 0; // Reset shadow
-            }
-        } else {
-            // Small objects - squares
-            ctx.fillRect(x - size/2, y - size/2, size, size);
-        }
-    });
-    
-    // Draw resource nodes as larger dots than minimap
-    const resourceFieldLabelsStrategic = new Map(); // Track field centers for labels
-    
-    resourceNodes.forEach(obj => {
-        const x = obj.x * scaleX;
-        const y = obj.y * scaleY;
-        const meta = obj.meta || {};
-        const resourceType = meta.resourceType || 'unknown';
-        const parentId = obj.parent_object_id;
-        
-        // Choose color based on resource type
-        let nodeColor;
-        switch (resourceType) {
-            case 'rock':
-                nodeColor = '#8D6E63';
-                break;
-            case 'gas':
-                nodeColor = '#9C27B0'; // Purple for gas
-                break;
-            case 'energy':
-                nodeColor = '#FFD54F';
-                break;
-            case 'salvage':
-                nodeColor = '#A1887F';
-                break;
-            default:
-                nodeColor = '#757575';
-        }
-        
-        ctx.fillStyle = nodeColor;
-        ctx.beginPath();
-        ctx.arc(x, y, 2, 0, Math.PI * 2); // Larger 2px dots for full map
-        ctx.fill();
-        
-        // Track field centers for labeling
-        if (parentId && (resourceType === 'rock' || resourceType === 'gas')) {
-            if (!resourceFieldLabelsStrategic.has(parentId)) {
-                resourceFieldLabelsStrategic.set(parentId, {
-                    x: 0, y: 0, count: 0, type: resourceType, parentId: parentId
-                });
-            }
-            const field = resourceFieldLabelsStrategic.get(parentId);
-            field.x += x;
-            field.y += y;
-            field.count++;
-        }
-    });
-    
-    // Draw field labels for asteroid belts and nebulae on strategic map
-    resourceFieldLabelsStrategic.forEach((field, parentId) => {
-        const centerX = field.x / field.count;
-        const centerY = field.y / field.count;
-        
-        // Find the parent celestial object to get its name
-        const parentObject = celestialObjects.find(obj => obj.id === parentId);
-        if (parentObject) {
-            const parentMeta = parentObject.meta || {};
-            const celestialType = parentMeta.celestialType || parentObject.celestial_type;
-            
-            let fieldName = '';
-            if (field.type === 'rock' && celestialType === 'belt') {
-                fieldName = parentMeta.name || 'Asteroid Belt';
-            } else if (field.type === 'gas' && celestialType === 'nebula') {
-                fieldName = parentMeta.name || 'Nebula Field';
-            }
-            
-            if (fieldName) {
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-                ctx.font = '12px Arial';
-                ctx.textAlign = 'center';
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-                ctx.shadowBlur = 2;
-                ctx.fillText(fieldName, centerX, centerY + 25);
-                ctx.shadowBlur = 0;
-            }
-        }
-    });
-    
-    // Draw ships and stations on top
-    shipObjects.forEach(obj => {
-        const x = obj.x * scaleX;
-        const y = obj.y * scaleY;
-        const isOwned = obj.owner_id === gameClient.userId;
-        
-        // Ship/station size for full map
-        const size = obj.type === 'station' ? 8 : 6;
-        
-        if (obj.type === 'station') {
-            // Station - square
-            ctx.fillStyle = isOwned ? '#4CAF50' : '#F44336';
-            ctx.fillRect(x - size/2, y - size/2, size, size);
-        } else {
-            // Ship - triangle
-            ctx.fillStyle = isOwned ? '#2196F3' : '#FF9800';
-            ctx.beginPath();
-            ctx.moveTo(x, y - size/2);
-            ctx.lineTo(x - size/2, y + size/2);
-            ctx.lineTo(x + size/2, y + size/2);
-            ctx.closePath();
-            ctx.fill();
-        }
-        
-        // Add ship labels
-        if (isOwned && obj.meta && obj.meta.name) {
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '10px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(obj.meta.name, x, y + size/2 + 12);
-        }
-    });
-}
-
+/* moved to ui/map-modal.js */
 async function loadGalaxyData() {
     try {
         // For now, just show the current game's systems
@@ -6717,6 +4943,7 @@ async function loadGalaxyData() {
     }
 }
 
+/* moved to ui/map-modal.js */
 function selectGalaxySystem(systemId) {
     if (systemId === gameClient.gameId) {
         // Switch to solar system tab for current system
@@ -6728,6 +4955,7 @@ function selectGalaxySystem(systemId) {
     }
 }
 // Show comprehensive player assets modal
+/* moved to ui/assets-modal.js */
 async function showPlayerAssets() {
     if (!gameClient || !gameClient.gameState) {
         gameClient?.addLogEntry('Game state not available', 'warning');
@@ -6760,9 +4988,8 @@ async function showPlayerAssets() {
             
             // Try to get cargo data (works for ships, will be extended for structures)
             try {
-                const response = await fetch(`/game/cargo/${obj.id}?userId=${gameClient.userId}`);
-                if (response.ok) {
-                    const data = await response.json();
+                const data = await SFApi.Cargo.getCargo(obj.id, gameClient.userId);
+                if (data) {
                     cargoData = data.cargo;
                 }
             } catch (error) {
@@ -6861,6 +5088,7 @@ async function showPlayerAssets() {
 } 
 
 // Basic Senate modal stub (to be expanded later)
+/* moved to ui/senate.js */
 function showSenateModal() {
     const content = document.createElement('div');
     content.innerHTML = `

@@ -1569,18 +1569,18 @@
                 <div class="turn-status">
                     <div class="turn-counter" id="turnCounter">Turn 1</div>
                     <div class="turn-countdown" id="turnCountdown" style="margin-left:8px;color:var(--muted);font-size:12px;display:none;">Next in --:--</div>
-                    <button class="lock-turn-btn sf-btn sf-btn-primary" id="lockTurnBtn" onclick="toggleTurnLock()">
+                    <button class="lock-turn-btn sf-btn sf-btn-primary" id="lockTurnBtn">
                         🔓 Lock Turn
                     </button>
-                    <button class="sf-btn sf-btn-secondary" id="playersStatusBtn" onclick="showPlayersModal()" title="Show Players">
+                    <button class="sf-btn sf-btn-secondary" id="playersStatusBtn" title="Show Players">
                         👥 Players
                     </button>
                 </div>
             </div>
             <div>
-                <button class="map-btn sf-btn sf-btn-secondary" onclick="openEncyclopedia()" title="Encyclopedia">📖</button>
-                <button class="map-btn sf-btn sf-btn-secondary" onclick="showSettings()">⚙️</button>
-                <button class="map-btn sf-btn sf-btn-danger" onclick="exitGame()">❌</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="openEncyclopediaBtn" title="Encyclopedia">📖</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="settingsBtn">⚙️</button>
+                <button class="map-btn sf-btn sf-btn-danger" id="exitGameBtn">❌</button>
             </div>
         </div>
         
@@ -1620,10 +1620,10 @@
         <div class="map-container sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
             <canvas id="gameCanvas"></canvas>
             <div class="map-controls">
-                <button class="map-btn sf-btn sf-btn-secondary" onclick="zoomIn()">🔍+</button>
-                <button class="map-btn sf-btn sf-btn-secondary" onclick="zoomOut()">🔍-</button>
-                <button class="map-btn sf-btn sf-btn-secondary" onclick="gameClient.toggleFloatingMiniMap()">🎯</button>
-                <button class="map-btn sf-btn sf-btn-secondary" onclick="openMapModal()" title="Open Full Map">🗺️</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="zoomInBtn">🔍+</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="zoomOutBtn">🔍-</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="floatingMiniBtn">🎯</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="openMapBtn" title="Open Full Map">🗺️</button>
             </div>
         </div>
         
@@ -1641,7 +1641,7 @@
         <div id="playerInformation" class="sf-card player-card rounded-2xl border border-white/10 backdrop-blur-xl" style="grid-area: minimap;">
             <div class="player-identity">
                 <div class="avatar-wrap">
-                    <img id="playerAvatarMini" src="assets/avatars/explorer.png" alt="avatar" onerror="this.src='assets/avatars/explorer.png'">
+                    <img id="playerAvatarMini" src="assets/avatars/explorer.png" alt="avatar">
                     <!-- Senate semicircle ring -->
                     <svg class="senate-ring" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
                         <!-- track -->
@@ -1668,8 +1668,8 @@
             </div>
             <div id="pilotBreakdown" style="font-size:12px;color:var(--muted);"></div>
             <div class="player-actions">
-                <button class="sf-btn sf-btn-secondary" onclick="showPlayerAssets()">Player Assets</button>
-                <button class="sf-btn sf-btn-secondary" onclick="showSenateModal()">Senate</button>
+                <button class="sf-btn sf-btn-secondary" id="playerAssetsBtn">Player Assets</button>
+                <button class="sf-btn sf-btn-secondary" id="senateBtn">Senate</button>
             </div>
         </div>
         
@@ -1684,7 +1684,7 @@
                                 <option value="public">Public</option>
                             </select>
                             <input id="chatInput" class="sf-input" placeholder="Type a message" />
-                        <button onclick="sendChat()" class="sf-btn sf-btn-secondary" id="chatSendBtn">Send</button>
+                        <button class="sf-btn sf-btn-secondary" id="chatSendBtn">Send</button>
                         </div>
                     </div>
                     <div style="display:grid; grid-template-rows: auto 1fr; gap:6px; min-height:0;">
@@ -1704,22 +1704,29 @@
       // You can flip this at runtime in the console as well: window.SF_DEV_MODE = true
       window.SF_DEV_MODE = (localStorage.getItem('SF_DEV_MODE') === '1');
     </script>
-    <script src="main.js"></script>
-    <script src="encyclopedia.js"></script>
-    <script src="game.js"></script>
+    
+    
+    <script type="module" src="entry.js"></script>
+    <script>
+      // Delegate UI globals to feature modules (overrides originals for thin coordination)
+      // ESM migration: no window shims needed anymore
+
+      window.toggleMining = function(){ return (window.SFMining && SFMining.toggleMining()) };
+      window.showResourceSelection = function(shipId){ return (window.SFMining && SFMining.showResourceSelection(shipId)) };
+      window.startMining = function(shipId, nodeId, resourceName){ return (window.SFMining && SFMining.startMining(shipId, nodeId, resourceName)) };
+
+      window.showCargo = function(){ return (window.SFCargo && SFCargo.showCargo()) };
+      window.showTransferModal = function(fromId, toId, toName){ return (window.SFCargo && SFCargo.showTransferModal(fromId, toId, toName)) };
+      window.performTransfer = function(fromId, toId, name, qty, toName){ return (window.SFCargo && SFCargo.performTransfer(fromId, toId, name, qty, toName)) };
+      window.updateCargoStatus = function(shipId){ return (window.SFCargo && SFCargo.updateCargoStatus(shipId)) };
+      
+      // Legacy globals → UI modules
+      window.showPlayerAssets = function(){ return (window.SFUI && SFUI.assets && SFUI.assets.show()) };
+      window.showSenateModal = function(){ return (window.SFUI && SFUI.senate && SFUI.senate.show()) };
+    </script>
     
     <script>
-        // Initialize game when page loads
-        document.addEventListener('DOMContentLoaded', () => {
-            if (Session.requireAuth()) {
-                const gameId = new URLSearchParams(window.location.search).get('id');
-                if (gameId) {
-                    initializeGame(gameId);
-                } else {
-                    window.location.href = 'lobby.html';
-                }
-            }
-        });
+        // Initialize moved to entry.js (ESM)
         
         function showSettings() {
             alert('Settings coming soon!\n\n• Graphics options\n• Sound controls\n• Keybindings');

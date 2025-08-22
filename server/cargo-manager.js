@@ -407,9 +407,9 @@ class CargoManager {
      */
     static async transferResources(fromObjectId, toObjectId, resourceName, quantity, userId) {
         try {
-            // Verify both objects exist. Destination may not be owned (e.g., public cargo cans)
+            // Verify both objects exist. Either side may be public (e.g., cargo cans)
             const fromObject = await new Promise((resolve, reject) => {
-                db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ?', [fromObjectId, userId], (err, obj) => {
+                db.get('SELECT * FROM sector_objects WHERE id = ?', [fromObjectId], (err, obj) => {
                     if (err) reject(err);
                     else resolve(obj);
                 });

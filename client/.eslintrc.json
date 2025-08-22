@@ -1,0 +1,23 @@
+{
+  "root": false,
+  "env": { "browser": true, "es2022": true },
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },
+  "extends": ["eslint:recommended"],
+  "rules": {
+    "no-restricted-syntax": [
+      "error,",
+      {
+        "selector": "MemberExpression[object.name='window'][property.name=/^SF/].property",
+        "message": "Do not use window.SF* globals. Import from modules instead."
+      }
+    ],
+    "no-restricted-attributes": [
+      "error",
+      {
+        "attribute": "/^on[a-z]+$/",
+        "message": "Inline event handlers are forbidden. Use addEventListener/delegation."
+      }
+    ]
+  }
+}
+

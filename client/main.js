@@ -374,3 +374,13 @@ UI.closeModal = function() {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { Session, UI, Game, Events, apiRequest, Modal };
 } 
+
+// Bridge for ESM loading: expose globals on window so legacy modules continue to work
+if (typeof window !== 'undefined') {
+    window.Session = Session;
+    window.UI = UI;
+    window.Game = Game;
+    window.Events = Events;
+    window.apiRequest = apiRequest;
+    window.Modal = Modal;
+}
