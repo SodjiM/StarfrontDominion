@@ -2,6 +2,11 @@
 
 import * as SFMining from './features/mining.js';
 import * as SFCargo from './features/cargo.js';
+import { normalizeGameState, getEffectiveMovementSpeed as coreGetEffectiveMovementSpeed, getEffectiveScanRange as coreGetEffectiveScanRange, getUnitStatus as coreGetUnitStatus, getUnitStatuses as coreGetUnitStatuses } from './core/GameState.js';
+import { calculateMovementPath as coreCalculateMovementPath, calculateETA as coreCalculateETA } from './core/Movement.js';
+import { renderUnitDetails as uiRenderUnitDetails } from './ui/UnitDetails.js';
+import { connectSocket as netConnectSocket } from './net/socket.js';
+import { fetchSectorTrails as trailsFetchSectorTrails, handleLingeringTrailsOnTurn } from './features/Trails.js';
 import {
     showWarpConfirmation,
     executeWarpOrder,
@@ -63,28 +68,7 @@ export class GameClient {
         this._queuedByShipId = new Map(); // Cached queued orders by ship id for UI and map markers
     }
 
-    async fetchSectorTrails() {
-        try {
-            const sectorId = this.gameState?.sector?.id;
-            const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
-            if (!sectorId) return;
-            const data = await SFApi.State.sectorTrails(sectorId, currentTurn, 10);
-            if (!data || !Array.isArray(data.segments)) return;
-            const byTurn = this.trailBuffer.byTurn;
-            const minTurn = currentTurn - 9;
-            data.segments.forEach(seg => {
-                const t = seg.turn;
-                if (t < minTurn || t > currentTurn) return;
-                if (!byTurn.has(t)) byTurn.set(t, []);
-                byTurn.get(t).push(seg);
-            });
-            // prune
-            Array.from(byTurn.keys()).forEach(t => { if (t < minTurn) byTurn.delete(t); });
-            this.render();
-        } catch (e) {
-            console.warn('Failed to fetch sector trails', e);
-        }
-    }
+    async fetchSectorTrails() { return trailsFetchSectorTrails(this); }
 
     // Initialize the game
     async initialize(gameId) {
@@ -202,188 +186,7 @@ export class GameClient {
 
     // Connect to Socket.IO
     connectSocket() {
-        this.socket = io();
-        
-        this.socket.on('connect', () => {
-            console.log('🔌 Connected to server');
-            this.socket.emit('join-game', this.gameId, this.userId);
-            try {
-                // After joining, refresh chat recipients and pull history
-                if (typeof populateChatRecipients === 'function') populateChatRecipients();
-                if (typeof requestChatHistory === 'function') requestChatHistory();
-            } catch {}
-
-            // Prime owner name cache for tooltips
-            this.primePlayerNameCache();
-
-            // Ensure our own username is cached immediately for chat display
-            try {
-                const me = (typeof Session !== 'undefined' && typeof Session.getUser === 'function') ? Session.getUser() : null;
-                if (me?.userId && me?.username) {
-                    this.playerNameById.set(Number(me.userId), me.username);
-                }
-            } catch {}
-        });
-
-        this.socket.on('player-locked-turn', (data) => {
-            this.addLogEntry(`Player ${data.userId} locked turn ${data.turnNumber}`, 'info');
-            
-            // If this is the current player who locked the turn, update UI immediately
-            if (data.userId === this.userId) {
-                // Update the client-side turn locked status
-                this.turnLocked = true;
-                
-                // Update the button UI immediately
-                const lockBtn = document.getElementById('lockTurnBtn');
-                if (lockBtn) {
-                    lockBtn.textContent = '🔒 Turn Locked';
-                    lockBtn.classList.add('locked');
-                }
-                
-                // Also update the game state for consistency
-                if (this.gameState) {
-                    this.gameState.turnLocked = true;
-                }
-                
-                // Refresh the unit details panel to disable action buttons
-                this.updateUnitDetails();
-            }
-        });
-
-        // Refresh queue UI when queue changes on server
-        this.socket.on('queue:updated', ({ shipId }) => {
-            if (this.selectedUnit && this.selectedUnit.type === 'ship' && this.selectedUnit.id === shipId) {
-                this.loadQueueLog(shipId, true);
-            }
-        });
-
-        this.socket.on('turn-resolving', (data) => {
-            this.addLogEntry(`Turn ${data.turnNumber} is resolving...`, 'warning');
-        });
-
-        this.socket.on('turn-resolved', (data) => {
-            // First: refresh state and render; hide overlay immediately after
-            Promise.resolve()
-                .then(() => this.loadGameState())
-                .then(() => {
-                    this.addLogEntry(`Turn ${data.turnNumber} resolved! Starting turn ${data.nextTurn}`, 'success');
-                })
-                .then(() => {
-                    // Defer heavier/non-critical work to next tick
-                    setTimeout(() => {
-                        // Trails refresh (if needed)
-                        try { this.fetchSectorTrails(); } catch {}
-                        // Senate meter tick
-                        try { this.incrementSenateProgress(1); } catch {}
-                        // Combat logs
-                        try {
-                            SFApi.State.combatLogs(this.gameId, data.turnNumber)
-                                .then(payload => {
-                                    const rows = Array.isArray(payload?.logs) ? payload.logs : [];
-                                    rows.forEach(log => {
-                                        const kind = (log.event_type === 'kill') ? 'success' : (log.event_type === 'ability' || log.event_type === 'status') ? 'info' : 'info';
-                                        this.addLogEntry(log.summary || 'Combat event', kind);
-                                    });
-                                })
-                                .catch(() => {});
-                        } catch {}
-                        // Ability cooldown refresh slightly later
-                        setTimeout(() => this.refreshAbilityCooldowns(), 50);
-                    }, 0);
-                });
-        });
-
-        this.socket.on('ability-queued', (payload) => {
-            try {
-                // Refresh cooldown buttons
-                this.refreshAbilityCooldowns();
-                // If the queued ability is Microthruster Shift on a visible ship, update its meta for immediate UI feedback
-                const casterId = payload?.casterId;
-                const abilityKey = payload?.abilityKey;
-                if (abilityKey === 'microthruster_shift' && casterId) {
-                    // Update selected unit if it matches
-                    if (this.selectedUnit && this.selectedUnit.id === casterId) {
-                        const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
-                        this.selectedUnit.meta = this.selectedUnit.meta || {};
-                        this.selectedUnit.meta.movementFlatBonus = Math.max(this.selectedUnit.meta.movementFlatBonus || 0, 3);
-                        this.selectedUnit.meta.movementFlatExpires = Number(currentTurn) + 1;
-                        this.render();
-                    }
-                    // Also update cached units list entry if present
-                    const unit = this.units?.find(u => u.id === casterId);
-                    if (unit) {
-                        const currentTurn = this.gameState?.currentTurn?.turn_number || 0;
-                        unit.meta = unit.meta || {};
-                        unit.meta.movementFlatBonus = Math.max(unit.meta.movementFlatBonus || 0, 3);
-                        unit.meta.movementFlatExpires = Number(currentTurn) + 1;
-                    }
-                }
-            } catch {}
-        });
-
-        this.socket.on('warp-confirmed', (data) => {
-            this.addLogEntry(`Warp order confirmed: ${data.message}`, 'success');
-            // Optimistically annotate the selected ship with required prep turns for better UI text
-            try {
-                if (this.selectedUnit && this.selectedUnit.id === data.shipId) {
-                    this.selectedUnit.meta = this.selectedUnit.meta || {};
-                    if (typeof data.requiredPreparationTurns === 'number') {
-                        this.selectedUnit.meta.warpPreparationTurns = data.requiredPreparationTurns;
-                    }
-                }
-            } catch {}
-            this.loadGameState(); // Refresh to show warp preparation
-        });
-
-        this.socket.on('ship-warp-ordered', (data) => {
-            if (data.userId !== this.userId) {
-                this.addLogEntry(`${data.shipName} is preparing to warp to ${data.targetName}`, 'info');
-            }
-        });
-
-        this.socket.on('harvesting-started', (data) => {
-            this.addLogEntry(data.message, 'success');
-            this.loadGameState(); // Refresh to show mining status
-        });
-
-        this.socket.on('harvesting-stopped', (data) => {
-            this.addLogEntry(data.message, 'info');
-            this.loadGameState(); // Refresh to update mining status
-        });
-
-        this.socket.on('harvesting-error', (data) => {
-            this.addLogEntry(`Mining error: ${data.error}`, 'error');
-        });
-
-        // Instant position updates from server (e.g., microthruster teleport)
-        this.socket.on('object:teleport', (payload) => {
-            try {
-                const obj = this.objects.find(o => o.id === payload.id);
-                if (obj) { obj.x = payload.x; obj.y = payload.y; }
-                if (this.selectedUnit && this.selectedUnit.id === payload.id) {
-                    this.selectedUnit.x = payload.x; this.selectedUnit.y = payload.y;
-                }
-                this.render();
-            } catch {}
-        });
-
-        // Chat events
-        this.socket.on('chat:game', (msg) => { if (window.appendChat) window.appendChat(msg); });
-        this.socket.on('chat:channel', (msg) => { if (window.appendChat) window.appendChat(msg); });
-        this.socket.on('chat:dm', (msg) => { if (window.appendChat) window.appendChat(msg); });
-
-        // ✅ Atomic Turn Resolution Policy: No real-time movement updates
-        // All movement results will be visible after 'turn-resolved' via loadGameState()
-        // 
-        // Future: We can add post-resolution animations here if desired
-        // this.socket.on('turn-resolved', (data) => {
-        //     // Optional: Add smooth animations for movement changes
-        //     this.animateMovementResults(data.movementSummary);
-        // });
-
-        this.socket.on('disconnect', () => {
-            console.log('🔌 Disconnected from server');
-        });
+        netConnectSocket(this);
     }
 
     // ✅ Atomic Turn Resolution Policy: Removed real-time movement updates
@@ -427,9 +230,8 @@ export class GameClient {
                 
                 // Preserve current camera and selection while updating state
                 const preserveCamera = { x: this.camera.x, y: this.camera.y };
-                // Normalize state (meta parsing etc.) in one place
-                const normalized = (window.SFNormalizers && typeof SFNormalizers.normalizeGameState === 'function') ? SFNormalizers.normalizeGameState(data) : data;
-                this.gameState = normalized;
+                // Normalize state via core/GameState
+                this.gameState = normalizeGameState(data);
                 this.updateUI();
                 this.camera.x = preserveCamera.x;
                 this.camera.y = preserveCamera.y;
@@ -523,29 +325,6 @@ export class GameClient {
             array.findIndex(duplicate => duplicate.id === obj.id) === index
         );
         
-        // FIX: Turn-based cleanup of lingering trails (10 turns max)
-        const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
-        const initialClientTrailCount = this.clientLingeringTrails.length;
-        
-        this.clientLingeringTrails = this.clientLingeringTrails.filter(trail => {
-            const turnAge = currentTurn - trail.createdOnTurn;
-            if (turnAge >= 10) return false; // Remove trails older than 10 turns
-            
-            // PHASE 3: Remove fallback trails if accurate trail exists for same ship
-            if (!trail.isAccurate) {
-                const hasAccurateTrial = this.clientLingeringTrails.some(other => 
-                    other.shipId === trail.shipId && 
-                    other.isAccurate && 
-                    Math.abs(other.createdOnTurn - trail.createdOnTurn) <= 1
-                );
-                if (hasAccurateTrial) {
-                    console.log(`🗑️ Removing fallback trail for ship ${trail.shipId} - accurate trail available`);
-                    return false;
-                }
-            }
-            return true;
-        });
-        
         // FIX: Detect ships that just completed movement and create lingering trails BEFORE cleanup
         this.objects.forEach(ship => {
             if (ship.type === 'ship' && ship.movementStatus === 'completed' && ship.movementPath && ship.movementPath.length > 1) {
@@ -553,6 +332,7 @@ export class GameClient {
                 
                 // If ship was previously active and is now completed, create lingering trail
                 if (prevStatus === 'active') {
+                    const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
                     const lingeringTrail = {
                         id: `completion-${ship.id}-${currentTurn}`,
                         shipId: ship.id,
@@ -581,25 +361,8 @@ export class GameClient {
             }
         });
         
-        // Clean up client trails that are now provided by server (but preserve completion trails for this turn)
-        const serverCompletedMovements = new Set(
-            this.objects
-                .filter(obj => obj.movementStatus === 'completed' && obj.movementPath)
-                .map(obj => obj.id)
-        );
-        
-        this.clientLingeringTrails = this.clientLingeringTrails.filter(trail => {
-            // Keep completion trails from this turn even if server has them
-            if (trail.createdOnTurn === currentTurn && trail.id.startsWith('completion-')) {
-                return true;
-            }
-            // Remove older trails that are now provided by server
-            return !serverCompletedMovements.has(trail.shipId);
-        });
-        
-        if (initialClientTrailCount !== this.clientLingeringTrails.length) {
-            console.log(`🧹 Cleaned up ${initialClientTrailCount - this.clientLingeringTrails.length} expired/duplicate client trails`);
-        }
+        // Clean up client trails
+        handleLingeringTrailsOnTurn(this);
         
         // Update previous movement statuses for next comparison
         this.previousMovementStatuses.clear();
@@ -755,6 +518,10 @@ export class GameClient {
             // Ships and stations
             'ship': '🚢',
             'station': '🏭',
+            'starbase': '🛰️',
+            'storage-structure': '📦',
+            'warp-beacon': '🌌',
+            'interstellar-gate': '🌀',
             
             // Celestial objects
             'star': '⭐',
@@ -863,224 +630,44 @@ export class GameClient {
             }
         }
     }
-    // Update unit details panel
     async updateUnitDetails() {
-        const detailsContainer = document.getElementById('unitDetails');
-        
-        if (!this.selectedUnit) {
-            detailsContainer.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Select a unit to view details</div>';
+        const unit = this.selectedUnit;
+        if (!unit) {
+            const detailsContainer = document.getElementById('unitDetails');
+            if (detailsContainer) detailsContainer.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Select a unit to view details</div>';
             return;
         }
-
-        const unit = this.selectedUnit;
-        const meta = unit.meta;
-
-        const detailStatuses = this.getUnitStatuses(meta, unit);
-
-        // Build abilities section
-        const abilityButtons = [];
-        const passiveChips = [];
-        const abilities = Array.isArray(meta.abilities) ? meta.abilities : [];
-        // Load ability definitions from server registry (once per session)
         if (!window.AbilityDefs) {
-            try {
-                const data = await SFApi.Abilities.list();
-                if (data && data.abilities) { window.AbilityDefs = data.abilities; } else { window.AbilityDefs = {}; }
-            } catch { window.AbilityDefs = {}; }
+            try { const data = await SFApi.Abilities.list(); window.AbilityDefs = (data && data.abilities) ? data.abilities : {}; } catch { window.AbilityDefs = {}; }
         }
-        const abilityDefs = window.AbilityDefs;
-        abilities.forEach(key => {
-            const def = abilityDefs[key];
-            if (!def) return;
-            const cdText = def.cooldown ? `, CD ${def.cooldown}` : '';
-            const energyText = def.energyCost ? `, ⚡${def.energyCost}` : '';
-            if (def.type === 'passive') {
-                passiveChips.push(`<span class="chip" title="${def.description || ''}">${def.name}</span>`);
-            } else {
-                const disabled = this.turnLocked ? 'disabled' : '';
-                abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${disabled} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
-            }
-        });
-
-        // Determine if this unit can mine (support legacy ships where canMine may be missing)
-        const canMine = (unit.type === 'ship') && (
-            (meta && meta.canMine === true) ||
-            (meta && meta.canMine === undefined && (Number(meta.harvestRate) > 0))
-        );
-
-        detailsContainer.innerHTML = `
-            <div class="unit-info">
-                <h3 style="color: #64b5f6; margin-bottom: 15px;">
-                    ${this.getUnitIcon(unit.type)} ${meta.name || unit.type}
-                </h3>
-
-                <div class="stat-item">
-                    <span>Status:</span>
-                    <span>
-                        ${detailStatuses.map(s => `<span class=\"chip ${this.getStatusClass(s)}\">${this.getStatusLabel(s)}</span>`).join(' ')}
-                        ${this.renderActiveEffectsChip(unit)}
-                    </span>
-                </div>
-                
-                <div class="stat-item">
-                    <span>Position:</span>
-                    <span>(${unit.x}, ${unit.y})</span>
-                </div>
-                
-                <div class="stat-item">
-                    <span>🌌 System:</span>
-                    <span>${this.gameState.sector.name || 'Unnamed System'}</span>
-                </div>
-                
-                <div class="stat-item">
-                    <span>⭐ Type:</span>
-                    <span>${this.formatArchetype(this.gameState.sector.archetype)}</span>
-                </div>
-                
-                <div class="stat-item">
-                    <span>Health:</span>
-                    <span>${meta.hp || '?'}/${meta.maxHp || '?'}</span>
-                </div>
-                
-                ${meta.scanRange ? `
-                <div class="stat-item">
-                    <span>Scan Range:</span>
-                    <span>${this.getEffectiveScanRange(unit)}</span>
-                </div>
-                ` : ''}
-                
-                ${meta.movementSpeed ? `
-                <div class="stat-item">
-                    <span>Movement:</span>
-                    <span>${this.getEffectiveMovementSpeed(unit)} tiles/turn</span>
-                </div>
-                ` : ''}
-                
-                ${meta.energy !== undefined ? `
-                <div class="stat-item">
-                    <span>⚡ Energy:</span>
-                    <span>${meta.energy}/${meta.maxEnergy || meta.energy} (+${meta.energyRegen || 0}/turn)</span>
-                </div>
-                ` : ''}
-                
-                
-                
-                ${meta.cargoCapacity ? `
-                <div class="stat-item">
-                    <span>📦 Cargo:</span>
-                    <span id="cargoStatus">Loading...</span>
-                </div>
-                ` : ''}
-                
-                ${unit.harvestingStatus ? `
-                <div class="stat-item">
-                    <span>⛏️ Mining:</span>
-                    <span style="color: ${unit.harvestingStatus === 'active' ? '#4CAF50' : '#FFA500'}">
-                        ${unit.harvestingStatus === 'active' ? 
-                          `${unit.harvestingResource} (${unit.harvestRate}/turn)` : 
-                          unit.harvestingStatus}
-                    </span>
-                </div>
-                ` : ''}
-            </div>
-            
-            <div style="margin-top: 20px;">
-                ${unit.type === 'ship' ? `
-                    <button class="sf-btn sf-btn-secondary" data-action="set-move-mode" ${this.turnLocked ? 'disabled' : ''}>
-                        🎯 Set Destination
-                    </button>
-                    <button class="sf-btn sf-btn-secondary" data-action="set-warp-mode" ${this.turnLocked ? 'disabled' : ''}>
-                        🌌 Warp
-                    </button>
-                    ${this.isAdjacentToInterstellarGate(unit) ? `
-                        <button class="sf-btn sf-btn-secondary" data-action="show-travel-options" ${this.turnLocked ? 'disabled' : ''}>
-                            🌀 Interstellar Travel
-                        </button>
-                    ` : ''}
-                    <button class="sf-btn sf-btn-secondary" id="mineBtn" data-action="toggle-mining" ${this.turnLocked || !canMine ? 'disabled' : ''}>
-                        ${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}
-                    </button>
-                    <button class="sf-btn sf-btn-secondary" data-action="show-cargo" ${this.turnLocked ? 'disabled' : ''}>
-                        📦 Cargo
-                    </button>
-                    
-                ` : ''}
-                ${(unit.type === 'station') ? `
-                    <button class="sf-btn sf-btn-secondary" data-action="show-build" ${this.turnLocked ? 'disabled' : ''}>
-                        🏗️ Build
-                    </button>
-                    <button class="sf-btn sf-btn-secondary" data-action="show-cargo" ${this.turnLocked ? '' : ''}>
-                        📦 Cargo
-                    </button>
-                ` : ''}
-                
-                ${unit.type === 'ship' ? `
-                    <div class="panel-title" style="margin:16px 0 0 0;">🛠️ Abilities</div>
-                    <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style=\"color:#888\">No abilities</span>'}</div>
-                    ${passiveChips.length ? `<div class="panel-title" style="margin:8px 0 0 0;">✨ Passive Traits</div><div style="display:flex; flex-wrap:wrap; gap:6px;">${passiveChips.join('')}</div>` : ''}
-                    <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">
-                        🧭 Queue (Hold Shift to queue)
-                        <span title="Hold Shift to queue multiple orders. Right-click empty space to queue Move. Use Warp/Mine while holding Shift to queue Warp/Mining. You can clear or remove items below.">❔</span>
-                    </div>
-                    <div id="queueLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
-                    <div style="display:flex; gap:8px; margin-top:6px;">
-                        <button class="sf-btn sf-btn-secondary" id="queueClearBtn">Clear Queue</button>
-                        <button class="sf-btn sf-btn-secondary" id="queueRefreshBtn">Refresh</button>
-                    </div>
-                ` : ''}
-            </div>
-        `;
-        
-        // Delegate unit action buttons in the panel
-        const unitPanel = unitDetails;
-        if (unitPanel) {
-            unitPanel.addEventListener('click', (e) => {
-                const btn = e.target.closest('[data-action]');
-                if (!btn) return;
-                const action = btn.dataset.action;
+        uiRenderUnitDetails(this, unit, {
+            onAction: (action) => {
                 if (action === 'set-move-mode') { this.setMoveMode && this.setMoveMode(); return; }
                 if (action === 'set-warp-mode') { try { showWarpTargetSelection(this); } catch {} return; }
                 if (action === 'show-travel-options') { this.showInterstellarTravelOptions && this.showInterstellarTravelOptions(); return; }
                 if (action === 'toggle-mining') { try { SFMining.toggleMining(); } catch {} return; }
                 if (action === 'show-cargo') { try { SFCargo.showCargo(); } catch {} return; }
                 if (action === 'show-build') { build_showBuildModal(); return; }
-            });
-        }
-
-        // Update cargo status for the SELECTED unit only (avoid background overwrites)
-        if (this.selectedUnit && unit && unit.id === this.selectedUnit.id && unit.meta && unit.meta.cargoCapacity) {
-            try { SFCargo.updateCargoStatus(unit.id); } catch {}
-        }
-
-        // Wire ability buttons with cooldown state
-        const container = document.getElementById('abilityButtons');
-        if (container) {
-            container.querySelectorAll('button[data-ability]').forEach(btn => {
-                const key = btn.getAttribute('data-ability');
-                btn.addEventListener('mouseenter', () => this.previewAbilityRange(key));
-                btn.addEventListener('mouseleave', () => this.clearAbilityPreview());
-                btn.addEventListener('click', (e) => { e.stopPropagation(); this.queueAbility(key); });
-            });
-            // Fetch cooldowns and disable buttons where applicable
-            if (this.selectedUnit) {
-                SFApi.Abilities.cooldowns(this.selectedUnit.id)
-                    .then(data => {
-                        const cooldowns = new Map((data.cooldowns || []).map(c => [c.ability_key, c.available_turn]));
-                        const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
-                        container.querySelectorAll('button[data-ability]').forEach(btn => {
-                            const key = btn.getAttribute('data-ability');
-                            const available = cooldowns.get(key);
-                            if (available && Number(available) > Number(currentTurn)) {
-                                btn.disabled = true;
-                                btn.classList.add('sf-btn-disabled');
-                                btn.title = (btn.title || '') + ` (Cooldown: ready on turn ${available})`;
-                            }
-                        });
-                    }).catch(()=>{});
             }
+        });
+        if (unit && unit.meta && unit.meta.cargoCapacity) { try { SFCargo.updateCargoStatus(unit.id); } catch {} }
+        const container = document.getElementById('abilityButtons');
+        if (container && this.selectedUnit) {
+            SFApi.Abilities.cooldowns(this.selectedUnit.id)
+                .then(data => {
+                    const cooldowns = new Map((data.cooldowns || []).map(c => [c.ability_key, c.available_turn]));
+                    const currentTurn = this.gameState?.currentTurn?.turn_number || 1;
+                    container.querySelectorAll('button[data-ability]').forEach(btn => {
+                        const key = btn.getAttribute('data-ability');
+                        const available = cooldowns.get(key);
+                        if (available && Number(available) > Number(currentTurn)) {
+                            btn.disabled = true;
+                            btn.classList.add('sf-btn-disabled');
+                            btn.title = (btn.title || '') + ` (Cooldown: ready on turn ${available})`;
+                        }
+                    });
+                }).catch(()=>{});
         }
-
-        // Populate queue log for ships
         if (unit.type === 'ship') {
             this.loadQueueLog(unit.id);
             const clearBtn = document.getElementById('queueClearBtn');
@@ -1106,27 +693,10 @@ export class GameClient {
     async refreshAbilityCooldowns() { if (window.SFAbilities) return SFAbilities.refreshAbilityCooldowns(this); }
 
     // Compute effective movement speed client-side for UI only
-    getEffectiveMovementSpeed(unit) {
-        try {
-            const base = unit?.meta?.movementSpeed || 0;
-            // Static base, modulated by temporary movement boost hint if present
-            const boostMult = (typeof unit?.meta?.movementBoostMultiplier === 'number' && unit.meta.movementBoostMultiplier > 0) ? unit.meta.movementBoostMultiplier : 1;
-            const effective = Math.max(1, Math.floor(base * boostMult));
-            return effective;
-        } catch { return unit?.meta?.movementSpeed || 0; }
-    }
+    getEffectiveMovementSpeed(unit) { return coreGetEffectiveMovementSpeed(unit); }
 
     // Compute effective scan range for display (includes temporary multiplier hints)
-    getEffectiveScanRange(unit) {
-        try {
-            const meta = unit?.meta || {};
-            let range = meta.scanRange || 0;
-            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
-                range = Math.ceil(range * meta.scanRangeMultiplier);
-            }
-            return range;
-        } catch { return unit?.meta?.scanRange || 0; }
-    }
+    getEffectiveScanRange(unit) { return coreGetEffectiveScanRange(unit); }
 
     // Render the game map
     render() {
@@ -1292,20 +862,14 @@ export class GameClient {
         if (obj.type === 'resource_node') {
             if (window.SFRenderers && SFRenderers.resource) {
                 SFRenderers.resource.drawResourceNode(ctx, obj, x, y, renderSize, colors);
-            } else {
-            this.drawResourceNode(ctx, obj, x, y, renderSize, colors);
             }
         } else if (isCelestial) {
             if (window.SFRenderers && SFRenderers.celestial) {
                 SFRenderers.celestial.drawCelestialObject(ctx, obj, x, y, renderSize, colors, visibility, this);
-            } else {
-            this.drawCelestialObject(ctx, obj, x, y, renderSize, colors, visibility);
             }
         } else {
             if (window.SFRenderers && SFRenderers.ship) {
                 SFRenderers.ship.drawShipObject(ctx, obj, x, y, renderSize, colors, visibility, isOwned);
-        } else {
-            this.drawShipObject(ctx, obj, x, y, renderSize, colors, visibility, isOwned);
             }
         }
         
@@ -1423,207 +987,7 @@ export class GameClient {
     }
     
     // Draw celestial objects with special effects
-    drawCelestialObject(ctx, obj, x, y, size, colors, visibility) {
-        const type = obj.celestial_type || obj.type;
-        
-        // Draw glow effect for certain objects
-        if (colors.glow && size > this.tileSize) {
-            ctx.shadowColor = colors.glow;
-            ctx.shadowBlur = Math.min(size * 0.3, 20);
-        }
-        
-        // Draw main body
-        if (type === 'star') {
-            this.drawStar(ctx, x, y, size, colors);
-        } else if (type === 'planet' || type === 'moon') {
-            this.drawPlanet(ctx, x, y, size, colors, obj.meta);
-        } else if (type === 'belt') {
-            this.drawAsteroidBelt(ctx, x, y, size, colors);
-        } else if (type === 'nebula') {
-            this.drawNebula(ctx, x, y, size, colors);
-        } else if (type === 'wormhole' || type === 'jump-gate') {
-            this.drawWormhole(ctx, x, y, size, colors);
-        } else if (type === 'graviton-sink') {
-            this.drawGravitonSink(ctx, x, y, size, colors);
-        } else {
-            this.drawGenericCelestial(ctx, x, y, size, colors);
-        }
-        
-        // Reset shadow
-        ctx.shadowBlur = 0;
-        
-        // Draw name for large celestial objects or when zoomed in
-        if ((size > this.tileSize * 3 || this.tileSize > 20) && obj.meta?.name) {
-            ctx.fillStyle = colors.text;
-            ctx.font = `bold ${Math.max(12, this.tileSize * 0.4)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillText(obj.meta.name, x, y + size/2 + 5);
-        }
-        
-        // Draw fog of war indicator for dimmed objects
-        if (visibility.dimmed && size > this.tileSize) {
-            ctx.fillStyle = 'rgba(100, 181, 246, 0.7)';
-            ctx.font = `${Math.max(16, this.tileSize * 0.5)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('?', x, y);
-        }
-        
-
-    }
-    // Draw resource nodes (mineable resources)
-    drawResourceNode(ctx, obj, x, y, size, colors) {
-        const meta = obj.meta || {};
-        const resourceType = meta.resourceType || 'unknown';
-        const resourceAmount = meta.resourceAmount || 0;
-        const maxResource = meta.maxResource || 100;
-        const nodeSize = meta.size || 1;
-        const iconEmoji = meta.iconEmoji || '📦';
-        const colorHex = meta.colorHex || '#888888';
-        
-        // Calculate health percentage for visual feedback
-        const healthPercent = resourceAmount / maxResource;
-        const alpha = 0.3 + (healthPercent * 0.5); // 30% to 80% opacity based on remaining resources
-        
-        // Draw resource node based on type
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        
-        if (resourceType === 'rock') {
-            // Draw asteroid rock
-            ctx.fillStyle = colorHex;
-            ctx.strokeStyle = '#D4AF37'; // Gold outline
-            ctx.lineWidth = Math.max(1, size / 15);
-            
-            // Draw irregular rock shape
-            ctx.beginPath();
-            const sides = 6 + (nodeSize * 2);
-            for (let i = 0; i < sides; i++) {
-                const angle = (i / sides) * Math.PI * 2;
-                const radius = size * (0.4 + Math.sin(angle * 3) * 0.15);
-                const px = x + Math.cos(angle) * radius;
-                const py = y + Math.sin(angle) * radius;
-                
-                if (i === 0) ctx.moveTo(px, py);
-                else ctx.lineTo(px, py);
-            }
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            
-        } else if (resourceType === 'gas') {
-            // Draw gas cloud
-            const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
-            gradient.addColorStop(0, colorHex + '80'); // Semi-transparent center
-            gradient.addColorStop(0.7, colorHex + '40'); // More transparent edge
-            gradient.addColorStop(1, colorHex + '10'); // Very transparent outer edge
-            
-            ctx.fillStyle = gradient;
-            ctx.beginPath();
-            ctx.arc(x, y, size, 0, Math.PI * 2);
-            ctx.fill();
-            
-        } else if (resourceType === 'energy') {
-            // Draw energy collection point
-            ctx.strokeStyle = colorHex;
-            ctx.lineWidth = Math.max(2, size / 8);
-            
-            // Draw pulsing energy rings
-            for (let ring = 0; ring < 3; ring++) {
-                ctx.globalAlpha = alpha * (1 - ring * 0.3);
-                ctx.beginPath();
-                ctx.arc(x, y, size * (0.3 + ring * 0.3), 0, Math.PI * 2);
-                ctx.stroke();
-            }
-            
-        } else if (resourceType === 'salvage') {
-            // Draw salvage debris
-            ctx.fillStyle = colorHex;
-            ctx.strokeStyle = '#FF6347'; // Tomato red outline
-            ctx.lineWidth = Math.max(1, size / 12);
-            
-            // Draw angular debris shape
-            ctx.beginPath();
-            ctx.moveTo(x - size * 0.4, y - size * 0.2);
-            ctx.lineTo(x + size * 0.3, y - size * 0.4);
-            ctx.lineTo(x + size * 0.4, y + size * 0.1);
-            ctx.lineTo(x - size * 0.1, y + size * 0.4);
-            ctx.lineTo(x - size * 0.5, y + size * 0.2);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-        } else {
-            // Generic mineral crystal (for the 30-mineral system)
-            ctx.fillStyle = colorHex;
-            ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-            ctx.lineWidth = Math.max(1, size / 16);
-            
-            const r = Math.max(3, size * 0.45);
-            ctx.beginPath();
-            ctx.moveTo(x, y - r);
-            ctx.lineTo(x + r * 0.6, y - r * 0.2);
-            ctx.lineTo(x + r * 0.35, y + r);
-            ctx.lineTo(x - r * 0.6, y + r * 0.2);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-        }
-        
-        ctx.restore();
-        
-        // Draw resource amount indicator for nearby nodes
-        if (size > 10) {
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = `${Math.max(8, size / 4)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            
-            // Draw background for text
-            const text = resourceAmount.toString();
-            const textWidth = ctx.measureText(text).width;
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(x - textWidth/2 - 2, y + size * 0.6 - 6, textWidth + 4, 12);
-            
-            // Draw text
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillText(text, x, y + size * 0.6);
-        }
-    }
-    
-    // Draw ship/station objects
-    drawShipObject(ctx, obj, x, y, size, colors, visibility, isOwned) {
-        // Draw object background
-        ctx.fillStyle = colors.background;
-        ctx.fillRect(x - size/2, y - size/2, size, size);
-        
-        // Draw object border
-        ctx.strokeStyle = colors.border;
-        ctx.lineWidth = visibility.dimmed ? 1 : 2;
-        ctx.strokeRect(x - size/2, y - size/2, size, size);
-        
-        // Draw object icon/text
-        ctx.fillStyle = colors.text;
-        ctx.font = `${this.tileSize * 0.6}px Arial`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        
-        const icon = this.getUnitIcon(obj.type);
-        ctx.fillText(icon, x, y);
-        
-        // Draw object name if zoomed in enough (only for owned or fully visible objects)
-        if (this.tileSize > 15 && (isOwned || (visibility.visible && !visibility.dimmed))) {
-            ctx.fillStyle = colors.text;
-            ctx.font = `${this.tileSize * 0.3}px Arial`;
-            ctx.textBaseline = 'top';
-            ctx.fillText(obj.meta.name || obj.type, x, y + size/2 + 2);
-        }
-        
-        // Draw warp preparation effect if ship is preparing for warp
-        if (obj.warpPhase && (obj.warpPhase === 'preparing' || obj.warpPhase === 'ready')) {
-            this.drawWarpPreparationEffect(ctx, obj, x, y, size);
-        }
-    }
+    // Fallback ship/resource/celestial drawing removed; rely on SFRenderers modules only
     // Specialized drawing functions for different celestial types
     drawStar(ctx, x, y, size, colors) {
         // Create radial gradient for star
@@ -2182,7 +1546,7 @@ export class GameClient {
             safe(byId('exitGameBtn'), () => { try { if (typeof exitGame === 'function') exitGame(); else window.location.href = '/play'; } catch {} });
             // Map controls
             safe(byId('zoomInBtn'), () => { try { if (typeof zoomIn === 'function') zoomIn(); else { if (this.tileSize < 40) { this.tileSize += 2; this.render(); } } } catch {} });
-            safe(byId('zoomOutBtn'), () => { try { if (typeof zoomOut === 'function') zoomOut(); else { if (this.tileSize > 6) { this.tileSize -= 2; this.render(); } } } catch {} });
+            safe(byId('zoomOutBtn'), () => { try { if (typeof zoomOut === 'function') zoomOut(); else { if (this.tileSize > 8) { this.tileSize -= 2; this.render(); } } } catch {} });
             safe(byId('floatingMiniBtn'), () => { this.toggleFloatingMiniMap(); });
             safe(byId('openMapBtn'), async () => { try { const mod = await import('./ui/map-ui.js'); mod.openMap(); } catch {} });
             // Player panel actions via modules
@@ -2216,21 +1580,10 @@ export class GameClient {
         this.turnLocked = true;
     }
 
-    // Create tooltip overlay element for map hover
-    createMapTooltip() {
-        if (this._tooltipEl) return;
-        if (!this.canvas) return;
-        this._tooltipEl = SFTooltip.create(this.canvas);
-    }
-    // Update tooltip content/position
-    updateMapTooltip(obj, mouseX, mouseY) {
-        if (!this._tooltipEl || !this.canvas) return;
-        SFTooltip.update(this._tooltipEl, this.canvas, obj, mouseX, mouseY, this.getOwnerName.bind(this));
-    }
-
-    hideMapTooltip() {
-        SFTooltip.hide(this._tooltipEl);
-    }
+    // Tooltips delegated to ui/tooltip.js
+    createMapTooltip() { if (this._tooltipEl || !this.canvas) return; this._tooltipEl = SFTooltip.create(this.canvas); }
+    updateMapTooltip(obj, mouseX, mouseY) { if (!this._tooltipEl || !this.canvas) return; SFTooltip.update(this._tooltipEl, this.canvas, obj, mouseX, mouseY, this.getOwnerName.bind(this)); }
+    hideMapTooltip() { SFTooltip.hide(this._tooltipEl); }
 
     // Resolve owner name from cache or fallback
     getOwnerName(ownerId) {
@@ -2493,199 +1846,12 @@ export class GameClient {
     }
 
     // Update multi-sector fleet display
-    async updateMultiSectorFleet() {
-        const unitsList = document.getElementById('unitsList');
-        if (!unitsList) {
-            return;
-        }
-
-        try {
-            // Load the full fleet across all sectors
-            const data = await SFApi.Players.playerFleet(this.gameId, this.userId);
-
-            const fleet = data.fleet;
-            
-            if (!fleet || fleet.length === 0) {
-                unitsList.classList.remove('loading');
-                unitsList.innerHTML = '<div class="no-units">No units found</div>';
-                this.lastFleet = [];
-                try { const mod = await import('./ui/player-panel.js'); mod.updatePlayerPanel(this); } catch {}
-                return;
-            }
-
-            // Cache for stats strip and other UI
-            this.lastFleet = fleet;
-            try { const mod = await import('./ui/player-panel.js'); mod.updatePlayerPanel(this); } catch {}
-
-            // Group units by sector
-            const unitsBySector = {};
-            fleet.forEach(unit => {
-                const sectorName = unit.sector_name || 'Unknown Sector';
-                if (!unitsBySector[sectorName]) {
-                    unitsBySector[sectorName] = [];
-                }
-                unitsBySector[sectorName].push(unit);
-            });
-
-            // Build sector filter options
-            const sectorFilterEl = document.getElementById('fleetSectorFilter');
-            if (sectorFilterEl) {
-                const current = sectorFilterEl.value || 'all';
-                sectorFilterEl.innerHTML = '<option value="all">All Sectors</option>' +
-                    Object.keys(unitsBySector).sort().map(s => `<option value="${s}">${s}</option>`).join('');
-                if ([...sectorFilterEl.options].some(o => o.value === current)) sectorFilterEl.value = current;
-            }
-
-            // Read filters
-            const q = (document.getElementById('fleetSearch')?.value || '').trim().toLowerCase();
-            const typeFilter = document.getElementById('fleetTypeFilter')?.value || 'all';
-            const statusFilter = document.getElementById('fleetStatusFilter')?.value || 'all';
-            const sectorFilter = document.getElementById('fleetSectorFilter')?.value || 'all';
-            const sortBy = document.getElementById('fleetSort')?.value || 'name';
-            const onlyFav = document.getElementById('fleetFavoritesToggle')?.dataset?.active === '1';
-
-            // Generate HTML for all sectors
-            let html = '';
-            Object.keys(unitsBySector).sort().forEach(sectorName => {
-                const units = unitsBySector[sectorName];
-                const isCurrentSector = this.gameState?.sector?.name === sectorName;
-                if (sectorFilter !== 'all' && sectorFilter !== sectorName) return;
-
-                html += `
-                    <div class="sector-group">
-                        <div class="sector-header ${isCurrentSector ? 'current-sector' : ''}" data-action="toggle-sector" data-sector="${sectorName}">
-                            <span class="chevron">▶</span>
-                            <span class="sector-icon">${isCurrentSector ? '📍' : '🌌'}</span>
-                            <span class="sector-name">${sectorName}</span>
-                            <span class="unit-count">(${units.length})</span>
-                        </div>
-                        <div class="sector-units" id="sector-units-${this.safeId(sectorName)}" style="display:grid;width:100%;box-sizing:border-box;">
-                `;
-                
-                const filtered = units.filter(unit => {
-                    const meta = unit.meta ? JSON.parse(unit.meta) : {};
-                    if (onlyFav && !this.isFavoriteUnit(unit.id)) return false;
-                    if (typeFilter !== 'all') {
-                        const t = unit.type === 'ship' ? 'ship' : (unit.type === 'station' ? 'station' : 'structure');
-                        if (t !== typeFilter) return false;
-                    }
-                    const status = this.getUnitStatus(meta, unit);
-                    if (statusFilter !== 'all' && status !== statusFilter) return false;
-                    const name = (meta.name || unit.type || '').toLowerCase();
-                    if (q && !name.includes(q)) return false;
-                    return true;
-                }).sort((a,b)=>{
-                    const ma = a.meta ? JSON.parse(a.meta) : {};
-                    const mb = b.meta ? JSON.parse(b.meta) : {};
-                    if (sortBy === 'name') return (ma.name||a.type).localeCompare(mb.name||b.type);
-                    if (sortBy === 'status') return this.getUnitStatus(ma,a).localeCompare(this.getUnitStatus(mb,b));
-                    if (sortBy === 'cargo') return (this.getCargoFill(b)-this.getCargoFill(a));
-                    if (sortBy === 'eta') return (this.getEta(a)||999) - (this.getEta(b)||999);
-                    return 0;
-                });
-
-                filtered.forEach(unit => {
-                    const meta = unit.meta ? JSON.parse(unit.meta) : {};
-                    const isSelected = this.selectedUnit && this.selectedUnit.id === unit.id;
-                    const inCurrentSector = isCurrentSector;
-                    const status = this.getUnitStatus(meta, unit);
-                    const cargoFill = this.getCargoFill(unit);
-                    const eta = this.getEta(unit);
-                    
-                    html += `
-                        <div class="unit-item ${isSelected ? 'selected' : ''} ${!inCurrentSector ? 'remote-unit' : ''}"
-                             data-action="select-remote-unit" data-unit-id="${unit.id}" data-sector-id="${unit.sector_id}" data-sector-name="${sectorName}" data-in-current="${inCurrentSector}">
-                            <div class="unit-header">
-                                <span class="unit-icon">${this.getUnitIcon(unit.type)}</span>
-                                <span class="unit-name">${meta.name || unit.type}</span>
-                                ${!inCurrentSector ? '<span class="remote-indicator">📡</span>' : ''}
-                            </div>
-                            <div class="unit-meta">
-                                <span class="chip">${sectorName}</span>
-                                <span class="chip ${this.getStatusClass(status)}">${this.getStatusLabel(status)}</span>
-                                ${unit.type==='ship' && cargoFill!=null ? `<span class="chip">📦 ${cargoFill}</span>` : ''}
-                                ${eta ? `<span class="chip">⏱️ ETA ${eta}</span>` : ''}
-                                <span class="favorite ${this.isFavoriteUnit(unit.id)?'active':''}" data-action="toggle-favorite" data-unit-id="${unit.id}">⭐</span>
-                            </div>
-                        </div>
-                    `;
-                });
-                
-                html += `
-                        </div>
-                    </div>
-                `;
-            });
-
-            unitsList.classList.remove('loading');
-            unitsList.innerHTML = html;
-            // Delegate fleet interactions
-            unitsList.addEventListener('click', (e) => {
-                const fav = e.target.closest('[data-action="toggle-favorite"]');
-                if (fav) { e.stopPropagation(); const id = Number(fav.dataset.unitId); this.toggleFavoriteUnit(id); this.updateMultiSectorFleet(); return; }
-                const header = e.target.closest('[data-action="toggle-sector"]');
-                if (header) { const sectorName = header.dataset.sector; this.toggleSectorCollapse(sectorName); return; }
-                const row = e.target.closest('[data-action="select-remote-unit"]');
-                if (row) {
-                    const unitId = Number(row.dataset.unitId);
-                    const sectorId = Number(row.dataset.sectorId);
-                    const sectorName = row.dataset.sectorName;
-                    const inCurrent = String(row.dataset.inCurrent) === 'true';
-                    this.selectRemoteUnit(unitId, sectorId, sectorName, inCurrent);
-                    return;
-                }
-            });
-
-            // Update cargo status for ships in current sector (only displayed as chip; keep for right panel accuracy)
-            if (this.gameState?.objects) {
-                const currentSectorShips = this.gameState.objects.filter(obj => 
-                    obj.owner_id === this.userId && obj.type === 'ship'
-                );
-                currentSectorShips.forEach(ship => {
-                    if (this.selectedUnit && ship.id === this.selectedUnit.id) {
-                        try { SFCargo.updateCargoStatus(ship.id); } catch {}
-                    }
-                });
-            }
-
-        } catch (error) {
-            console.error('Error loading player fleet:', error);
-            unitsList.classList.remove('loading');
-            unitsList.innerHTML = '<div class="no-units">Error loading fleet</div>';
-        }
-    }
+    async updateMultiSectorFleet() { const mod = await import('./ui/fleet-list.js'); return mod.updateFleetList(this); }
 
     // Hook up toolbar events (debounced)
-    attachFleetToolbarHandlers() {
-        const debounce = (fn, wait=200) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a), wait);} };
-        ['fleetSearch','fleetTypeFilter','fleetStatusFilter','fleetSectorFilter','fleetSort'].forEach(id=>{
-            const el = document.getElementById(id); if (!el) return;
-            el.oninput = el.onchange = debounce(()=> this.updateMultiSectorFleet(), 180);
-        });
-        const fav = document.getElementById('fleetFavoritesToggle');
-        if (fav) {
-            fav.onclick = () => {
-                const active = fav.dataset.active === '1';
-                fav.dataset.active = active ? '0' : '1';
-                fav.classList.toggle('sf-btn-primary', !active);
-                fav.classList.toggle('sf-btn-secondary', active);
-                this.updateMultiSectorFleet();
-            };
-        }
-    }
+    attachFleetToolbarHandlers() { const modp = import('./ui/fleet-list.js'); modp.then(mod => mod.attachToolbarHandlers(this)); }
 
-    // Get appropriate icon for unit type
-    getUnitIcon(unitType) {
-        switch (unitType) {
-            case 'ship': return '🚢';
-            case 'station': return '🏭';
-            case 'starbase': return '🛰️';
-            case 'storage-structure': return '📦';
-            case 'warp-beacon': return '🌌';
-            case 'interstellar-gate': return '🌀';
-            default: return '🏗️';
-        }
-    }
+    
 
     // Select a unit (possibly in a remote sector)
     async selectRemoteUnit(unitId, sectorId, sectorName, inCurrentSector) {
@@ -2722,71 +1888,10 @@ export class GameClient {
         }
     }
     // Helpers for left panel chips
-    getUnitStatus(meta, unit) {
-        // Backwards-compatible single status: top priority from multi-status detector
-        const statuses = this.getUnitStatuses(meta, unit);
-        return statuses[0] || 'idle';
-    }
+    getUnitStatus(meta, unit) { return coreGetUnitStatus(meta, unit); }
 
     // New: return all active statuses in priority order
-    getUnitStatuses(meta, unit) {
-        try {
-            const active = new Set();
-
-            // Normalize meta for safety
-            const m = meta || {};
-
-            // Attacking: client-side intent or server flag
-            if (unit.pendingAttackTarget || m.attacking === true || unit.attackStatus === 'active') {
-                active.add('attacking');
-            }
-
-            // Low fuel: require explicit fields if present
-            if (m.fuel != null && m.maxFuel != null && m.maxFuel > 0) {
-                const fuelPct = m.fuel / m.maxFuel;
-                if (fuelPct <= 0.2) active.add('lowFuel');
-            }
-
-            // Constructing: stations or shipyards
-            if (m.constructing === true || m.building === true || m.buildProgress > 0 || unit.constructionStatus === 'active') {
-                active.add('constructing');
-            }
-
-            // Scanning: transient during active scan
-            if (m.scanningActive === true || unit.scanningStatus === 'active') {
-                active.add('scanning');
-            }
-
-            // Moving
-            if (unit.movementStatus === 'active' || unit.movementActive === true || unit.movement_path || m.moving === true) {
-                active.add('moving');
-            }
-
-            // Mining / harvesting
-            if (unit.harvestingStatus === 'active' || m.mining === true) {
-                active.add('mining');
-            }
-
-            // Docked
-            if (m.docked === true) {
-                active.add('docked');
-            }
-
-            // Stealth
-            if (m.stealthed === true || m.stealth === true || m.cloaked === true) {
-                active.add('stealthed');
-            }
-
-            // Priority order from highest to lowest
-            const priority = ['attacking','lowFuel','constructing','scanning','moving','mining','docked','stealthed'];
-
-            const ordered = priority.filter(k => active.has(k));
-            if (ordered.length === 0) return ['idle'];
-            return ordered;
-        } catch {
-            return ['idle'];
-        }
-    }
+    getUnitStatuses(meta, unit) { return coreGetUnitStatuses(meta, unit); }
 
     getStatusLabel(statusKey) {
         switch (statusKey) {
@@ -3353,55 +2458,10 @@ export class GameClient {
         }
     }
 
-    // Bresenham line algorithm for tile-based pathfinding
-    calculateMovementPath(startX, startY, endX, endY) {
-        const path = [];
-        let x0 = Math.round(startX);
-        let y0 = Math.round(startY);
-        const x1 = Math.round(endX);
-        const y1 = Math.round(endY);
-        
-        const dx = Math.abs(x1 - x0);
-        const dy = Math.abs(y1 - y0);
-        const sx = x0 < x1 ? 1 : -1;
-        const sy = y0 < y1 ? 1 : -1;
-        let err = dx - dy;
-        
-        while (true) {
-            path.push({ x: x0, y: y0 });
-            
-            if (x0 === x1 && y0 === y1) break;
-            
-            const e2 = 2 * err;
-            if (e2 > -dy) {
-                err -= dy;
-                x0 += sx;
-            }
-            if (e2 < dx) {
-                err += dx;
-                y0 += sy;
-            }
-        }
-        
-        return path;
-    }
+    // Movement helpers
+    calculateMovementPath(startX, startY, endX, endY) { return coreCalculateMovementPath(startX, startY, endX, endY); }
 
-    // Calculate ETA for movement path (robust against temporary speed buffs)
-    calculateETA(path, movementSpeed) {
-        if (!path || path.length <= 1) return 0;
-        const distance = path.length - 1; // Exclude starting position
-        // Incorporate flat temporary movement bonus if present in meta
-        let effectiveSpeed = movementSpeed || 1;
-        try {
-            const meta = this.selectedUnit?.meta || {};
-            const nowTurn = this.gameState?.currentTurn;
-            if (typeof meta.movementFlatBonus === 'number') {
-                // If the bonus expires next turn or later, count it once
-                effectiveSpeed += Math.max(0, Math.floor(meta.movementFlatBonus));
-            }
-        } catch {}
-        return Math.ceil(distance / Math.max(1, effectiveSpeed));
-    }
+    calculateETA(path, movementSpeed) { return coreCalculateETA(path, movementSpeed, this.selectedUnit, this.gameState); }
 
     // (delegated to SFRenderers.movement)
     // (delegated to SFRenderers.movement)
@@ -3715,640 +2775,31 @@ function setWarpMode() {
 // Active scan removed; abilities now drive scanning via buffs like 'survey_scanner'.
 
 // Show build modal with tabbed interface
-async function showBuildModal() { return build_showBuildModal();
-    if (!gameClient || !gameClient.selectedUnit) {
-        gameClient?.addLogEntry('No station selected', 'warning');
-        return;
-    }
+async function showBuildModal() { return build_showBuildModal(); }
 
-    const selectedStation = gameClient.selectedUnit;
-    if (selectedStation.type !== 'station') {
-        gameClient.addLogEntry('Only stations can build', 'warning');
-        return;
-    }
-
-    // Get station cargo to check available resources
-    try {
-        const data = await SFApi.Cargo.getCargo(selectedStation.id, gameClient.userId);
-        const cargo = data.cargo;
-        const rockQuantity = cargo.items.find(item => item.resource_name === 'rock')?.quantity || 0;
-        
-        // Create build modal content
-        const buildModal = document.createElement('div');
-        buildModal.className = 'build-modal';
-        buildModal.innerHTML = `
-            <div class="build-tabs">
-                <button class="build-tab active" onclick="switchBuildTab('ships')">
-                    🚢 Ships
-                </button>
-                <button class="build-tab" onclick="switchBuildTab('structures')">
-                    🏗️ Structures
-                </button>
-            </div>
-            
-            <div class="build-resources">
-                <div class="resource-display">
-                    <span class="resource-icon">🪨</span>
-                    <span class="resource-name">Rock:</span>
-                    <span class="resource-quantity">${rockQuantity}</span>
-                </div>
-                ${(window.SF_DEV_MODE || (typeof process !== 'undefined' && process.env && (process.env.SF_DEV_MODE==='1' || process.env.NODE_ENV==='development'))) ? `
-                <div class="resource-display" style="margin-left: 12px;">
-                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                        <input id="free-build-toggle" type="checkbox" ${window.sfFreeBuild ? 'checked' : ''} />
-                        <span>🧪 Free builds (test)</span>
-                    </label>
-                </div>` : ''}
-            </div>
-            
-            <div id="ships-tab" class="build-tab-content">
-                <div class="build-section">
-                    <h3>🚢 Ship Construction</h3>
-            <div class="build-options" id="shipyard-container"></div>
-                </div>
-                
-            </div>
-            
-            <div id="structures-tab" class="build-tab-content hidden">
-                <div class="build-section">
-                    <h3>🏗️ Structure Manufacturing</h3>
-                    <div class="build-options">
-                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">☀️ Sun Station</div>
-                                <div class="build-description">Anchors in orbit around a star (one per star)</div>
-                                <div class="build-stats">
-                                    • Cargo: 50 units<br>
-                                    • Must be adjacent to a star<br>
-                                    • One station per star
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 1 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
-                                        onclick="buildStructure('sun-station', 1)" 
-                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🪐 Planet Station</div>
-                                <div class="build-description">Anchors in orbit around a planet (one per planet)</div>
-                                <div class="build-stats">
-                                    • Cargo: 50 units<br>
-                                    • Must be adjacent to a planet<br>
-                                    • One station per planet
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 1 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
-                                        onclick="buildStructure('planet-station', 1)" 
-                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🌘 Moon Station</div>
-                                <div class="build-description">Anchors in orbit around a moon (one per moon)</div>
-                                <div class="build-stats">
-                                    • Cargo: 50 units<br>
-                                    • Must be adjacent to a moon<br>
-                                    • One station per moon
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 1 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
-                                        onclick="buildStructure('moon-station', 1)" 
-                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                        <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">📦 Storage Box</div>
-                                <div class="build-description">Deployable storage structure</div>
-                                <div class="build-stats">
-                                    • Cargo: 25 units<br>
-                                    • Deployable anywhere<br>
-                                    • Resource storage
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 1 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 1 ? '' : 'disabled'}" 
-                                        onclick="buildStructure('storage-box', 1)" 
-                                        ${rockQuantity >= 1 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="build-option ${rockQuantity >= 5 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🌌 Warp Beacon</div>
-                                <div class="build-description">Deployable warp destination</div>
-                                <div class="build-stats">
-                                    • Allows warp travel<br>
-                                    • Accessible to all players<br>
-                                    • Permanent structure
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 5 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 5 ? '' : 'disabled'}" 
-                                        onclick="buildStructure('warp-beacon', 5)" 
-                                        ${rockQuantity >= 5 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="build-option ${rockQuantity >= 2 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🌀 Interstellar Gate</div>
-                                <div class="build-description">Gateway between solar systems</div>
-                                <div class="build-stats">
-                                    • Connects to other sectors<br>
-                                    • Accessible to all players<br>
-                                    • Creates paired gates
-                                </div>
-                            </div>
-                            <div class="build-cost">
-                                <div class="cost-item">🪨 2 Rock</div>
-                                <button class="build-btn ${rockQuantity >= 2 ? '' : 'disabled'}" 
-                                        onclick="buildStructure('interstellar-gate', 2)" 
-                                        ${rockQuantity >= 2 ? '' : 'disabled'}>
-                                    Build
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        UI.showModal({
-            title: '🔨 Construction Bay',
-            content: buildModal,
-            actions: [
-                {
-                    text: 'Close',
-                    style: 'primary',
-                    action: () => true
-                }
-            ],
-            className: 'build-modal-container'
-        });
-
-        // Inject Shipyard (Frigate/Battleship/Capital tabs)
-        await renderShipyard(selectedStation, cargo);
-
-    } catch (error) {
-        console.error('Error getting station cargo:', error);
-        gameClient.addLogEntry('Failed to access construction bay', 'error');
-    }
-}
 // Render the Shipyard UI inside the build modal
-async function renderShipyard(selectedStation, cargo) { return build_renderShipyard(selectedStation, cargo);
-    const container = document.getElementById('shipyard-container');
-    if (!container) return;
-    const haveMap = new Map(cargo.items.map(i => [i.resource_name, i.quantity]));
-
-    // Fetch full blueprint list from server
-    let blueprints = [];
-    try {
-        const jd = await SFApi.Build.blueprints();
-        blueprints = jd.blueprints || [];
-    } catch {}
-    // Client-side fallback mapping if server doesn't provide refined fields
-    const ROLE_TO_REFINED = {
-        'stealth-scout': 'scout-recon',
-        'brawler': 'brawler',
-        'sniper': 'sniper-siege',
-        'interceptor': 'interceptor',
-        'assassin': 'stealth-strike',
-        'miner': 'prospector-miner',
-        'ecm': 'ecm-disruption',
-        'torpedo': 'torpedo-missile',
-        'courier': 'logistics',
-        'stealth-strike': 'stealth-strike',
-        'boarding': 'heavy-assault',
-        'miner-raider': 'prospector-miner',
-        'ecm-torpedo': 'torpedo-missile',
-        'escort': 'escort',
-        'siege': 'sniper-siege',
-        'fortress': 'fortress',
-        'gunline': 'sniper-siege',
-        'carrier': 'carrier',
-        'beam-destroyer': 'sniper-siege',
-        'torpedo-siege': 'torpedo-missile',
-        'ecm-fortress': 'ecm-disruption',
-        'logistics': 'logistics',
-        'repair-tender': 'medical-repair',
-        'defensive-carrier': 'carrier',
-        'command-artillery': 'command',
-        'siege-ecm': 'sniper-siege',
-        'logistics-fortress': 'logistics',
-        'freighter': 'logistics',
-        'colony': 'colony-ship',
-        'transport': 'logistics',
-        'medical': 'medical-repair',
-        'deepcore-miner': 'prospector-miner',
-        'gas-harvester': 'gas-harvester',
-        'strip-miner': 'prospector-miner',
-        'mining-command': 'prospector-miner',
-        'salvage': 'salvage',
-        'supercarrier': 'carrier',
-        'dreadnought': 'heavy-assault',
-        'flagship-command': 'flagship',
-        'heavy-shield': 'fortress',
-        'stealth-battleship': 'stealth-strike',
-        'mobile-shipyard': 'logistics',
-        'worldship': 'fortress',
-        'megafreighter': 'logistics',
-        'exploration': 'scout-recon',
-        'fleet-anchor': 'fortress',
-        'planet-cracker': 'sniper-siege',
-        'gas-refinery': 'gas-harvester',
-        'prospecting-ark': 'prospector-miner'
-    };
-    const REFINED_TO_GROUP = {
-        'brawler': 'combat',
-        'sniper-siege': 'combat',
-        'interceptor': 'combat',
-        'heavy-assault': 'combat',
-        'stealth-strike': 'combat',
-        'carrier': 'combat',
-        'escort': 'support-utility',
-        'command': 'support-utility',
-        'medical-repair': 'support-utility',
-        'logistics': 'support-utility',
-        'scout-recon': 'exploration-expansion',
-        'colony-ship': 'exploration-expansion',
-        'prospector-miner': 'exploration-expansion',
-        'gas-harvester': 'exploration-expansion',
-        'salvage': 'exploration-expansion',
-        'ecm-disruption': 'specialist',
-        'torpedo-missile': 'specialist',
-        'fortress': 'specialist',
-        'flagship': 'specialist'
-    };
-    blueprints = (blueprints || []).map(b => {
-        const refinedRole = b.refinedRole || ROLE_TO_REFINED[b.role] || b.role;
-        const refinedGroup = b.refinedGroup || REFINED_TO_GROUP[refinedRole] || null;
-        return { ...b, refinedRole, refinedGroup };
-    });
-    const CORE_BASELINES = {
-        frigate: { 'Ferrite Alloy': 20, 'Crytite': 12, 'Ardanium': 10, 'Vornite': 8, 'Zerothium': 6 },
-        battleship: { 'Ferrite Alloy': 120, 'Crytite': 80, 'Ardanium': 60, 'Vornite': 50, 'Zerothium': 40 },
-        capital: { 'Ferrite Alloy': 300, 'Crytite': 200, 'Ardanium': 160, 'Vornite': 140, 'Zerothium': 120 }
-    };
-    const ROLE_CORE_MODIFIERS = {
-        'stealth-scout': { 'Ferrite Alloy': 0.8, 'Vornite': 1.2, 'Zerothium': 1.15, 'Crytite': 1.1, 'Ardanium': 0.9 },
-        'brawler': { 'Ferrite Alloy': 1.2, 'Ardanium': 1.15, 'Zerothium': 0.9, 'Vornite': 0.9 },
-        'siege': { 'Ferrite Alloy': 1.15, 'Crytite': 1.1 },
-        'supercarrier': { 'Ferrite Alloy': 1.2, 'Crytite': 1.2 }
-    };
-    const SPECIALIZED_TOTAL = { frigate: 20, battleship: 100, capital: 300 };
-    // Requirements now come from server per blueprint (static). No client-side compute fallback.
-
-    const tabs = ['frigate'];
-    // Build refined role list from server-provided mapping; fallback to original role if missing
-    const refinedAll = Array.from(new Set(blueprints.map(b=>b.refinedRole || b.role)));
-    // Keep a stable order grouped for UX
-    const REFINED_ORDER = [
-        // Combat
-        'brawler','sniper-siege','interceptor','heavy-assault','stealth-strike',
-        // Support & Utility
-        'escort','command','medical-repair','logistics',
-        // Exploration & Expansion
-        'scout-recon','prospector-miner','gas-harvester','salvage',
-        // Specialist
-        'ecm-disruption','torpedo-missile'
-    ];
-    const LABELS = {
-        'brawler': 'Brawler',
-        'sniper-siege': 'Sniper / Siege',
-        'interceptor': 'Interceptor',
-        'heavy-assault': 'Heavy Assault',
-        'stealth-strike': 'Stealth Strike',
-        'carrier': 'Carrier',
-        'escort': 'Escort',
-        'command': 'Command',
-        'medical-repair': 'Medical / Repair',
-        'logistics': 'Logistics',
-        'scout-recon': 'Scout / Recon',
-        'colony-ship': 'Colony Ship',
-        'prospector-miner': 'Prospector / Miner',
-        'gas-harvester': 'Gas Harvester',
-        'salvage': 'Salvage',
-        'ecm-disruption': 'ECM / Disruption',
-        'torpedo-missile': 'Torpedo / Missile',
-        'fortress': 'Fortress',
-        'flagship': 'Flagship'
-    };
-    const GROUPS = [
-        { key: 'combat', label: 'Combat Roles', roles: ['brawler','sniper-siege','interceptor','heavy-assault','stealth-strike','carrier'] },
-        { key: 'support-utility', label: 'Support & Utility', roles: ['escort','command','medical-repair','logistics'] },
-        { key: 'exploration-expansion', label: 'Exploration & Expansion', roles: ['scout-recon','colony-ship','prospector-miner','gas-harvester','salvage'] },
-        { key: 'specialist', label: 'Specialist Roles', roles: ['ecm-disruption','torpedo-missile','fortress','flagship'] }
-    ];
-    const rolesAll = REFINED_ORDER.filter(r => refinedAll.includes(r));
-    let activeRole = null; // null = all refined roles
-    let active = 'frigate';
-    const header = document.createElement('div');
-    header.className = 'build-tabs-shipyard';
-    tabs.forEach(t => {
-        const b = document.createElement('button');
-        b.className = 'sf-btn ' + (active===t ? 'sf-btn-primary' : 'sf-btn-secondary');
-        b.dataset.class = t;
-        b.textContent = t.charAt(0).toUpperCase() + t.slice(1);
-        b.onclick = () => {
-            active = t;
-            // Update tab highlighting
-            header.querySelectorAll('button').forEach(bb => {
-                const cls = bb.dataset.class;
-                bb.className = 'sf-btn ' + (cls===active ? 'sf-btn-primary' : 'sf-btn-secondary');
-            });
-            renderList();
-            updateChips();
-        };
-        header.appendChild(b);
-    });
-    // Role chips bar
-    const roleBar = document.createElement('div');
-    roleBar.className = 'role-chips';
-    const makeChip = (label, value) => {
-        const c = document.createElement('button');
-        c.className = 'sf-chip ' + (activeRole===value ? 'active' : '');
-        c.textContent = label;
-        c.onclick = () => { activeRole = (activeRole===value ? null : value); renderList(); updateChips(); };
-        return c;
-    };
-    const updateChips = () => {
-        roleBar.innerHTML = '';
-        roleBar.appendChild(makeChip('All Roles', null));
-        const availableForClass = new Set(
-            blueprints
-                .filter(b => b.class === active)
-                .map(b => b.refinedRole || b.role)
-        );
-        GROUPS.forEach(group => {
-            const present = group.roles.filter(r => availableForClass.has(r));
-            if (present.length === 0) return;
-            const title = document.createElement('div');
-            title.className = 'role-group-title';
-            title.textContent = group.label;
-            roleBar.appendChild(title);
-            const wrap = document.createElement('div');
-            wrap.className = 'role-group';
-            present.forEach(r => wrap.appendChild(makeChip(LABELS[r] || r, r)));
-            roleBar.appendChild(wrap);
-        });
-    };
-    updateChips();
-
-    const list = document.createElement('div');
-    list.className = 'shipyard-list';
-    container.appendChild(header);
-    container.appendChild(roleBar);
-    container.appendChild(list);
-
-    const renderList = () => {
-        list.innerHTML = '';
-        blueprints.filter(b=>b.class===active && (!activeRole || (b.refinedRole||b.role)===activeRole)).forEach(bp => {
-            const reqs = bp.requirements ? bp.requirements : { core: {}, specialized: {} };
-            const wrap = document.createElement('div');
-            wrap.className = 'build-option';
-            const reqRows = (obj) => Object.entries(obj).map(([k,v])=>{
-                const have = haveMap.get(k) || 0;
-                const ok = have >= v;
-                return `<div class="req-row"><span>${k}</span><span>${ok?'✅':'❌'} ${have}/${v}</span></div>`;
-            }).join('');
-            const canBuild = [...Object.entries(reqs.core), ...Object.entries(reqs.specialized)].every(([k,v]) => (haveMap.get(k)||0) >= v);
-            const freeBuild = !!document.getElementById('free-build-toggle')?.checked;
-            // remember toggle globally for the session
-            window.sfFreeBuild = freeBuild;
-            const abilityPreview = (bp.abilitiesMeta||[]).map(a => {
-                const tag = a.type === 'passive' ? '✨' : '🛠️';
-                const tip = a.shortDescription || '';
-                return `<span class="chip" title="${tip}">${tag} ${a.name}</span>`;
-            }).join(' ');
-            wrap.innerHTML = `
-                <div class="build-info">
-                    <div class="build-name">${bp.name}</div>
-                    <div class="build-description">Class: ${bp.class} • Role: ${(LABELS[bp.refinedRole]||LABELS[bp.role]||bp.refinedRole||bp.role)}</div>
-                    ${abilityPreview ? `<div style="margin:6px 0; display:flex; flex-wrap:wrap; gap:6px;">${abilityPreview}</div>` : ''}
-                    <div class="build-reqs"><h4>Core</h4>${reqRows(reqs.core)}<h4>Specialized</h4>${reqRows(reqs.specialized)}</div>
-                </div>
-                <div class="build-cost">
-                    <button class="build-btn ${(canBuild||freeBuild)?'':'disabled'}" ${(canBuild||freeBuild)?'':'disabled'}>Build${freeBuild?' (Free)':''}</button>
-                </div>`;
-            wrap.querySelector('button').onclick = async () => {
-                try {
-                    const jd = await SFApi.Build.buildShip(selectedStation.id, bp.id, gameClient.userId, freeBuild);
-                    gameClient.addLogEntry(`Built ${jd.shipName}`, 'success');
-                    UI.closeModal();
-                    await gameClient.loadGameState();
-                } catch (e) {
-                    gameClient.addLogEntry((e && e.data && e.data.error) || e.message || 'Build failed', 'error');
-                }
-            };
-            list.appendChild(wrap);
-        });
-    };
-    const freeToggle = document.getElementById('free-build-toggle');
-    if (freeToggle) {
-        freeToggle.onchange = () => { renderList(); };
-    }
-    renderList();
-}
+async function renderShipyard(selectedStation, cargo) { return build_renderShipyard(selectedStation, cargo); }
 
 // Switch between build tabs
-function switchBuildTab(tabName) { return build_switchBuildTab(tabName);
-    // Update tab buttons
-    document.querySelectorAll('.build-tab').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    document.querySelector(`[onclick="switchBuildTab('${tabName}')"]`).classList.add('active');
-    
-    // Show/hide tab content
-    document.querySelectorAll('.build-tab-content').forEach(content => {
-        content.classList.add('hidden');
-    });
-    document.getElementById(`${tabName}-tab`).classList.remove('hidden');
-}
+function switchBuildTab(tabName) { return build_switchBuildTab(tabName); }
 
 // Build a ship
-async function buildShip(shipType, cost) { return build_buildShip(shipType, cost);
-    if (!gameClient || !gameClient.selectedUnit) {
-        gameClient?.addLogEntry('No station selected', 'warning');
-        return;
-    }
-
-    try {
-        const data = await SFApi.Build.buildShipLegacy(gameClient.selectedUnit.id, shipType, cost, gameClient.userId);
-        gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
-        UI.closeModal();
-        // Refresh game state to show new ship
-        gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
-    } catch (error) {
-        console.error('Error building ship:', error);
-        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to build ship', 'error');
-    }
-}
+async function buildShip(shipType, cost) { return build_buildShip(shipType, cost); }
 
 // Build a structure (as cargo item)
-async function buildStructure(structureType, cost) { return build_buildStructure(structureType, cost);
-    if (!gameClient || !gameClient.selectedUnit) {
-        gameClient?.addLogEntry('No station selected', 'warning');
-        return;
-    }
-
-    try {
-        const data = await SFApi.Build.buildStructure(gameClient.selectedUnit.id, structureType, cost, gameClient.userId);
-        gameClient.addLogEntry(`${data.structureName} manufactured successfully!`, 'success');
-        UI.closeModal();
-    } catch (error) {
-        console.error('Error building structure:', error);
-        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to build structure', 'error');
-    }
-}
+async function buildStructure(structureType, cost) { return build_buildStructure(structureType, cost); }
 
 // Build a test Explorer for 1 rock
-async function buildBasicExplorer(cost) { return build_buildBasicExplorer(cost);
-    if (!gameClient || !gameClient.selectedUnit) {
-        gameClient?.addLogEntry('No station selected', 'warning');
-        return;
-    }
-    try {
-        const data = await SFApi.Build.buildShipBasic(gameClient.selectedUnit.id, gameClient.userId);
-        gameClient.addLogEntry(`${data.shipName} constructed successfully!`, 'success');
-        UI.closeModal();
-        await gameClient.loadGameState();
-    } catch (error) {
-        console.error('Error building basic explorer:', error);
-        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to build Explorer', 'error');
-    }
-}
+async function buildBasicExplorer(cost) { return build_buildBasicExplorer(cost); }
 
 // Deploy a structure from ship cargo
-async function deployStructure(structureType, shipId) { return build_deployStructure(structureType, shipId);
-    if (!gameClient || !gameClient.selectedUnit) {
-        gameClient?.addLogEntry('No ship selected', 'warning');
-        return;
-    }
+async function deployStructure(structureType, shipId) { return build_deployStructure(structureType, shipId); }
 
-    // Special handling for interstellar gates - require sector selection
-    if (structureType === 'interstellar-gate') {
-        showSectorSelectionModal(shipId);
-        return;
-    }
-
-    try {
-        const data = await SFApi.Build.deployStructure(shipId, structureType, gameClient.userId);
-        gameClient.addLogEntry(`${data.structureName} deployed successfully!`, 'success');
-        UI.closeModal();
-        // Refresh game state to show new structure
-        gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
-    } catch (error) {
-        console.error('Error deploying structure:', error);
-        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to deploy structure', 'error');
-    }
-}
 // Show sector selection modal for interstellar gate deployment
-async function showSectorSelectionModal(shipId) { return build_showSectorSelectionModal(shipId);
-    try {
-        // Fetch all available sectors
-        const data = await SFApi.Build.listSectors(gameClient.gameId, gameClient.userId);
-        const sectors = data.sectors;
-        const currentSectorId = gameClient.gameState.sector.id;
-        
-        // Filter out current sector
-        const availableSectors = sectors.filter(sector => sector.id !== currentSectorId);
-        
-        if (availableSectors.length === 0) {
-            gameClient.addLogEntry('No other sectors available for gate connection', 'warning');
-            return;
-        }
-
-        // Create sector selection modal
-        const sectorModal = document.createElement('div');
-        sectorModal.className = 'sector-selection-modal';
-        sectorModal.innerHTML = `
-            <div class="sector-selection-header">
-                <h3>🌀 Select Destination Sector</h3>
-                <p>Choose which solar system to connect to:</p>
-            </div>
-            
-            <div class="sector-list">
-                ${availableSectors.map(sector => `
-                    <div class="sector-option" data-action="deploy-gate" data-ship-id="${shipId}" data-destination-id="${sector.id}" data-destination-name="${sector.name}">
-                        <div class="sector-info">
-                            <div class="sector-name">🌌 ${sector.name}</div>
-                            <div class="sector-details">
-                                Owner: ${sector.owner_name || 'Unknown'}<br>
-                                Type: ${sector.archetype || 'Standard'}
-                            </div>
-                        </div>
-                        <div class="sector-action">
-                            <button class="select-sector-btn">Connect</button>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        `;
-
-        UI.showModal({
-            title: '🌀 Interstellar Gate Deployment',
-            content: sectorModal,
-            actions: [
-                {
-                    text: 'Cancel',
-                    style: 'secondary',
-                    action: () => true
-                }
-            ],
-            className: 'sector-selection-modal-container'
-        });
-        // Delegate connect action
-        sectorModal.addEventListener('click', (e) => {
-            const row = e.target.closest('[data-action="deploy-gate"]');
-            if (!row) return;
-            const sId = Number(row.dataset.shipId);
-            const destId = Number(row.dataset.destinationId);
-            const destName = row.dataset.destinationName;
-            deployInterstellarGate(sId, destId, destName);
-        });
-
-    } catch (error) {
-        console.error('Error showing sector selection:', error);
-        gameClient.addLogEntry('Failed to show sector selection', 'error');
-    }
-}
+async function showSectorSelectionModal(shipId) { return build_showSectorSelectionModal(shipId); }
 
 // Deploy interstellar gate with selected destination sector
-async function deployInterstellarGate(shipId, destinationSectorId, destinationSectorName) { return build_deployInterstellarGate(shipId, destinationSectorId, destinationSectorName);
-    try {
-        const data = await SFApi.Build.deployInterstellarGate(shipId, destinationSectorId, gameClient.userId);
-        gameClient.addLogEntry(`Interstellar Gate deployed! Connected to ${destinationSectorName}`, 'success');
-        UI.closeModal();
-        // Refresh game state to show new structure
-        gameClient.socket.emit('get-game-state', { gameId: gameClient.gameId, userId: gameClient.userId });
-    } catch (error) {
-        console.error('Error deploying interstellar gate:', error);
-        gameClient.addLogEntry((error && error.data && error.data.error) || 'Failed to deploy interstellar gate', 'error');
-    }
-}
+async function deployInterstellarGate(shipId, destinationSectorId, destinationSectorName) { return build_deployInterstellarGate(shipId, destinationSectorId, destinationSectorName); }
 
 // Show interstellar travel options
 function showInterstellarTravelOptions() {

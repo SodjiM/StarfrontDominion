@@ -20,10 +20,8 @@ import './features/mining.js';
 import './features/cargo.js';
 import './features/build.js';
 // UI modules now ESM; imported on-demand inside game.js
-import './minimap/minimap-renderer.js';
-import './minimap/minimap-interactions.js';
-import './input/mouse.js';
-import './input/keyboard.js';
+import './ui/minimap.js';
+import './input/mouseKeyboard.js';
 import './ui/fleet-list.js';
 import './ui/queue-panel.js';
 import './ui/setup-modal.js';
