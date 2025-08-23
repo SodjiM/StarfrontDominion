@@ -1711,14 +1711,7 @@
       // Delegate UI globals to feature modules (overrides originals for thin coordination)
       // ESM migration: no window shims needed anymore
 
-      window.toggleMining = function(){ return (window.SFMining && SFMining.toggleMining()) };
-      window.showResourceSelection = function(shipId){ return (window.SFMining && SFMining.showResourceSelection(shipId)) };
-      window.startMining = function(shipId, nodeId, resourceName){ return (window.SFMining && SFMining.startMining(shipId, nodeId, resourceName)) };
-
-      window.showCargo = function(){ return (window.SFCargo && SFCargo.showCargo()) };
-      window.showTransferModal = function(fromId, toId, toName){ return (window.SFCargo && SFCargo.showTransferModal(fromId, toId, toName)) };
-      window.performTransfer = function(fromId, toId, name, qty, toName){ return (window.SFCargo && SFCargo.performTransfer(fromId, toId, name, qty, toName)) };
-      window.updateCargoStatus = function(shipId){ return (window.SFCargo && SFCargo.updateCargoStatus(shipId)) };
+      // Mining/Cargo globals removed; use data-action bindings and modules
       
       // Legacy globals → UI modules
       window.showPlayerAssets = function(){ return (window.SFUI && SFUI.assets && SFUI.assets.show()) };

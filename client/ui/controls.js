@@ -15,6 +15,19 @@ export function bindControls(game) {
         on('openMapBtn', async () => { try { const mod = await import('./map-ui.js'); mod.openMap(); } catch {} });
         on('playerAssetsBtn', async () => { try { const mod = await import('./assets-modal.js'); mod.showAssets(); } catch {} });
         on('senateBtn', async () => { try { const mod = await import('./senate.js'); mod.showSenate(); } catch {} });
+
+        // Generic data-action fallbacks for common actions
+        document.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const action = btn.getAttribute('data-action');
+            if (action === 'toggle-mining') {
+                try { const mod = await import('../features/mining.js'); mod.toggleMining && mod.toggleMining(); } catch {}
+            }
+            if (action === 'show-cargo') {
+                try { const mod = await import('./cargo-modal.js'); mod.showCargo && mod.showCargo(game); } catch {}
+            }
+        });
     } catch {}
 }
 

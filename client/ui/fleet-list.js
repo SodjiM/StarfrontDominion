@@ -18,6 +18,8 @@ export function attachToolbarHandlers(game) {
     }
 }
 
+import { getStatusClass, getStatusLabel } from './UnitDetails.js';
+
 export async function updateFleetList(game) {
     if (!game || !game.gameState) return;
     const unitsList = document.getElementById('unitsList');
@@ -115,7 +117,7 @@ export async function updateFleetList(game) {
                         </div>
                         <div class="unit-meta">
                             <span class="chip">${sectorName}</span>
-                            <span class="chip ${game.getStatusClass(status)}">${game.getStatusLabel(status)}</span>
+                            <span class="chip ${getStatusClass(status)}">${getStatusLabel(status)}</span>
                             ${unit.type==='ship' && cargoFill!=null ? `<span class="chip">📦 ${cargoFill}</span>` : ''}
                             ${eta ? `<span class="chip">⏱️ ETA ${eta}</span>` : ''}
                             <span class="favorite ${game.isFavoriteUnit(unit.id)?'active':''}" data-action="toggle-favorite" data-unit-id="${unit.id}">⭐</span>
@@ -150,9 +152,9 @@ export async function updateFleetList(game) {
 
         if (game.gameState?.objects) {
             const currentSectorShips = game.gameState.objects.filter(obj => obj.owner_id === game.userId && obj.type === 'ship');
-            currentSectorShips.forEach(ship => {
+            currentSectorShips.forEach(async (ship) => {
                 if (game.selectedUnit && ship.id === game.selectedUnit.id) {
-                    try { SFCargo.updateCargoStatus(ship.id); } catch {}
+                    try { const mod = await import('./cargo-modal.js'); mod.updateCargoStatus && mod.updateCargoStatus(game, ship.id); } catch {}
                 }
             });
         }

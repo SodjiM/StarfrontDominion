@@ -61,6 +61,14 @@ export function executeWarpOrder(client, target) {
 
 export function enterWarpMode(client) { showWarpTargetSelection(client); }
 
+export function exitWarpMode(client) {
+        if (!client || !client.canvas) return;
+        client.warpMode = false;
+        client.warpTargets = [];
+        client.canvas.style.cursor = 'default';
+        client.render && client.render();
+}
+
 export function showWarpTargetSelection(client) {
         const ship = client.selectedUnit; if (!ship) return;
         const warpTargets = getWarpTargets(client, ship);

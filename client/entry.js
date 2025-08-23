@@ -5,7 +5,6 @@ import './main.js';
 import './utils/constants.js';
 import './utils/geometry.js';
 import './utils/colors.js';
-import './core/normalizers.js';
 import './render/grid-renderer.js';
 import './render/fog-of-war.js';
 import './render/movement-paths.js';
@@ -17,7 +16,7 @@ import './features/abilities/ability-controller.js';
 import './services/api.js';
 import './features/warp.js';
 import './features/mining.js';
-import './features/cargo.js';
+// cargo feature removed; UI flows live in ui/cargo-modal.js
 import './features/build.js';
 // UI modules now ESM; imported on-demand inside game.js
 import './ui/minimap.js';

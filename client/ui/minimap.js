@@ -261,7 +261,13 @@ export function renderFloatingMini(game) {
     game.miniCanvas = canvas; game.miniCtx = ctx;
     if (game._miniBoundCanvas !== game.miniCanvas) {
         game._miniBound = false;
-        bind(game.miniCanvas, ()=>({ camera: game.camera, tileSize: game.tileSize }), (x,y)=>{ game.camera.x=x; game.camera.y=y; game.render(); });
+        if (window.SFMinimap && window.SFMinimap.interactions && typeof window.SFMinimap.interactions.bind === 'function') {
+            window.SFMinimap.interactions.bind(
+                game.miniCanvas,
+                ()=>({ camera: game.camera, tileSize: game.tileSize }),
+                (x,y)=>{ game.camera.x=x; game.camera.y=y; game.render(); }
+            );
+        }
     }
 }
 

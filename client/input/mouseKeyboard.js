@@ -19,8 +19,17 @@
 	function bindKeyboard(doc, game) {
 		if (!doc || !game || doc._kbBound) return;
 		doc._kbBound = true;
-		doc.addEventListener('keydown', (e) => game.handleKeyboard && game.handleKeyboard(e));
-		doc.addEventListener('keyup', (e) => game.handleKeyUp && game.handleKeyUp(e));
+		doc.addEventListener('keydown', (e) => {
+			switch(e.key) {
+				case 'Escape': break;
+				case 'Shift': game.queueMode = true; break;
+				case '1': case '2': case '3': case '4': case '5': {
+					const idx = parseInt(e.key) - 1; if (game.units[idx]) game.selectUnit(game.units[idx].id);
+					break;
+				}
+			}
+		});
+		doc.addEventListener('keyup', (e) => { if (e.key === 'Shift') game.queueMode = false; });
 	}
 
 	if (typeof window !== 'undefined') {
