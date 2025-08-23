@@ -1,3 +1,8 @@
+assets_work/
+node_modules/
+*.log
+.DS_Store
+
 # Node
 node_modules/
 npm-debug.log*

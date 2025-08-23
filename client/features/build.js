@@ -52,10 +52,15 @@ export async function showBuildModal() {
                     <h3>🏗️ Structure Manufacturing</h3>
                     <div class="build-options">
                         <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">☀️ Sun Station</div>
-                                <div class="build-description">Anchors in orbit around a star (one per star)</div>
-                                <div class="build-stats">• Cargo: 50 units<br>• Must be adjacent to a star<br>• One station per star</div>
+                            <div class="build-info" style="display:flex; gap:12px; align-items:flex-start;">
+                                <div class="build-thumb" style="width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:4px; background: rgba(255,255,255,0.05);">
+                                    ${ (window.SFSprites && window.SFSprites.getSpriteUrlForKey) ? `<img src="${window.SFSprites.getSpriteUrlForKey('sun-station')||''}" style="width:56px;height:56px;object-fit:contain;"/>` : '🏗️' }
+                                </div>
+                                <div class="build-meta" style="flex:1;">
+                                    <div class="build-name">☀️ Sun Station</div>
+                                    <div class="build-description">Anchors in orbit around a star (one per star)</div>
+                                    <div class="build-stats">• Cargo: 50 units<br>• Must be adjacent to a star<br>• One station per star</div>
+                                </div>
                             </div>
                             <div class="build-cost">
                                 <div class="cost-item">🪨 1 Rock</div>
@@ -63,10 +68,15 @@ export async function showBuildModal() {
                             </div>
                         </div>
                         <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🪐 Planet Station</div>
-                                <div class="build-description">Anchors in orbit around a planet (one per planet)</div>
-                                <div class="build-stats">• Cargo: 50 units<br>• Must be adjacent to a planet<br>• One station per planet</div>
+                            <div class="build-info" style="display:flex; gap:12px; align-items:flex-start;">
+                                <div class="build-thumb" style="width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:4px; background: rgba(255,255,255,0.05);">
+                                    ${ (window.SFSprites && window.SFSprites.getSpriteUrlForKey) ? `<img src="${window.SFSprites.getSpriteUrlForKey('planet-station')||''}" style="width:56px;height:56px;object-fit:contain;"/>` : '🪐' }
+                                </div>
+                                <div class="build-meta" style="flex:1;">
+                                    <div class="build-name">🪐 Planet Station</div>
+                                    <div class="build-description">Anchors in orbit around a planet (one per planet)</div>
+                                    <div class="build-stats">• Cargo: 50 units<br>• Must be adjacent to a planet<br>• One station per planet</div>
+                                </div>
                             </div>
                             <div class="build-cost">
                                 <div class="cost-item">🪨 1 Rock</div>
@@ -74,10 +84,15 @@ export async function showBuildModal() {
                             </div>
                         </div>
                         <div class="build-option ${rockQuantity >= 1 ? '' : 'disabled'}">
-                            <div class="build-info">
-                                <div class="build-name">🌘 Moon Station</div>
-                                <div class="build-description">Anchors in orbit around a moon (one per moon)</div>
-                                <div class="build-stats">• Cargo: 50 units<br>• Must be adjacent to a moon<br>• One station per moon</div>
+                            <div class="build-info" style="display:flex; gap:12px; align-items:flex-start;">
+                                <div class="build-thumb" style="width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:4px; background: rgba(255,255,255,0.05);">
+                                    ${ (window.SFSprites && window.SFSprites.getSpriteUrlForKey) ? `<img src="${window.SFSprites.getSpriteUrlForKey('moon-station')||''}" style="width:56px;height:56px;object-fit:contain;"/>` : '🌘' }
+                                </div>
+                                <div class="build-meta" style="flex:1;">
+                                    <div class="build-name">🌘 Moon Station</div>
+                                    <div class="build-description">Anchors in orbit around a moon (one per moon)</div>
+                                    <div class="build-stats">• Cargo: 50 units<br>• Must be adjacent to a moon<br>• One station per moon</div>
+                                </div>
                             </div>
                             <div class="build-cost">
                                 <div class="cost-item">🪨 1 Rock</div>
@@ -170,12 +185,18 @@ export async function renderShipyard(selectedStation, cargo) {
             const canBuild = [...Object.entries(reqs.core), ...Object.entries(reqs.specialized)].every(([k,v]) => (haveMap.get(k)||0) >= v);
             const freeBuild = !!document.getElementById('free-build-toggle')?.checked; window.sfFreeBuild = freeBuild;
             const abilityPreview = (bp.abilitiesMeta||[]).map(a => { const tag = a.type === 'passive' ? '✨' : '🛠️'; const tip = a.shortDescription || ''; return `<span class="chip" title="${tip}">${tag} ${a.name}</span>`; }).join(' ');
+            const spriteUrl = (window.SFSprites && window.SFSprites.getSpriteUrlForKey) ? window.SFSprites.getSpriteUrlForKey(bp.id) : null;
             wrap.innerHTML = `
-                <div class="build-info">
-                    <div class="build-name">${bp.name}</div>
-                    <div class="build-description">Class: ${bp.class} • Role: ${(LABELS[bp.refinedRole]||LABELS[bp.role]||bp.refinedRole||bp.role)}</div>
-                    ${abilityPreview ? `<div style="margin:6px 0; display:flex; flex-wrap:wrap; gap:6px;">${abilityPreview}</div>` : ''}
-                    <div class="build-reqs"><h4>Core</h4>${reqRows(reqs.core)}<h4>Specialized</h4>${reqRows(reqs.specialized)}</div>
+                <div class="build-info" style="display:flex; gap:12px; align-items:flex-start;">
+                    <div class="build-thumb" style="width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:4px; background: rgba(255,255,255,0.05);">
+                        ${spriteUrl ? `<img src="${spriteUrl}" alt="${bp.name}" style="width:56px;height:56px;object-fit:contain;image-rendering:auto;"/>` : '🚢'}
+                    </div>
+                    <div class="build-meta" style="flex:1;">
+                        <div class="build-name">${bp.name}</div>
+                        <div class="build-description">Class: ${bp.class} • Role: ${(LABELS[bp.refinedRole]||LABELS[bp.role]||bp.refinedRole||bp.role)}</div>
+                        ${abilityPreview ? `<div style="margin:6px 0; display:flex; flex-wrap:wrap; gap:6px;">${abilityPreview}</div>` : ''}
+                        <div class="build-reqs"><h4>Core</h4>${reqRows(reqs.core)}<h4>Specialized</h4>${reqRows(reqs.specialized)}</div>
+                    </div>
                 </div>
                 <div class="build-cost">
                     <button class="build-btn ${(canBuild||freeBuild)?'':'disabled'}" ${(canBuild||freeBuild)?'':'disabled'}>Build${freeBuild?' (Free)':''}</button>

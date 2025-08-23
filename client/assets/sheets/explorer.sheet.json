@@ -1,0 +1,22 @@
+{
+  "image": "client\\assets\\sheets\\explorer.png",
+  "frameWidth": 64,
+  "frameHeight": 64,
+  "padding": 2,
+  "animations": {
+    "idle": {
+      "row": 0,
+      "from": 0,
+      "to": 2,
+      "fps": 6,
+      "loop": true
+    },
+    "moving": {
+      "row": 1,
+      "from": 0,
+      "to": 7,
+      "fps": 10,
+      "loop": true
+    }
+  }
+}

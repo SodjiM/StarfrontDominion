@@ -107,11 +107,12 @@ export async function updateFleetList(game) {
                 const status = game.getUnitStatus(meta, unit);
                 const cargoFill = game.getCargoFill(unit);
                 const eta = game.getEta(unit);
+                const iconHtml = game.getUnitIcon({ type: unit.type, meta });
                 html += `
                     <div class="unit-item ${isSelected ? 'selected' : ''} ${!inCurrentSector ? 'remote-unit' : ''}"
                          data-action="select-remote-unit" data-unit-id="${unit.id}" data-sector-id="${unit.sector_id}" data-sector-name="${sectorName}" data-in-current="${inCurrentSector}">
                         <div class="unit-header">
-                            <span class="unit-icon">${game.getUnitIcon(unit.type)}</span>
+                            <span class="unit-icon">${iconHtml}</span>
                             <span class="unit-name">${meta.name || unit.type}</span>
                             ${!inCurrentSector ? '<span class="remote-indicator">📡</span>' : ''}
                         </div>

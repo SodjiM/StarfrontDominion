@@ -29,12 +29,19 @@ import './encyclopedia.js';
 
 // Kickoff: replicate previous DOMContentLoaded initializer using the global initializeGame (until class export is split)
 import { GameClient } from './game.js';
+import { preloadSprites } from './render/sprites.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.Session && Session.requireAuth()) {
         const gameId = new URLSearchParams(window.location.search).get('id');
         if (!gameId) { window.location.href = 'lobby.html'; return; }
         try {
+            // Preload sprite images and sheets once before client init
+            try {
+                await preloadSprites();
+            } catch (preErr) {
+                console.warn('Sprite preload failed; proceeding with fallbacks:', preErr);
+            }
             if (GameClient) {
                 const client = new GameClient();
                 window.gameClient = client;

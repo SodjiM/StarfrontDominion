@@ -34,10 +34,11 @@ export function renderUnitDetails(game, unit, options = {}) {
         }
     });
 
+    const iconHtml = game.getUnitIcon(unit);
     detailsContainer.innerHTML = `
         <div class="unit-info">
             <h3 style="color: #64b5f6; margin-bottom: 15px;">
-                ${game.getUnitIcon(unit.type)} ${meta.name || unit.type}
+                ${iconHtml} ${meta.name || unit.type}
             </h3>
             <div class="stat-item"><span>Position:</span><span>(${unit.x}, ${unit.y})</span></div>
             ${meta.movementSpeed ? `<div class="stat-item"><span>Movement:</span><span>${game.getEffectiveMovementSpeed(unit)} tiles/turn</span></div>` : ''}

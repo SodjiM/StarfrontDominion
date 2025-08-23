@@ -6,6 +6,20 @@
         if (game && game.drawResourceNode) {
             return game.drawResourceNode(ctx, obj, x, y, size, colors);
         }
+        // Try static sprite first (resources seldom animated)
+        try {
+            const sprites = window.SFSprites;
+            if (sprites && sprites.getSpriteForObject) {
+                const img = sprites.getSpriteForObject(obj);
+                if (img) {
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.drawImage(img, x - size/2, y - size/2, size, size);
+                    return;
+                }
+            }
+        } catch (e) {
+            // noop
+        }
         // Fallback simple dot
         ctx.fillStyle = colors.border || '#ccc';
         ctx.beginPath();
