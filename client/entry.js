@@ -30,6 +30,7 @@ import './encyclopedia.js';
 // Kickoff: replicate previous DOMContentLoaded initializer using the global initializeGame (until class export is split)
 import { GameClient } from './game.js';
 import { preloadSprites } from './render/sprites.js';
+import { setupBackgroundMusic } from './services/music.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.Session && Session.requireAuth()) {
@@ -46,6 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const client = new GameClient();
                 window.gameClient = client;
                 await client.initialize(gameId);
+                try { setupBackgroundMusic(); } catch {}
             } else if (typeof window.initializeGame === 'function') {
                 window.initializeGame(gameId);
             }
