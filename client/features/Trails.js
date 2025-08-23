@@ -48,4 +48,35 @@ export function handleLingeringTrailsOnTurn(game) {
     }
 }
 
+// Consolidated call from updateUI to create completion trails and then cleanup
+export function applyTurnTrails(game) {
+    try {
+        const currentTurn = game.gameState?.currentTurn?.turn_number || 1;
+        (game.objects||[]).forEach(ship => {
+            if (ship.type === 'ship' && ship.movementStatus === 'completed' && ship.movementPath && ship.movementPath.length > 1) {
+                const prevStatus = game.previousMovementStatuses.get(ship.id);
+                if (prevStatus === 'active') {
+                    const lingeringTrail = {
+                        id: `completion-${ship.id}-${currentTurn}`,
+                        shipId: ship.id,
+                        movementPath: [...ship.movementPath],
+                        owner_id: ship.owner_id,
+                        meta: { ...ship.meta },
+                        x: ship.x,
+                        y: ship.y,
+                        movementStatus: 'completed',
+                        type: 'ship',
+                        visibilityStatus: ship.visibilityStatus,
+                        createdAt: Date.now(),
+                        createdOnTurn: currentTurn
+                    };
+                    const existingTrail = game.clientLingeringTrails.find(t => t.shipId === ship.id && t.createdOnTurn === currentTurn);
+                    if (!existingTrail) game.clientLingeringTrails.push(lingeringTrail);
+                }
+            }
+        });
+    } catch {}
+    handleLingeringTrailsOnTurn(game);
+}
+
 

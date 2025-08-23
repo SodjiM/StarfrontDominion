@@ -25,10 +25,14 @@ export function renderQueueList(game, shipId, orders) {
         el.querySelectorAll('button[data-remove]').forEach(btn => {
             btn.onclick = () => {
                 const id = Number(btn.getAttribute('data-remove'));
-                game.socket.emit('queue:remove', { gameId: game.gameId, shipId, id }, () => game.loadQueueLog(shipId, true));
+                import('../features/queue-controller.js').then(mod => {
+                    mod.remove(game, shipId, id, () => game.loadQueueLog(shipId, true));
+                });
             };
         });
 }
+
+import * as Queue from '../features/queue-controller.js';
 
 export async function loadQueueLog(game, shipId, force) {
         try {
@@ -36,11 +40,7 @@ export async function loadQueueLog(game, shipId, force) {
                 renderQueueList(game, shipId, game._queuedByShipId.get(shipId));
                 return;
             }
-            const orders = await new Promise((resolve) => {
-                game.socket.timeout(3000).emit('queue:list', { gameId: game.gameId, shipId }, (err, data) => {
-                    if (err || !data?.success) resolve([]); else resolve(data.orders || []);
-                });
-            });
+            const orders = await Queue.list(game, shipId);
             game._queuedByShipId.set(shipId, orders);
             renderQueueList(game, shipId, orders);
         } catch (e) {
@@ -50,7 +50,8 @@ export async function loadQueueLog(game, shipId, force) {
 }
 
 export function clearQueue(game, shipId) {
-        game.socket.emit('queue:clear', { gameId: game.gameId, shipId }, () => loadQueueLog(game, shipId, true));
+        Queue.clear(game, shipId);
+        loadQueueLog(game, shipId, true);
 }
 
 

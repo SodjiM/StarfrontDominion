@@ -1,3 +1,107 @@
+// Map modal helpers
+
+export async function populateSystemFacts(game) {
+    try {
+        const wrap = document.getElementById('sysMetaSummary');
+        if (!wrap || !game?.gameState?.sector) return;
+        const sector = game.gameState.sector; const systemId = sector.id;
+        let facts = null;
+        try { facts = await SFApi.State.systemFacts(systemId); } catch {}
+        if (!facts) {
+            const all = game.objects || [];
+            const planets = all.filter(o => (o.celestial_type === 'planet'));
+            const belts = all.filter(o => o.celestial_type === 'belt');
+            const nebulas = all.filter(o => o.celestial_type === 'nebula');
+            const rock = Math.max(1, belts.length * 3);
+            const gas = Math.max(1, nebulas.length * 2);
+            const energy = Math.max(1, planets.length);
+            const total = rock + gas + energy; const pct = (n) => `${Math.round((n / total) * 100)}%`;
+            const systemType = sector.archetype || 'standard';
+            const unique = (systemType === 'aurora-veil') ? ['aurorium','veil-crystal'] : (systemType === 'iron-forge') ? ['ferrox','slagite'] : ['cryo-ice','dust-opal'];
+            const wildcards = ['platinum','titanium','silicates'];
+            const gateSlots = typeof sector.gateSlots === 'number' ? sector.gateSlots : 3;
+            const usedGates = typeof sector.gatesUsed === 'number' ? sector.gatesUsed : 0;
+            facts = { name: sector.name, type: systemType, ratios: { rock: pct(rock), gas: pct(gas), energy: pct(energy) }, unique, wildcards, gateSlots, gatesUsed: usedGates };
+        }
+        wrap.innerHTML = `
+            <div><b>Name:</b> ${facts.name || sector.name}</div>
+            <div><b>Type:</b> ${facts.type || sector.archetype || 'standard'}</div>
+            <div style="margin-top:8px;"><b>Core Mineral Bias</b></div>
+            <div>
+                • Ferrite Alloy: x${(facts.coreBias?.Ferrite || facts.coreBias?.FerriteAlloy || '1.00')}<br/>
+                • Crytite: x${(facts.coreBias?.Crytite || '1.00')}<br/>
+                • Ardanium: x${(facts.coreBias?.Ardanium || '1.00')}<br/>
+                • Vornite: x${(facts.coreBias?.Vornite || '1.00')}<br/>
+                • Zerothium: x${(facts.coreBias?.Zerothium || '1.00')}
+            </div>
+            <div style="margin-top:8px;"><b>Themed Minerals</b></div>
+            <div>${(facts.themed || facts.unique || []).join(', ') || '—'}</div>
+            <div style="margin-top:8px;"><b>Minor Minerals</b></div>
+            <div>${(facts.minor || facts.wildcards || []).join(', ') || '—'}</div>
+            <div style="margin-top:8px;"><b>Gate Slots</b></div>
+            <div>${facts.gatesUsed || 0} / ${facts.gateSlots || 3}</div>`;
+    } catch (e) {
+        const wrap = document.getElementById('sysMetaSummary'); if (wrap) wrap.innerText = 'Failed to load system facts';
+    }
+}
+
+export async function loadGalaxyData(game) {
+    try {
+        const galaxyList = document.getElementById('galaxySystemsList'); if (!galaxyList || !game) return;
+        const currentSystem = {
+            name: game.gameState?.sector?.name || 'Current System',
+            id: game.gameId,
+            players: 1,
+            status: 'Active',
+            turn: game.gameState?.turn?.number || 1,
+            celestialObjects: game.objects ? game.objects.filter(obj => isCelestialObject(game, obj)).length : 0
+        };
+        galaxyList.innerHTML = `
+            <div class="galaxy-system-card" data-action="select-system" data-system-id="${currentSystem.id}">
+                <div class="galaxy-system-name">${currentSystem.name}</div>
+                <div class="galaxy-system-info">
+                    <div>👥 ${currentSystem.players} Player${currentSystem.players !== 1 ? 's' : ''}</div>
+                    <div>⏰ Turn ${currentSystem.turn}</div>
+                    <div>🌌 ${currentSystem.celestialObjects} Celestial Objects</div>
+                    <div>📊 Status: <span style="color: #4CAF50;">${currentSystem.status}</span></div>
+                </div>
+            </div>
+            <div class="galaxy-system-card" style="opacity: 0.5; cursor: not-allowed;">
+                <div class="galaxy-system-name">Distant Systems</div>
+                <div class="galaxy-system-info">
+                    <div style="color: #888;">🚧 Coming Soon</div>
+                    <div style="color: #666; font-size: 0.8em;">Multi-system gameplay will be available in future updates</div>
+                </div>
+            </div>`;
+        galaxyList.addEventListener('click', (e) => {
+            const row = e.target.closest('[data-action="select-system"]');
+            if (row) selectGalaxySystem(game, Number(row.dataset.systemId));
+        });
+    } catch (error) {
+        console.error('Error loading galaxy data:', error);
+        const galaxyList = document.getElementById('galaxySystemsList');
+        if (galaxyList) galaxyList.innerHTML = `<div style="text-align: center; color: #f44336; padding: 40px;">❌ Failed to load galaxy data</div>`;
+    }
+}
+
+export function selectGalaxySystem(game, systemId) {
+    if (systemId === game.gameId) {
+        try {
+            const root = document.querySelector('.map-modal');
+            if (!root) return;
+            const firstTab = root.querySelector('.map-tab[data-tab="solar-system"]');
+            if (firstTab) firstTab.click();
+        } catch {}
+    } else {
+        game.addLogEntry('Multi-system navigation coming soon!', 'info');
+    }
+}
+
+function isCelestialObject(game, obj) {
+    const celestialTypes = ['star', 'planet', 'moon', 'belt', 'nebula', 'wormhole', 'jump-gate', 'derelict', 'graviton-sink'];
+    return celestialTypes.includes(obj.celestial_type || obj.type);
+}
+
 // Strategic Map modal (ESM)
 
 export function openMapModal() {

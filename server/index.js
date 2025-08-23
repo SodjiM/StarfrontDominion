@@ -434,6 +434,32 @@ io.on('connection', (socket) => {
         }
     });
     
+    // Handle turn unlocking - allowed until turn resolves
+    socket.on('unlock-turn', async (gameId, userId, turnNumber) => {
+        try {
+            console.log(`🔓 Player ${userId} unlocking turn ${turnNumber} in game ${gameId}`);
+            // Ensure the turn is still waiting
+            db.get('SELECT status FROM turns WHERE game_id = ? AND turn_number = ?', [gameId, turnNumber], (err, row) => {
+                if (err || !row) { socket.emit('error', { message: 'Failed to unlock turn' }); return; }
+                if (row.status !== 'waiting') { socket.emit('error', { message: 'Turn already resolving or completed' }); return; }
+                db.run(
+                    'INSERT OR REPLACE INTO turn_locks (game_id, user_id, turn_number, locked, locked_at) VALUES (?, ?, ?, ?, ?)',
+                    [gameId, userId, turnNumber, false, new Date().toISOString()],
+                    () => {
+                        io.to(`game-${gameId}`).emit('player-unlocked-turn', {
+                            userId,
+                            turnNumber,
+                            message: `Player ${userId} has unlocked their turn ${turnNumber}`
+                        });
+                    }
+                );
+            });
+        } catch (error) {
+            console.error('Turn unlock error:', error);
+            socket.emit('error', { message: 'Failed to unlock turn' });
+        }
+    });
+    
     // Handle movement orders - Store in database for asynchronous processing
     socket.on('move-ship', (data) => {
         const { gameId, shipId, currentX, currentY, destinationX, destinationY, movementPath, estimatedTurns } = data;

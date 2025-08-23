@@ -34,14 +34,17 @@ function buildHandlers(game) {
             game.addLogEntry(`Player ${data.userId} locked turn ${data.turnNumber}`, 'info');
             if (data.userId === game.userId) {
                 game.turnLocked = true;
-                const lockBtn = game._els?.lockTurnBtn || document.getElementById('lockTurnBtn');
-                if (lockBtn) {
-                    lockBtn.textContent = '🔒 Turn Locked';
-                    lockBtn.classList.add('locked');
-                }
-                if (game.gameState) {
-                    game.withState && game.withState(state => { state.turnLocked = true; });
-                }
+                if (game.gameState) { game.withState && game.withState(state => { state.turnLocked = true; }); }
+                try { const tb = require('../ui/topbar.js'); tb.updateTopbar && tb.updateTopbar(game); } catch { import('../ui/topbar.js').then(tb => tb.updateTopbar && tb.updateTopbar(game)); }
+                game.updateUnitDetails && game.updateUnitDetails();
+            }
+        },
+        'player-unlocked-turn': (data) => {
+            game.addLogEntry(`Player ${data.userId} unlocked turn ${data.turnNumber}`, 'info');
+            if (data.userId === game.userId) {
+                game.turnLocked = false;
+                if (game.gameState) { game.withState && game.withState(state => { state.turnLocked = false; }); }
+                try { const tb = require('../ui/topbar.js'); tb.updateTopbar && tb.updateTopbar(game); } catch { import('../ui/topbar.js').then(tb => tb.updateTopbar && tb.updateTopbar(game)); }
                 game.updateUnitDetails && game.updateUnitDetails();
             }
         },

@@ -1,6 +1,8 @@
 // Unit Details panel: pure view builder. Emits callbacks for actions.
 
-import * as SFCargo from '../features/cargo.js';
+import * as UICargo from './cargo-modal.js';
+import { computeRemainingTurns } from '../utils/turns.js';
+import { escapeAttr } from '../utils/dom.js';
 
 export function renderUnitDetails(game, unit, options = {}) {
     const detailsContainer = document.getElementById('unitDetails');
@@ -80,12 +82,33 @@ export function renderUnitDetails(game, unit, options = {}) {
     }
 
     if (unit && unit.meta && unit.meta.cargoCapacity) {
-        try { SFCargo.updateCargoStatus(unit.id); } catch {}
+        try { UICargo.updateCargoStatus(game, unit.id); } catch {}
     }
 
-    // Populate queue immediately for ships
+    // Populate queue and apply cooldowns
     if (unit && unit.type === 'ship') {
         try { game.loadQueueLog && game.loadQueueLog(unit.id); } catch {}
+        try {
+            if (window.SFApi && game.selectedUnit) {
+                SFApi.Abilities.cooldowns(game.selectedUnit.id)
+                    .then(data => {
+                        const cooldowns = new Map((data.cooldowns || []).map(c => [c.ability_key, c.available_turn]));
+                        const currentTurn = game.gameState?.currentTurn?.turn_number || 1;
+                        const container = document.getElementById('abilityButtons');
+                        if (!container) return;
+                        container.querySelectorAll('button[data-ability]').forEach(btn => {
+                            const key = btn.getAttribute('data-ability');
+                            const available = cooldowns.get(key);
+                            if (available && Number(available) > Number(currentTurn)) {
+                                btn.disabled = true;
+                                btn.classList.add('sf-btn-disabled');
+                                btn.title = (btn.title || '') + ` (Cooldown: ready on turn ${available})`;
+                            }
+                        });
+                    })
+                    .catch(()=>{});
+            }
+        } catch {}
     }
 }
 
@@ -177,16 +200,5 @@ export function renderActiveEffectsChip(game, unit) {
     } catch { return ''; }
 }
 
-function computeRemainingTurns(expiresTurn, currentTurn) {
-    const e = Number(expiresTurn); const c = Number(currentTurn);
-    if (Number.isFinite(e) && Number.isFinite(c)) { return Math.max(1, Math.floor(e - c + 1)); }
-    return 1;
-}
-
-function escapeAttr(text) {
-    try {
-        return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '&#10;');
-    } catch { return ''; }
-}
 
 

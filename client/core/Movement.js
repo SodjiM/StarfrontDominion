@@ -36,4 +36,19 @@ export function calculateETA(path, movementSpeed, unit, gameState) {
     return Math.ceil(distance / Math.max(1, effectiveSpeed));
 }
 
+export function getAdjacentTileNear(targetX, targetY, fromX, fromY) {
+    const candidates = [
+        { x: targetX + 1, y: targetY },
+        { x: targetX - 1, y: targetY },
+        { x: targetX, y: targetY + 1 },
+        { x: targetX, y: targetY - 1 },
+    ];
+    candidates.sort((a, b) => {
+        const da = Math.hypot(a.x - fromX, a.y - fromY);
+        const db = Math.hypot(b.x - fromX, b.y - fromY);
+        return da - db;
+    });
+    return candidates[0] || null;
+}
+
 
