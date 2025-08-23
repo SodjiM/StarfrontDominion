@@ -1,85 +1,80 @@
 const express = require('express');
 const db = require('../db');
 const router = express.Router();
+const { GamesRepository } = require('../repositories/games.repo');
+const gamesRepo = new GamesRepository();
 
 // Get all games + highlight games user is in (include current turn for active games)
-router.get('/games/:userId', (req, res) => {
+router.get('/games/:userId', async (req, res) => {
     const userId = req.params.userId;
-    db.all('SELECT * FROM games ORDER BY created_at DESC', [], (err, allGames) => {
-        if (err) return res.status(500).json({ error: 'Failed to fetch games' });
-        db.all('SELECT game_id FROM game_players WHERE user_id = ?', [userId], (err2, userGames) => {
-            if (err2) return res.status(500).json({ error: 'Failed to fetch user games' });
-            const gameIds = (userGames || []).map(g => g.game_id);
-            // Attach latest turn_number for active games
-            const enrichTurnPromises = (allGames || []).map(g => new Promise((resolve) => {
-                if (g.status !== 'active') return resolve(g);
-                db.get('SELECT turn_number, created_at FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [g.id], (e, row) => {
-                    if (row) {
-                        resolve({ ...g, current_turn_number: row.turn_number, current_turn_created_at: row.created_at });
-                    } else {
-                        resolve({ ...g, current_turn_number: 1, current_turn_created_at: null });
-                    }
-                });
-            }));
-            Promise.all(enrichTurnPromises).then(enriched => {
-                res.json({ allGames: enriched, userGameIds: gameIds });
-            });
-        });
-    });
+    try {
+        const allGames = await gamesRepo.listAllGames();
+        const gameIds = await gamesRepo.listUserGameIds(userId);
+        const enriched = await Promise.all((allGames || []).map(async (g) => {
+            if (g.status !== 'active') return g;
+            const latest = await gamesRepo.getLatestTurn(g.id);
+            if (latest) {
+                return { ...g, current_turn_number: latest.turn_number, current_turn_created_at: latest.created_at };
+            }
+            return { ...g, current_turn_number: 1, current_turn_created_at: null };
+        }));
+        res.json({ allGames: enriched, userGameIds: gameIds });
+    } catch (e) {
+        return res.status(500).json({ error: 'Failed to fetch games' });
+    }
 });
 
 // Get game details including players
-router.get('/game/:gameId', (req, res) => {
+router.get('/game/:gameId', async (req, res) => {
     const gameId = req.params.gameId;
-    db.get('SELECT * FROM games WHERE id = ?', [gameId], (err, game) => {
-        if (err || !game) return res.status(404).json({ error: 'Game not found' });
-        db.all(
-            `SELECT u.username, gp.joined_at FROM game_players gp JOIN users u ON gp.user_id = u.id WHERE gp.game_id = ?`,
-            [gameId],
-            (err2, players) => {
-                if (err2) return res.status(500).json({ error: 'Failed to fetch players' });
-                // Include latest turn number for active games
-                db.get('SELECT turn_number, created_at FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (e3, trow) => {
-                    res.json({ ...game, players, current_turn_number: trow?.turn_number || null, current_turn_created_at: trow?.created_at || null });
-                });
-            }
-        );
-    });
+    try {
+        const game = await gamesRepo.getGameById(gameId);
+        if (!game) return res.status(404).json({ error: 'Game not found' });
+        const players = await gamesRepo.listPlayersForGame(gameId);
+        const latest = await gamesRepo.getLatestTurn(gameId);
+        res.json({ ...game, players, current_turn_number: latest?.turn_number || null, current_turn_created_at: latest?.created_at || null });
+    } catch (e) {
+        return res.status(500).json({ error: 'Failed to fetch game details' });
+    }
 });
 
 // Join a game
-router.post('/join', (req, res) => {
+router.post('/join', async (req, res) => {
     const { userId, gameId } = req.body;
-    db.get('SELECT status FROM games WHERE id = ?', [gameId], (err, game) => {
-        if (err || !game) return res.status(404).json({ error: 'Game not found' });
+    try {
+        const game = await gamesRepo.getGameById(gameId);
+        if (!game) return res.status(404).json({ error: 'Game not found' });
         if (game.status !== 'recruiting') return res.status(400).json({ error: 'Game is not accepting new players' });
-        db.run('INSERT OR IGNORE INTO game_players (user_id, game_id) VALUES (?, ?)', [userId, gameId], function (e) {
-            if (e) return res.status(500).json({ error: 'Failed to join game' });
-            res.json({ success: true });
-        });
-    });
+        await gamesRepo.addPlayerToGame(userId, gameId);
+        res.json({ success: true });
+    } catch (e) {
+        return res.status(500).json({ error: 'Failed to join game' });
+    }
 });
 
 // Leave a game
-router.post('/leave', (req, res) => {
+router.post('/leave', async (req, res) => {
     const { userId, gameId } = req.body;
-    db.run('DELETE FROM game_players WHERE user_id = ? AND game_id = ?', [userId, gameId], function (err) {
-        if (err) return res.status(500).json({ error: 'Failed to leave game' });
+    try {
+        await gamesRepo.removePlayerFromGame(userId, gameId);
         res.json({ success: true });
-    });
+    } catch (e) {
+        return res.status(500).json({ error: 'Failed to leave game' });
+    }
 });
 
 // Create a new game (supports auto turn interval)
-router.post('/create', (req, res) => {
+router.post('/create', async (req, res) => {
     const { name, mode, creatorId, turnLockMinutes } = req.body;
     if (!name || !mode) return res.status(400).json({ error: 'Game name and mode required' });
     const autoTurn = (turnLockMinutes === null || turnLockMinutes === undefined || turnLockMinutes === 'none') ? null : parseInt(turnLockMinutes, 10);
-    db.run('INSERT INTO games (name, mode, status, auto_turn_minutes) VALUES (?, ?, ?, ?)', [name, mode, 'recruiting', autoTurn], function (err) {
-        if (err) return res.status(500).json({ error: 'Failed to create game' });
-        const gameId = this.lastID;
-        if (creatorId) db.run('INSERT INTO game_players (user_id, game_id) VALUES (?, ?)', [creatorId, gameId]);
+    try {
+        const { id: gameId } = await gamesRepo.createGame({ name, mode, status: 'recruiting', autoTurnMinutes: autoTurn });
+        if (creatorId) await gamesRepo.addPlayerToGame(creatorId, gameId);
         res.json({ gameId, success: true });
-    });
+    } catch (e) {
+        return res.status(500).json({ error: 'Failed to create game' });
+    }
 });
 
 // Delete a game (only creator can delete)
@@ -88,55 +83,14 @@ router.delete('/game/:gameId', async (req, res) => {
     const { userId } = req.body;
     if (!userId) return res.status(400).json({ error: 'User ID required' });
 
-    const get = (sql, params=[]) => new Promise((resolve, reject) => db.get(sql, params, (e, row) => e ? reject(e) : resolve(row)));
-    const run = (sql, params=[]) => new Promise((resolve, reject) => db.run(sql, params, function(e){ e ? reject(e) : resolve(this); }));
-
     try {
-        await run('PRAGMA foreign_keys = OFF');
-        await run('BEGIN IMMEDIATE TRANSACTION');
-        const game = await get('SELECT g.*, (SELECT user_id FROM game_players WHERE game_id = ? ORDER BY joined_at ASC LIMIT 1) as creator_id FROM games g WHERE g.id = ?', [gameId, gameId]);
-        if (!game) return res.status(404).json({ error: 'Game not found' });
-        if (String(game.creator_id) !== String(userId)) return res.status(403).json({ error: 'Only the game creator can delete this game' });
-
-        await run(`DELETE FROM movement_orders WHERE object_id IN (
-            SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-        )`, [gameId]);
-        await run('DELETE FROM object_visibility WHERE game_id = ?', [gameId]);
-        await run(`DELETE FROM harvesting_tasks WHERE ship_id IN (
-            SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-        )`, [gameId]);
-        await run(`DELETE FROM movement_history WHERE game_id = ?`, [gameId]);
-        await run(`DELETE FROM object_cargo WHERE object_id IN (
-            SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-        )`, [gameId]);
-        await run(`DELETE FROM ship_cargo WHERE ship_id IN (
-            SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-        )`, [gameId]);
-        await run(`DELETE FROM resource_nodes WHERE sector_id IN (
-            SELECT id FROM sectors WHERE game_id = ?
-        ) OR parent_object_id IN (
-            SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-        )`, [gameId, gameId]);
-        await run(`DELETE FROM sector_objects WHERE sector_id IN (
-            SELECT id FROM sectors WHERE game_id = ?
-        )`, [gameId]);
-        await run(`DELETE FROM generation_history WHERE sector_id IN (
-            SELECT id FROM sectors WHERE game_id = ?
-        )`, [gameId]);
-        await run('DELETE FROM turn_locks WHERE game_id = ?', [gameId]);
-        await run('DELETE FROM turns WHERE game_id = ?', [gameId]);
-        await run('DELETE FROM sectors WHERE game_id = ?', [gameId]);
-        await run('DELETE FROM game_players WHERE game_id = ?', [gameId]);
-        const result = await run('DELETE FROM games WHERE id = ?', [gameId]);
-        if (result.changes === 0) return res.status(404).json({ error: 'Game not found' });
-        await run('COMMIT');
-        res.json({ success: true, message: `Game "${game.name}" deleted successfully` });
+        const result = await gamesRepo.deleteGameCascadeChecked(gameId, userId);
+        if (result?.notFound) return res.status(404).json({ error: 'Game not found' });
+        if (result?.forbidden) return res.status(403).json({ error: 'Only the game creator can delete this game' });
+        res.json({ success: true, message: `Game "${result.gameName}" deleted successfully` });
     } catch (e) {
         console.error('Error deleting game:', e);
-        try { await run('ROLLBACK'); } catch {}
         res.status(500).json({ error: 'Failed to delete game' });
-    } finally {
-        try { await run('PRAGMA foreign_keys = ON'); } catch {}
     }
 });
 
@@ -145,60 +99,12 @@ router.delete('/games/clear-all', async (req, res) => {
     const { confirm } = req.body || {};
     if (confirm !== 'DELETE') return res.status(400).json({ error: "Confirmation string 'DELETE' required" });
 
-    const all = (sql, params=[]) => new Promise((resolve, reject) => db.all(sql, params, (e, rows) => e ? reject(e) : resolve(rows)));
-    const run = (sql, params=[]) => new Promise((resolve, reject) => db.run(sql, params, function(e){ e ? reject(e) : resolve(this); }));
-
     try {
-        await run('PRAGMA foreign_keys = OFF');
-        const rows = await all('SELECT id FROM games');
-        let deleted = 0, failed = 0;
-        for (const r of rows) {
-            const gameId = r.id;
-            try {
-                await run('BEGIN IMMEDIATE TRANSACTION');
-                await run(`DELETE FROM movement_orders WHERE object_id IN (
-                    SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-                )`, [gameId]);
-                await run('DELETE FROM object_visibility WHERE game_id = ?', [gameId]);
-                await run(`DELETE FROM harvesting_tasks WHERE ship_id IN (
-                    SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-                )`, [gameId]);
-                await run(`DELETE FROM movement_history WHERE game_id = ?`, [gameId]);
-                await run(`DELETE FROM object_cargo WHERE object_id IN (
-                    SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-                )`, [gameId]);
-                await run(`DELETE FROM ship_cargo WHERE ship_id IN (
-                    SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-                )`, [gameId]);
-                await run(`DELETE FROM resource_nodes WHERE sector_id IN (
-                    SELECT id FROM sectors WHERE game_id = ?
-                ) OR parent_object_id IN (
-                    SELECT so.id FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE s.game_id = ?
-                )`, [gameId, gameId]);
-                await run(`DELETE FROM sector_objects WHERE sector_id IN (
-                    SELECT id FROM sectors WHERE game_id = ?
-                )`, [gameId]);
-                await run(`DELETE FROM generation_history WHERE sector_id IN (
-                    SELECT id FROM sectors WHERE game_id = ?
-                )`, [gameId]);
-                await run('DELETE FROM turn_locks WHERE game_id = ?', [gameId]);
-                await run('DELETE FROM turns WHERE game_id = ?', [gameId]);
-                await run('DELETE FROM sectors WHERE game_id = ?', [gameId]);
-                await run('DELETE FROM game_players WHERE game_id = ?', [gameId]);
-                await run('DELETE FROM games WHERE id = ?', [gameId]);
-                await run('COMMIT');
-                deleted += 1;
-            } catch (inner) {
-                try { await run('ROLLBACK'); } catch {}
-                failed += 1;
-            }
-        }
-        res.json({ success: true, deleted, failed });
+        const out = await gamesRepo.clearAllGamesCascade();
+        res.json(out);
     } catch (e) {
         console.error('Error clearing games:', e);
         res.status(500).json({ error: 'Failed to clear games' });
-    } finally {
-        try { await run('PRAGMA foreign_keys = ON'); } catch {}
     }
 });
 

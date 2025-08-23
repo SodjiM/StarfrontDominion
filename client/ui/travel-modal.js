@@ -24,23 +24,17 @@ export function showTravelOptions(game, adjacentGates) {
     UI.showModal({ title: '🌀 Interstellar Travel', content: travelModal, actions: [{ text: 'Cancel', style: 'secondary', action: () => true }], className: 'interstellar-travel-modal-container' });
     travelModal.addEventListener('click', (e) => {
         const row = e.target.closest('[data-action="travel-gate"]');
-        if (row) { const gateId = Number(row.dataset.gateId); const destName = row.dataset.destinationName || 'Unknown Sector'; travelThroughGate(game, gateId, destName); }
+        if (row) {
+            const gateId = Number(row.dataset.gateId);
+            const destName = row.dataset.destinationName || 'Unknown Sector';
+            if (!game || !game.selectedUnit) { game?.addLogEntry('No ship selected', 'warning'); return; }
+            game.socket.emit('interstellar:travel', { gameId: game.gameId, shipId: game.selectedUnit.id, gateId, userId: game.userId });
+            game.addLogEntry(`${game.selectedUnit.meta.name} traveling to ${destName}...`, 'success');
+            UI.closeModal();
+        }
     });
 }
 
-export async function travelThroughGate(game, gateId, destinationName) {
-    if (!game || !game.selectedUnit) { game?.addLogEntry('No ship selected', 'warning'); return; }
-    try {
-        const data = await SFApi.Travel.interstellarTravel(game.selectedUnit.id, gateId, game.userId);
-        if (data) {
-            game.addLogEntry(`${game.selectedUnit.meta.name} traveled to ${destinationName}!`, 'success');
-            UI.closeModal();
-            game.socket.emit('get-game-state', { gameId: game.gameId, userId: game.userId });
-        }
-    } catch (error) {
-        console.error('Error traveling through gate:', error);
-        game.addLogEntry(error?.data?.error || 'Failed to travel through gate', 'error');
-    }
-}
+// HTTP travel removed; using socket event interstellar:travel
 
 

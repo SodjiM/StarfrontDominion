@@ -49,7 +49,8 @@
   };
 
   const Travel = {
-    interstellarTravel: (shipId, gateId, userId) => postJson('/game/interstellar-travel', { shipId, gateId, userId })
+    // Deprecated HTTP; keep stub that throws to surface migration fast
+    interstellarTravel: () => { throw { data: { error: 'deprecated', hint: 'Use socket event interstellar:travel' } }; }
   };
 
   const State = {

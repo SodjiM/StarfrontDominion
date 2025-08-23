@@ -1,6 +1,7 @@
 // Unit Details panel: pure view builder. Emits callbacks for actions.
 
 import * as UICargo from './cargo-modal.js';
+import { isAdjacentToInterstellarGate, travelThroughInterstellarGate } from '../features/warp.js';
 import { computeRemainingTurns } from '../utils/turns.js';
 import { escapeAttr } from '../utils/dom.js';
 
@@ -35,6 +36,7 @@ export function renderUnitDetails(game, unit, options = {}) {
     });
 
     const iconHtml = game.getUnitIcon(unit);
+    const adjacentGate = (unit.type === 'ship') && isAdjacentToInterstellarGate(game, unit);
     detailsContainer.innerHTML = `
         <div class="unit-info">
             <h3 style="color: #64b5f6; margin-bottom: 15px;">
@@ -51,6 +53,7 @@ export function renderUnitDetails(game, unit, options = {}) {
             ${unit.type === 'ship' ? `
                 <button class="sf-btn sf-btn-secondary" data-action="set-move-mode" ${turnLocked ? 'disabled' : ''}>🎯 Set Destination</button>
                 <button class="sf-btn sf-btn-secondary" data-action="set-warp-mode" ${turnLocked ? 'disabled' : ''}>🌌 Warp</button>
+                <button class="sf-btn sf-btn-secondary" data-action="interstellar-travel" ${turnLocked || !adjacentGate ? 'disabled' : ''} title="Use adjacent interstellar gate">🌀 Gate</button>
                 <button class="sf-btn sf-btn-secondary" id="mineBtn" data-action="toggle-mining" ${turnLocked || !canMine ? 'disabled' : ''}>${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}</button>
                 <button class="sf-btn sf-btn-secondary" data-action="show-cargo" ${turnLocked ? 'disabled' : ''}>📦 Cargo</button>
             ` : ''}
@@ -78,6 +81,10 @@ export function renderUnitDetails(game, unit, options = {}) {
             const btn = e.target.closest('[data-action]');
             if (!btn) return;
             const action = btn.dataset.action;
+            if (action === 'interstellar-travel') {
+                try { travelThroughInterstellarGate(game); } catch {}
+                return; // handled directly
+            }
             options.onAction && options.onAction(action);
         });
     }

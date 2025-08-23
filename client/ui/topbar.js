@@ -1,4 +1,5 @@
 // Topbar UI helpers: turn counter, title, lock button, countdown
+// Note: gate travel button moved to UnitDetails; no direct gate button in topbar anymore
 
 export function updateTopbar(game) {
     try {

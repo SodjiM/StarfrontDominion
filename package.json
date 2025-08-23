@@ -20,20 +20,26 @@
     "art:explorer": "npm run art:prep:explorer && npm run art:frames:explorer && npm run art:pack:explorer",
     "art:watch": "chokidar 'art_src/**/*' -c 'npm run art:explorer'"
   },
-  "keywords": ["space", "strategy", "multiplayer", "turn-based"],
+  "keywords": [
+    "space",
+    "strategy",
+    "multiplayer",
+    "turn-based"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
-    "sqlite3": "^5.1.6",
-    "cors": "^2.8.5",
-    "body-parser": "^1.20.2",
     "bcrypt": "^5.1.1",
-    "socket.io": "^4.7.2",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "lucide-react": "^0.453.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.453.0",
-    "react-router-dom": "^6.26.1"
+    "react-router-dom": "^6.26.1",
+    "socket.io": "^4.7.2",
+    "sqlite3": "^5.1.6",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -44,4 +50,4 @@
     "tailwindcss": "^3.4.10",
     "vite": "^5.4.2"
   }
-} 
+}

@@ -246,4 +246,19 @@ export function getAdjacentInterstellarGates(client, ship) {
         });
 }
 
+export function travelThroughInterstellarGate(client) {
+        const ship = client.selectedUnit; if (!ship) return false;
+        const gates = getAdjacentInterstellarGates(client, ship);
+        if (gates.length === 0) { client.addLogEntry('No adjacent interstellar gate', 'warning'); return false; }
+        const gate = gates[0];
+        client.socket.emit('interstellar:travel', {
+            gameId: client.gameId,
+            shipId: ship.id,
+            gateId: gate.id,
+            userId: client.userId
+        });
+        client.addLogEntry(`${ship.meta.name} traveling through interstellar gate...`, 'success');
+        return true;
+}
+
 

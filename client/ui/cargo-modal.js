@@ -1,5 +1,6 @@
 // Cargo & Transfer UI (ESM)
 import { getUnitIcon } from './icons.js';
+import { deployStructure } from '../features/build.js';
 
 export async function showCargo(game) {
     const selectedUnit = game.selectedUnit; if (!selectedUnit) { game.addLogEntry('No unit selected', 'warning'); return; }
