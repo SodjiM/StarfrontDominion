@@ -78,7 +78,7 @@ router.post('/build-basic-explorer', (req, res) => {
         CargoManager.removeResourceFromCargo(stationId, 'rock', 1, false)
             .then(result => {
                 if (!result.success) return res.status(400).json({ error: 'Insufficient resources' });
-                const shipMetaObj = { name: 'Explorer', hp: 50, maxHp: 50, scanRange: 50, movementSpeed: 4, cargoCapacity: 10, harvestRate: 1.0, canMine: true, canActiveScan: false, shipType: 'explorer', pilotCost: 1 };
+                const shipMetaObj = { name: 'Explorer', hp: 50, maxHp: 50, scanRange: 50, movementSpeed: 4, cargoCapacity: 10, abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience','prospector_microlasers'], shipType: 'explorer', pilotCost: 1 };
                 const shipMeta = JSON.stringify(shipMetaObj);
                 const spawnX = station.x + (Math.random() < 0.5 ? -1 : 1);
                 const spawnY = station.y + (Math.random() < 0.5 ? -1 : 1);

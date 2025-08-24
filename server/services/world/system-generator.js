@@ -24,7 +24,7 @@ const SystemGenerator = {
             const px = Math.max(1, Math.min(4999, Math.round(sunX + Math.cos(angle) * distance)));
             const py = Math.max(1, Math.min(4999, Math.round(sunY + Math.sin(angle) * distance)));
             const radius = 8 + Math.floor(Math.random() * 10);
-            const pMeta = JSON.stringify({ name: `Planet ${i+1}`, celestial: true, scannable: true });
+            const pMeta = JSON.stringify({ name: `Planet ${i+1}`, celestial: true, scannable: true, alwaysKnown: 1 });
             await new Promise((resolve, reject) => db.run(
                 `INSERT INTO sector_objects (sector_id, type, celestial_type, x, y, owner_id, meta, radius, parent_object_id)
                  VALUES (?, 'planet', 'planet', ?, ?, NULL, ?, ?, ?)`,

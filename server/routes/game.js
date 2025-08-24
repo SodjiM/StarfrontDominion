@@ -162,12 +162,13 @@ router.post('/scan/:gameId', (req, res) => {
 router.get('/resource-nodes/:gameId/:shipId', async (req, res) => {
     const { gameId, shipId } = req.params;
     const { userId } = req.query;
+    const range = req.query?.range ? Number(req.query.range) : undefined;
     try {
         const owned = await new Promise((resolve) => db.get(`SELECT 1 FROM sector_objects so JOIN sectors s ON so.sector_id = s.id WHERE so.id = ? AND so.owner_id = ? AND s.game_id = ?`, [shipId, userId, gameId], (e, r) => resolve(!!r)));
         if (!owned) return res.status(404).json({ error: 'Ship not found or not owned by player' });
         const { HarvestingService } = require('../services/game/harvesting.service');
         const svc = new HarvestingService();
-        const out = await svc.getNearbyResourceNodes(shipId);
+        const out = await svc.getNearbyResourceNodes(shipId, range);
         res.json({ resourceNodes: out.resourceNodes });
     } catch (e) {
         console.error('Error getting resource nodes:', e);
@@ -182,44 +183,7 @@ router.get('/resource-nodes/:gameId/:shipId', async (req, res) => {
 // moved to cargo.routes.js
 
 // Ship type definitions
-const SHIP_TYPES = {
-    'explorer': {
-        name: 'Explorer Ship',
-        emoji: '🔍',
-        cargoCapacity: 10,
-        movementSpeed: 4,
-        harvestRate: 1.0,
-        canMine: true,
-        canActiveScan: false,
-        hp: 50,
-        maxHp: 50,
-        scanRange: 50
-    },
-    'mining-vessel': {
-        name: 'Mining Vessel',
-        emoji: '⛏️',
-        cargoCapacity: 20,
-        movementSpeed: 3,
-        harvestRate: 2.0, // 2x mining speed
-        canMine: true,
-        canActiveScan: false,
-        hp: 60,
-        maxHp: 60,
-        scanRange: 50
-    },
-    'logistics': {
-        name: 'Logistics Ship',
-        emoji: '🚚',
-        cargoCapacity: 50,
-        movementSpeed: 2,
-        harvestRate: 0, // Cannot mine
-        canMine: false,
-        canActiveScan: false,
-        hp: 40,
-        maxHp: 40,
-        scanRange: 50
-    }
-};
+// Legacy SHIP_TYPES removed; use blueprint-driven stats
 
 const { STRUCTURE_TYPES } = require('../domain/structures');
 

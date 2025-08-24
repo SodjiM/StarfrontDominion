@@ -108,7 +108,7 @@ class GameWorldManager {
                 const proceedAfterStation = (starbaseId) => {
                     const { SHIP_BLUEPRINTS } = require('../registry/blueprints');
                     const explorer = (SHIP_BLUEPRINTS || []).find(b => b.id === 'explorer');
-                    const resolved = explorer || { class: 'frigate', scanRange: 50, movementSpeed: 4, cargoCapacity: 10, harvestRate: 1.0, abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience'] };
+                    const resolved = explorer || { class: 'frigate', scanRange: 50, movementSpeed: 4, cargoCapacity: 10, abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience','prospector_microlasers'] };
                     const shipMetaObj = { name: `${player.username} Explorer`, ...resolved, shipType: resolved.class, blueprintId: resolved.id || 'explorer' };
                     const shipMeta = JSON.stringify(shipMetaObj);
                     db.run(

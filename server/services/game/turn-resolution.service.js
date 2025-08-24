@@ -431,10 +431,10 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             try {
                 const meta = JSON.parse(ship.meta || '{}');
                 const regen = Number(meta.energyRegen || 0);
-                const maxE = Number(meta.maxEnergy || 0);
-                if (regen > 0 && maxE > 0) {
+                if (regen > 0) {
                     const current = Number(meta.energy || 0);
-                    const next = Math.min(maxE, current + regen);
+                    const cap = (typeof meta.maxEnergy === 'number') ? Number(meta.maxEnergy) : undefined;
+                    const next = cap != null ? Math.min(cap, current + regen) : current + regen;
                     if (next !== current) {
                         meta.energy = next;
                         const effects = await new Promise((resolve) => db.all('SELECT * FROM ship_status_effects WHERE ship_id = ? AND (expires_turn IS NULL OR expires_turn >= ?)', [ship.id, turnNumber], (e, rows) => resolve(rows || [])));

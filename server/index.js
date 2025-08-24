@@ -753,10 +753,10 @@ async function regenerateShipEnergy(gameId, turnNumber) {
         try {
             const meta = JSON.parse(ship.meta || '{}');
             const regen = Number(meta.energyRegen || 0);
-            const maxE = Number(meta.maxEnergy || 0);
-            if (regen > 0 && maxE > 0) {
+            if (regen > 0) {
                 const current = Number(meta.energy || 0);
-                const next = Math.min(maxE, current + regen);
+                const cap = (typeof meta.maxEnergy === 'number') ? Number(meta.maxEnergy) : undefined;
+                const next = cap != null ? Math.min(cap, current + regen) : current + regen;
                 if (next !== current) {
                     meta.energy = next;
                     // Apply repair-over-time
@@ -884,7 +884,9 @@ async function processAbilityOrders(gameId, turnNumber) {
                 ));
                 continue;
             }
-            metaObj.energy = Math.max(0, currentEnergy - ability.energyCost);
+            const cap = (typeof metaObj.maxEnergy === 'number') ? Number(metaObj.maxEnergy) : undefined;
+            const post = Math.max(0, currentEnergy - ability.energyCost);
+            metaObj.energy = cap != null ? Math.min(cap, post) : post;
             await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(metaObj), new Date().toISOString(), order.caster_id], () => resolve()));
         }
 

@@ -144,7 +144,7 @@ export function openMapModal() {
         window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:820 });
         // Bind tab switching without globals
         bindTabEvents(modalContent);
-        setTimeout(() => { try { initializeFullMap(); loadGalaxyData(); populateSystemFacts(); } catch (e) { console.error('map init error', e); } }, 100);
+        setTimeout(() => { try { initializeFullMap(); loadGalaxyDataInternal(); populateSystemFactsInternal(); } catch (e) { console.error('map init error', e); } }, 100);
 }
 
 function bindTabEvents(root) {
@@ -207,7 +207,7 @@ function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
         });
 }
 
-async function loadGalaxyData() {
+async function loadGalaxyDataInternal() {
         try {
             const client = window.gameClient; const list = document.getElementById('galaxySystemsList'); if (!client || !list) return;
             const currentSystem = { name: client.gameState?.sector?.name || 'Current System', id: client.gameId, players: 1, status: 'Active', turn: client.gameState?.turn?.number || 1, celestialObjects: client.objects ? client.objects.filter(o=>client.isCelestialObject(o)).length : 0 };
@@ -215,7 +215,7 @@ async function loadGalaxyData() {
         } catch {}
 }
 
-async function populateSystemFacts() {
+async function populateSystemFactsInternal() {
         try {
             const client = window.gameClient; const wrap = document.getElementById('sysMetaSummary'); if (!wrap || !client?.gameState?.sector) return;
             const sector = client.gameState.sector; const all = client.objects || []; const planets = all.filter(o=>o.celestial_type==='planet'); const belts = all.filter(o=>o.celestial_type==='belt'); const nebulas = all.filter(o=>o.celestial_type==='nebula');

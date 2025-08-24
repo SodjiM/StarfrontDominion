@@ -234,10 +234,7 @@ export async function buildStructure(structureType, cost) {
     try { const data = await window.SFApi.Build.buildStructure(client.selectedUnit.id, structureType, cost, client.userId); client.addLogEntry(`${data.structureName} manufactured successfully!`, 'success'); window.UI.closeModal(); } catch (error) { console.error('Error building structure:', error); client.addLogEntry(error?.data?.error || 'Failed to build structure', 'error'); }
 }
 
-export async function buildBasicExplorer(cost) {
-    const client = window.gameClient; if (!client || !client.selectedUnit) { client?.addLogEntry('No station selected', 'warning'); return; }
-    try { const data = await window.SFApi.Build.buildShipBasic(client.selectedUnit.id, client.userId); client.addLogEntry(`${data.shipName} constructed successfully!`, 'success'); window.UI.closeModal(); await client.loadGameState(); } catch (error) { console.error('Error building basic explorer:', error); client.addLogEntry(error?.data?.error || 'Failed to build Explorer', 'error'); }
-}
+// Deprecated: buildBasicExplorer replaced by blueprint-driven buildShip above
 
 export async function deployStructure(structureType, shipId) {
     const client = window.gameClient; if (!client || !client.selectedUnit) { client?.addLogEntry('No ship selected', 'warning'); return; }

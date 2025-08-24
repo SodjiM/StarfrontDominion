@@ -25,7 +25,7 @@
   };
 
   const Resources = {
-    listNearbyNodes: (gameId, shipId, userId) => getJson(`/game/resource-nodes/${gameId}/${shipId}?userId=${userId}`),
+    listNearbyNodes: (gameId, shipId, userId, range) => getJson(`/game/resource-nodes/${gameId}/${shipId}?userId=${userId}${(range!=null)?`&range=${range}`:''}`),
   };
 
   const Abilities = {
@@ -41,7 +41,7 @@
     blueprints: () => getJson('/game/blueprints'),
     buildShip: (stationId, blueprintId, userId, freeBuild) => postJson('/game/build-ship', { stationId, blueprintId, userId, freeBuild }),
     buildShipLegacy: (stationId, shipType, cost, userId) => postJson('/game/build-ship', { stationId, shipType, cost, userId }),
-    buildShipBasic: (stationId, userId) => postJson('/game/build-basic-explorer', { stationId, userId }),
+    // buildShipBasic removed in favor of blueprint-driven flow
     buildStructure: (stationId, structureType, cost, userId) => postJson('/game/build-structure', { stationId, structureType, cost, userId }),
     deployStructure: (shipId, structureType, userId) => postJson('/game/deploy-structure', { shipId, structureType, userId }),
     listSectors: (gameId, userId) => getJson(`/game/sectors?gameId=${gameId}&userId=${userId}`),

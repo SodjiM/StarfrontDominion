@@ -16,7 +16,7 @@ export function renderUnitDetails(game, unit, options = {}) {
 
     const meta = unit.meta || {};
     const { turnLocked, gameState } = game;
-    const canMine = (unit.type === 'ship') && ((meta && meta.canMine === true) || (meta && meta.canMine === undefined && (Number(meta.harvestRate) > 0)));
+    // Mining is now ability-driven
 
     const abilityButtons = [];
     const passiveChips = [];
@@ -43,18 +43,18 @@ export function renderUnitDetails(game, unit, options = {}) {
                 ${iconHtml} ${meta.name || unit.type}
             </h3>
             <div class="stat-item"><span>Position:</span><span>(${unit.x}, ${unit.y})</span></div>
-            ${meta.movementSpeed ? `<div class="stat-item"><span>Movement:</span><span>${game.getEffectiveMovementSpeed(unit)} tiles/turn</span></div>` : ''}
-            ${meta.scanRange ? `<div class="stat-item"><span>Scan Range:</span><span>${game.getEffectiveScanRange(unit)}</span></div>` : ''}
-            ${meta.energy !== undefined ? `<div class="stat-item"><span>⚡ Energy:</span><span>${meta.energy}/${meta.maxEnergy || meta.energy} (+${meta.energyRegen || 0}/turn)</span></div>` : ''}
-            ${meta.cargoCapacity ? `<div class="stat-item"><span>📦 Cargo:</span><span id="cargoStatus">Loading...</span></div>` : ''}
+            ${meta.movementSpeed ? `<div class=\"stat-item\"><span>Movement:</span><span id=\"movementStat\">${game.getEffectiveMovementSpeed({ ...unit, statusEffects: unit.statusEffects || [] })} tiles/turn</span></div>` : ''}
+            ${meta.scanRange ? `<div class=\"stat-item\"><span>Scan Range:</span><span>${game.getEffectiveScanRange(unit)}</span></div>` : ''}
+            ${(typeof meta.hp === 'number' || typeof meta.maxHp === 'number') ? `<div class=\"stat-item\"><span>HP:</span><span>${(typeof meta.hp === 'number' ? meta.hp : (typeof meta.maxHp === 'number' ? meta.maxHp : '?'))}${(typeof meta.maxHp === 'number' ? ` / ${meta.maxHp}` : '')}</span></div>` : ''}
+            ${(typeof meta.energy === 'number' || typeof meta.maxEnergy === 'number') ? `<div class=\"stat-item\"><span>⚡ Energy:</span><span>${(typeof meta.energy === 'number' ? meta.energy : (typeof meta.maxEnergy === 'number' ? meta.maxEnergy : 0))}${(typeof meta.maxEnergy === 'number' ? ` / ${meta.maxEnergy}` : '')} ${meta.energyRegen ? `( +${meta.energyRegen}/turn )` : ''}</span></div>` : ''}
+            ${meta.cargoCapacity ? `<div class=\"stat-item\"><span>📦 Cargo:</span><span id=\"cargoStatus\">Loading...</span></div>` : ''}
             ${renderActiveEffectsChip(game, unit)}
         </div>
         <div style="margin-top: 20px;">
             ${unit.type === 'ship' ? `
-                <button class="sf-btn sf-btn-secondary" data-action="set-move-mode" ${turnLocked ? 'disabled' : ''}>🎯 Set Destination</button>
                 <button class="sf-btn sf-btn-secondary" data-action="set-warp-mode" ${turnLocked ? 'disabled' : ''}>🌌 Warp</button>
                 <button class="sf-btn sf-btn-secondary" data-action="interstellar-travel" ${turnLocked || !adjacentGate ? 'disabled' : ''} title="Use adjacent interstellar gate">🌀 Gate</button>
-                <button class="sf-btn sf-btn-secondary" id="mineBtn" data-action="toggle-mining" ${turnLocked || !canMine ? 'disabled' : ''}>${unit.harvestingStatus === 'active' ? '🛑 Stop Mining' : (canMine ? '⛏️ Mine' : '⛏️ Mine (N/A)')}</button>
+                
                 <button class="sf-btn sf-btn-secondary" data-action="show-cargo" ${turnLocked ? 'disabled' : ''}>📦 Cargo</button>
             ` : ''}
             ${(unit.type === 'station') ? `
@@ -64,12 +64,14 @@ export function renderUnitDetails(game, unit, options = {}) {
             ${unit.type === 'ship' ? `
                 <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">
                     🛠️ Abilities
+                </div>
+                <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style="color:#888">No abilities</span>'}</div>
+                <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">
+                    🧭 Queue
                     <span style="flex:1"></span>
                     <button class="sf-btn sf-btn-xs" data-action="queue-refresh" title="Refresh queue">↻</button>
                     <button class="sf-btn sf-btn-xs" data-action="queue-clear" title="Clear queue">Clear</button>
                 </div>
-                <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style="color:#888">No abilities</span>'}</div>
-                <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">🧭 Queue</div>
                 <div id="queueLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
             ` : ''}
         </div>
@@ -78,6 +80,21 @@ export function renderUnitDetails(game, unit, options = {}) {
     const unitPanel = detailsContainer;
     if (unitPanel) {
         unitPanel.addEventListener('click', (e) => {
+            const abBtn = e.target.closest('button[data-ability]');
+            if (abBtn) {
+                const key = abBtn.getAttribute('data-ability');
+                try {
+                    game.queueAbility && game.queueAbility(key);
+                    // Refresh movement stat generically from computed selector
+                    setTimeout(() => {
+                        try {
+                            const el = document.getElementById('movementStat');
+                            if (el) el.textContent = `${game.getEffectiveMovementSpeed(game.selectedUnit)} tiles/turn`;
+                        } catch {}
+                    }, 0);
+                } catch {}
+                return;
+            }
             const btn = e.target.closest('[data-action]');
             if (!btn) return;
             const action = btn.dataset.action;
@@ -111,6 +128,27 @@ export function renderUnitDetails(game, unit, options = {}) {
                                 btn.disabled = true;
                                 btn.classList.add('sf-btn-disabled');
                                 btn.title = (btn.title || '') + ` (Cooldown: ready on turn ${available})`;
+                            }
+                        });
+                        // Bind ability click handlers once
+                        container.querySelectorAll('button[data-ability]').forEach(btn => {
+                            if (!btn._sfBound) {
+                                btn._sfBound = true;
+                                btn.addEventListener('click', (ev) => {
+                                    const key = ev.currentTarget.getAttribute('data-ability');
+                                    try {
+                                        game.queueAbility && game.queueAbility(key);
+                                        // Optimistic UI: if Boost Engines or Microthruster, reflect movement now
+                                        if (key === 'boost_engines' || key === 'microthruster_shift') {
+                                            setTimeout(() => {
+                                                try {
+                                                    const el = document.getElementById('movementStat');
+                                                    if (el) el.textContent = `${game.getEffectiveMovementSpeed(game.selectedUnit)} tiles/turn`;
+                                                } catch {}
+                                            }, 0);
+                                        }
+                                    } catch {}
+                                });
                             }
                         });
                     })
@@ -202,11 +240,14 @@ export function renderActiveEffectsChip(game, unit) {
         }
         const active = list.filter(e => e.turns > 0);
         if (active.length === 0) return '';
-        const tip = active.map(e => `${e.name} ${e.desc} (${e.turns}T) – ${e.source}`).join('\n');
+        const tip = active.map(e => {
+            const isBuff = !/^[-]/.test(e.desc);
+            const color = isBuff ? '#7CFC00' : '#FF6B6B';
+            return `<span style=\"color:${color}\">${e.name} ${e.desc} (${e.turns}T) – ${e.source}</span>`;
+        }).join('<br/>');
         const safeTip = escapeAttr(tip);
         return `<span class=\"chip\" title=\"${safeTip}\">✨ Effects</span>`;
     } catch { return ''; }
 }
 
-
-
+// movement chips removed; single effects chip is sufficient

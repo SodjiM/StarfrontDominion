@@ -5,6 +5,7 @@ const { CargoManager } = require('../../cargo-manager');
 const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../registry/blueprints');
 const { CombatRepository } = require('../../repositories/combat.repo');
 const { computePathBresenham } = require('../../utils/path');
+const { HarvestingManager } = require('../world/harvesting-manager');
 
 async function processAbilityOrders(gameId, turnNumber) {
     const combatRepo = new CombatRepository();
@@ -63,10 +64,99 @@ async function processAbilityOrders(gameId, turnNumber) {
                 });
                 continue;
             }
-            metaObj.energy = Math.max(0, currentEnergy - ability.energyCost);
+            const cap = (typeof metaObj.maxEnergy === 'number') ? Number(metaObj.maxEnergy) : undefined;
+            const post = Math.max(0, currentEnergy - ability.energyCost);
+            metaObj.energy = cap != null ? Math.min(cap, post) : post;
             await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(metaObj), new Date().toISOString(), order.caster_id], () => resolve()));
         }
         {
+            // Mining toggle: start or stop
+            if (ability.mining) {
+                try {
+                    // Is currently harvesting?
+                    const activeTask = await new Promise((resolve) => db.get(
+                        `SELECT id, resource_node_id FROM harvesting_tasks WHERE ship_id = ? AND status = 'active'`,
+                        [order.caster_id],
+                        (e, r) => resolve(r)
+                    ));
+                    const stopRequested = (() => { try { const p = order.params ? JSON.parse(order.params) : null; return p && p.stop === true; } catch { return false; } })();
+                    if (activeTask && (stopRequested || !order.target_object_id)) {
+                        await HarvestingManager.stopHarvesting(order.caster_id);
+                        await new Promise((resolve) => db.run(`DELETE FROM ship_status_effects WHERE ship_id = ? AND effect_key = 'mining_active'`, [order.caster_id], () => resolve()));
+                        const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+                        await combatRepo.setAbilityCooldown(order.caster_id, order.ability_key, availableTurn);
+                        await combatRepo.appendCombatLog({
+                            gameId,
+                            turnNumber,
+                            attackerId: order.caster_id,
+                            eventType: 'ability',
+                            summary: `Stopped mining`
+                        });
+                        continue;
+                    }
+
+                    // Determine nodeId to mine
+                    let nodeId = null;
+                    try { const p = order.params ? JSON.parse(order.params) : null; if (p && p.nodeId) nodeId = Number(p.nodeId); } catch {}
+                    if (!nodeId && order.target_object_id) nodeId = Number(order.target_object_id);
+
+                    // If not specified, try to auto-select if exactly one in range
+                    if (!nodeId) {
+                        const nearby = await HarvestingManager.getNearbyResourceNodes(order.caster_id, ability.range || 3);
+                        if (!Array.isArray(nearby) || nearby.length === 0) {
+                            await combatRepo.appendCombatLog({ gameId, turnNumber, attackerId: order.caster_id, eventType: 'ability', summary: 'No resource nodes in range' });
+                            continue;
+                        }
+                        if (nearby.length > 1) {
+                            await combatRepo.appendCombatLog({ gameId, turnNumber, attackerId: order.caster_id, eventType: 'ability', summary: 'Multiple nodes in range — select one' });
+                            continue;
+                        }
+                        nodeId = nearby[0].id;
+                    }
+
+                    // Validate distance
+                    const casterPos = await new Promise((resolve) => db.get('SELECT sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                    const nodePos = await new Promise((resolve) => db.get('SELECT sector_id, x, y, is_depleted FROM resource_nodes WHERE id = ?', [nodeId], (e, r) => resolve(r)));
+                    if (!casterPos || !nodePos || casterPos.sector_id !== nodePos.sector_id || nodePos.is_depleted) continue;
+                    const dx = Math.abs((casterPos.x||0) - (nodePos.x||0));
+                    const dy = Math.abs((casterPos.y||0) - (nodePos.y||0));
+                    const cheb = Math.max(dx, dy);
+                    if ((ability.range || 1) < cheb) {
+                        await combatRepo.appendCombatLog({ gameId, turnNumber, attackerId: order.caster_id, eventType: 'ability', summary: 'Target node out of range' });
+                        continue;
+                    }
+
+                    // Start harvesting and apply persistent mining status
+                    const cfg = ability.mining || {};
+                    await HarvestingManager.startHarvesting(order.caster_id, nodeId, turnNumber, cfg.baseRate || 1);
+                    const effectData = {
+                        baseRate: Number(cfg.baseRate || 1),
+                        incrementPerTurn: Number(cfg.incrementPerTurn || 0),
+                        maxBonus: Number(cfg.maxBonus || 0),
+                        energyPerTurn: Number(cfg.energyPerTurn || 0)
+                    };
+                    await combatRepo.applyStatusEffect({
+                        shipId: order.caster_id,
+                        effectKey: 'mining_active',
+                        magnitude: null,
+                        effectData,
+                        sourceObjectId: order.caster_id,
+                        appliedTurn: turnNumber,
+                        expiresTurn: null
+                    });
+                    const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+                    await combatRepo.setAbilityCooldown(order.caster_id, order.ability_key, availableTurn);
+                    await combatRepo.appendCombatLog({
+                        gameId,
+                        turnNumber,
+                        attackerId: order.caster_id,
+                        eventType: 'ability',
+                        summary: `Mining started`
+                    });
+                    continue;
+                } catch {}
+            }
+
             // Non-offense special cases and status effects (subset from index.js for now)
             if (order.ability_key === 'strike_vector') {
                 const casterFull = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));

@@ -23,11 +23,37 @@ export function normalizeGameState(state) {
 
 export function getEffectiveMovementSpeed(unit) {
     try {
-        const base = unit?.meta?.movementSpeed || 0;
-        const boostMult = (typeof unit?.meta?.movementBoostMultiplier === 'number' && unit.meta.movementBoostMultiplier > 0)
-            ? unit.meta.movementBoostMultiplier
-            : 1;
-        const effective = Math.max(1, Math.floor(base * boostMult));
+        const meta = unit?.meta || {};
+        const base = meta.movementSpeed || 0;
+        // Multipliers from meta and active status effects
+        let multiplier = 1;
+        if (typeof meta.movementBoostMultiplier === 'number' && meta.movementBoostMultiplier > 0) {
+            multiplier *= meta.movementBoostMultiplier;
+        }
+        if (Array.isArray(unit?.statusEffects)) {
+            for (const eff of unit.statusEffects) {
+                try {
+                    const data = eff.effectData || {};
+                    if (typeof data.movementBonus === 'number' && data.movementBonus > 0) {
+                        multiplier *= (1 + data.movementBonus);
+                    }
+                } catch {}
+            }
+        }
+        // Flat bonuses from meta and effects
+        let flat = 0;
+        if (typeof meta.movementFlatBonus === 'number' && meta.movementFlatBonus > 0) flat += meta.movementFlatBonus;
+        if (Array.isArray(unit?.statusEffects)) {
+            for (const eff of unit.statusEffects) {
+                try {
+                    const data = eff.effectData || {};
+                    if (typeof data.movementFlatBonus === 'number' && data.movementFlatBonus > 0) {
+                        flat = Math.max(flat, data.movementFlatBonus);
+                    }
+                } catch {}
+            }
+        }
+        const effective = Math.max(1, Math.floor(base * multiplier) + flat);
         return effective;
     } catch { return unit?.meta?.movementSpeed || 0; }
 }
