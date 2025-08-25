@@ -1711,8 +1711,6 @@
       // Delegate UI globals to feature modules (overrides originals for thin coordination)
       // ESM migration: no window shims needed anymore
 
-      // Mining/Cargo globals removed; use data-action bindings and modules
-      
       // Legacy globals → UI modules
       window.showPlayerAssets = function(){ return (window.SFUI && SFUI.assets && SFUI.assets.show()) };
       window.showSenateModal = function(){ return (window.SFUI && SFUI.senate && SFUI.senate.show()) };

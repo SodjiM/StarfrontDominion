@@ -83,7 +83,9 @@ CREATE TABLE IF NOT EXISTS lane_transits (
     progress REAL NOT NULL,
     cu REAL NOT NULL,
     mode TEXT NOT NULL,
+    merge_turns INTEGER,
     entered_turn INTEGER NOT NULL,
+    meta TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (edge_id) REFERENCES lane_edges(id),
     FOREIGN KEY (ship_id) REFERENCES sector_objects(id)
@@ -99,6 +101,22 @@ CREATE TABLE IF NOT EXISTS lane_edges_runtime (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (edge_id) REFERENCES lane_edges(id)
 );
+
+-- Tap queues for FIFO slot release
+CREATE TABLE IF NOT EXISTS lane_tap_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tap_id INTEGER NOT NULL,
+    ship_id INTEGER,
+    convoy_id TEXT,
+    cu REAL NOT NULL,
+    enqueued_turn INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued', -- queued|launched|cancelled
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tap_id) REFERENCES lane_taps(id),
+    FOREIGN KEY (ship_id) REFERENCES sector_objects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lane_tap_queue_tap ON lane_tap_queue(tap_id, status, enqueued_turn);
 
 CREATE TABLE IF NOT EXISTS interdiction_buoys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

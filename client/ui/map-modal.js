@@ -5,33 +5,30 @@ export async function populateSystemFacts(game) {
         const wrap = document.getElementById('sysMetaSummary');
         if (!wrap || !game?.gameState?.sector) return;
         const sector = game.gameState.sector; const systemId = sector.id;
-        // Aggregate minerals from visible objects
-        const objects = Array.isArray(game.objects) ? game.objects : [];
-        const nodes = objects.filter(o => o.type === 'resource_node' && o.meta && (o.meta.resourceType || o.meta.mineral));
-        const coreSet = new Set(['Ferrite Alloy','Crytite','Ardanium','Vornite','Zerothium']);
-        const primarySet = new Set(['Fluxium','Auralite']);
-        const counts = new Map();
-        for (const n of nodes) {
-            const key = String(n.meta.resourceType || n.meta.mineral || '').trim();
-            if (!key) continue;
-            counts.set(key, (counts.get(key) || 0) + 1);
-        }
-        const primaryList = [];
-        const secondaryList = [];
-        counts.forEach((v, k) => {
-            if (primarySet.has(k)) primaryList.push([k, v]);
-            else if (!coreSet.has(k)) secondaryList.push([k, v]);
-        });
-        primaryList.sort((a,b)=>b[1]-a[1]);
-        secondaryList.sort((a,b)=>b[1]-a[1]);
+        // Fetch server-side mineral display buckets and aggregation
+        let primaryList = []; let secondaryList = []; let coreList = [];
+        try {
+            const facts = await SFApi.State.systemFacts(systemId);
+            const minerals = Array.isArray(facts?.minerals) ? facts.minerals : [];
+            const counts = new Map(minerals.map(m => [String(m.name), Number(m.count||0)]));
+            const disp = facts?.mineralDisplay || {};
+            const fmt = (name, mult) => `${name} ${mult}${counts.has(name) ? ` — ×${counts.get(name)}` : ''}`;
+            coreList = (disp.core || []).map(m => fmt(m.name, m.mult));
+            primaryList = (disp.primary || []).map(m => fmt(m.name, m.mult));
+            secondaryList = (disp.secondary || []).map(m => fmt(m.name, m.mult));
+            primaryList.sort((a,b)=>b[1]-a[1]);
+            secondaryList.sort((a,b)=>b[1]-a[1]);
+        } catch {}
 
         wrap.innerHTML = `
             <div><b>Name:</b> ${sector.name}</div>
             <div><b>Type:</b> ${sector.archetype || 'standard'}</div>
+            <div style="margin-top:8px;"><b>Core minerals</b></div>
+            <div>${coreList.length ? coreList.join(', ') : '—'}</div>
             <div style="margin-top:8px;"><b>Primary minerals present</b></div>
-            <div>${primaryList.length ? primaryList.map(([k,v])=>`${k} ×${v}`).join(', ') : '—'}</div>
+            <div>${primaryList.length ? primaryList.join(', ') : '—'}</div>
             <div style="margin-top:8px;"><b>Secondary minerals present</b></div>
-            <div>${secondaryList.length ? secondaryList.map(([k,v])=>`${k} ×${v}`).join(', ') : '—'}</div>`;
+            <div>${secondaryList.length ? secondaryList.join(', ') : '—'}</div>`;
     } catch (e) {
         const wrap = document.getElementById('sysMetaSummary'); if (wrap) wrap.innerText = 'Failed to load system facts';
     }
@@ -183,10 +180,11 @@ function initializeFullMap() {
         const toggles = {
             regions: document.getElementById('toggleRegions')?.checked !== false,
             belts: document.getElementById('toggleBelts')?.checked !== false,
-            wormholes: document.getElementById('toggleWormholes')?.checked !== false
+            wormholes: document.getElementById('toggleWormholes')?.checked !== false,
+            lanes: document.getElementById('toggleLanes')?.checked === true
         };
         renderFullMap(ctx, canvas, scaleX, scaleY, toggles);
-        ['toggleRegions','toggleBelts','toggleWormholes'].forEach(id => {
+        ['toggleRegions','toggleBelts','toggleWormholes','toggleLanes'].forEach(id => {
             const el = document.getElementById(id); if (!el) return;
             el.onchange = () => initializeFullMap();
         });
@@ -214,6 +212,18 @@ async function initializeGalaxyMap() {
 
 async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         const client = window.gameClient; if (!client || !client.objects) return;
+        // Enable lanes toggle dynamically if data exists
+        try {
+            const facts = client.gameState?.sector?.id ? await SFApi.State.systemFacts(client.gameState.sector.id) : null;
+            const hasLanes = !!(facts && Array.isArray(facts.lanes) && facts.lanes.length > 0);
+            const lanesToggle = document.getElementById('toggleLanes');
+            const lanesLabel = lanesToggle?.closest('label');
+            if (lanesToggle) {
+                lanesToggle.disabled = !hasLanes;
+                if (lanesLabel) lanesLabel.style.opacity = hasLanes ? '1' : '0.6';
+                if (!hasLanes) toggles.lanes = false;
+            }
+        } catch {}
         // Regions overlay
         if (toggles.regions && client.gameState?.sector?.id) {
             try {
@@ -306,6 +316,75 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 });
             } catch {}
         }
+        // Warp Lanes & Taps (read-only overlay)
+        if (toggles.lanes && client.gameState?.sector?.id) {
+            try {
+                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
+                const lanes = facts?.lanes || [];
+                const tapsByEdge = facts?.laneTapsByEdge || {};
+                // Simple planner click: show small overlay with ETA/risk/fuel (stub) and tap/wildcat buttons
+                canvas.onclick = async (ev) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const click = { x: (ev.clientX-rect.left)/scaleX, y: (ev.clientY-rect.top)/scaleY };
+                    try {
+                        const routes = await new Promise((resolve)=>{
+                            SFApi.Socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: click }, (resp)=>resolve(resp));
+                        });
+                        if (routes?.success && Array.isArray(routes.routes)) {
+                            const r = routes.routes[0];
+                            const box = document.createElement('div'); box.style.position='absolute'; box.style.left=ev.clientX+'px'; box.style.top=ev.clientY+'px'; box.style.background='#0b1220'; box.style.border='1px solid rgba(100,181,246,0.35)'; box.style.padding='8px'; box.style.borderRadius='6px'; box.style.color='#cfe8ff'; box.style.zIndex=10000;
+                            box.innerHTML = `<div style="font-size:12px; margin-bottom:4px;">ETA ${r.eta} turns • Risk ${'★'.repeat(r.risk)}</div>
+                                <div style="display:flex; gap:6px;">
+                                    <button class="sf-btn sf-btn-primary" id="btnTapEnter">Enter via Tap</button>
+                                    <button class="sf-btn sf-btn-secondary" id="btnWildcat">Wildcat Merge</button>
+                                </div>`;
+                            document.body.appendChild(box);
+                            box.querySelector('#btnTapEnter').onclick = async () => {
+                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'tap', shipId: client.selectedUnit?.id }, (resp)=>{});
+                                document.body.removeChild(box);
+                            };
+                            box.querySelector('#btnWildcat').onclick = async () => {
+                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'wildcat', shipId: client.selectedUnit?.id }, (resp)=>{});
+                                document.body.removeChild(box);
+                            };
+                        }
+                    } catch {}
+                };
+                // Draw lanes
+                lanes.forEach(l => {
+                    const pts = Array.isArray(l.polyline) ? l.polyline : [];
+                    if (pts.length < 2) return;
+                    // Shoulder halo
+                    ctx.strokeStyle = 'rgba(100,181,246,0.2)';
+                    ctx.lineWidth = Math.max(1, (l.width_shoulder || 220) * 0.5 * ((scaleX+scaleY)/2));
+                    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
+                    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
+                    ctx.stroke();
+                    // Core ribbon
+                    ctx.strokeStyle = 'rgba(158,203,255,0.85)';
+                    ctx.lineWidth = Math.max(2, (l.width_core || 180) * 0.35 * ((scaleX+scaleY)/2));
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
+                    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
+                    ctx.stroke();
+                    // Taps (diamonds)
+                    const taps = tapsByEdge[l.id] || [];
+                    ctx.fillStyle = 'rgba(200,230,255,0.95)';
+                    taps.forEach(t => {
+                        const x = t.x*scaleX, y = t.y*scaleY;
+                        ctx.beginPath();
+                        ctx.moveTo(x, y-4);
+                        ctx.lineTo(x+4, y);
+                        ctx.lineTo(x, y+4);
+                        ctx.lineTo(x-4, y);
+                        ctx.closePath();
+                        ctx.fill();
+                    });
+                });
+            } catch {}
+        }
         // Base objects with labels
         client.objects.forEach(obj => {
             const x = obj.x * scaleX, y = obj.y * scaleY; ctx.fillStyle = '#64b5f6';
@@ -336,20 +415,16 @@ async function loadGalaxyDataInternal() {
 async function populateSystemFactsInternal() {
         try {
             const client = window.gameClient; const wrap = document.getElementById('sysMetaSummary'); if (!wrap || !client?.gameState?.sector) return;
-            const sector = client.gameState.sector; const objects = Array.isArray(client.objects) ? client.objects : [];
-            const nodes = objects.filter(o => o.type === 'resource_node' && o.meta && (o.meta.resourceType || o.meta.mineral));
-            const coreSet = new Set(['Ferrite Alloy','Crytite','Ardanium','Vornite','Zerothium']);
-            const primarySet = new Set(['Fluxium','Auralite']);
-            const counts = new Map();
-            for (const n of nodes) {
-                const key = String(n.meta.resourceType || n.meta.mineral || '').trim();
-                if (!key) continue;
-                counts.set(key, (counts.get(key) || 0) + 1);
-            }
-            const primaryList = []; const secondaryList = [];
-            counts.forEach((v,k)=>{ if (primarySet.has(k)) primaryList.push([k,v]); else if (!coreSet.has(k)) secondaryList.push([k,v]); });
-            primaryList.sort((a,b)=>b[1]-a[1]); secondaryList.sort((a,b)=>b[1]-a[1]);
-            wrap.innerHTML = `<div><b>Name:</b> ${sector.name}</div><div><b>Type:</b> ${sector.archetype||'standard'}</div><div style="margin-top:8px;"><b>Primary minerals present</b></div><div>${primaryList.length?primaryList.map(([k,v])=>`${k} ×${v}`).join(', '):'—'}</div><div style="margin-top:8px;"><b>Secondary minerals present</b></div><div>${secondaryList.length?secondaryList.map(([k,v])=>`${k} ×${v}`).join(', '):'—'}</div>`;
+            const sector = client.gameState.sector;
+            const facts = await SFApi.State.systemFacts(sector.id);
+            const minerals = Array.isArray(facts?.minerals) ? facts.minerals : [];
+            const counts = new Map(minerals.map(m => [String(m.name), Number(m.count||0)]));
+            const disp = facts?.mineralDisplay || {};
+            const fmt = (name, mult) => `${name} ${mult}${counts.has(name) ? ` — ×${counts.get(name)}` : ''}`;
+            const coreList = (disp.core || []).map(m => fmt(m.name, m.mult));
+            const primaryList = (disp.primary || []).map(m => fmt(m.name, m.mult));
+            const secondaryList = (disp.secondary || []).map(m => fmt(m.name, m.mult));
+            wrap.innerHTML = `<div><b>Name:</b> ${sector.name}</div><div><b>Type:</b> ${sector.archetype||'standard'}</div><div style="margin-top:8px;"><b>Core minerals</b></div><div>${coreList.length?coreList.join(', '):'—'}</div><div style="margin-top:8px;"><b>Primary minerals present</b></div><div>${primaryList.length?primaryList.join(', '):'—'}</div><div style="margin-top:8px;"><b>Secondary minerals present</b></div><div>${secondaryList.length?secondaryList.join(', '):'—'}</div>`;
         } catch {}
 }
 

@@ -1457,7 +1457,7 @@ async function processCombatOrders(gameId, turnNumber) {
 
 // Helper function to calculate ETA for movement
 function calculateETA(destX, destY, shipId) {
-    // TODO: Get ship position and calculate actual distance/speed
+    // Future: Get ship position and calculate actual distance/speed
     // For now, return a simple estimate
     return 3; // 3 turns
 }

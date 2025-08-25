@@ -11,8 +11,6 @@ router.post('/start/:gameId', async (req, res) => {
     const { userId } = req.body;
     
     try {
-        console.log(`🎮 Starting game ${gameId} requested by user ${userId}`);
-        
         // Check if user is in the game
         const membership = await new Promise((resolve, reject) => {
             db.get(
@@ -47,8 +45,6 @@ router.post('/start/:gameId', async (req, res) => {
         
         // Initialize game world
         const initResult = await GameWorldManager.initializeGame(gameId);
-        console.log('✅ Game world initialized:', initResult);
-        
         // Update game status to active
         await new Promise((resolve, reject) => {
             db.run(
@@ -61,7 +57,6 @@ router.post('/start/:gameId', async (req, res) => {
             );
         });
         
-        console.log(`🎉 Game ${gameId} started successfully!`);
         res.json({ 
             success: true, 
             message: 'Game started successfully! Players can now join the action at any time.' 
@@ -102,12 +97,12 @@ router.get('/abilities', (req, res) => {
     }
 });
 
-// System archetypes registry
+// System archetypes registry (unified)
 router.get('/archetypes', (req, res) => {
     try {
-        const { ArchetypesService } = require('../services/registry/archetypes.service');
-        const svc = new ArchetypesService();
-        res.json({ archetypes: svc.listArchetypes() });
+        const { AVAILABLE, getArchetypeInfo } = require('../services/world/unified-archetype-registry');
+        const list = AVAILABLE.map(k => getArchetypeInfo(k));
+        res.json({ archetypes: list });
     } catch (e) {
         console.error('Error returning archetypes', e);
         res.status(500).json({ error: 'Failed to load archetypes' });
@@ -131,15 +126,10 @@ router.post('/setup/:gameId', async (req, res) => {
     if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
     const { userId, avatar, colorPrimary, colorSecondary, systemName, archetypeKey } = parsed.data;
     
-    console.log(`🎨 Setup request for game ${gameId}, user ${userId}:`, {
-        avatar, colorPrimary, colorSecondary, systemName
-    });
-
     try {
         const { PlayerSetupService } = require('../services/game/player-setup.service');
         const svc = new PlayerSetupService();
         await svc.completeSetup({ gameId, userId, avatar, colorPrimary, colorSecondary, systemName, archetypeKey });
-        console.log(`✅ Player ${userId} completed setup for game ${gameId}`);
         res.json({ 
             success: true,
             message: 'Setup completed successfully'
@@ -148,11 +138,6 @@ router.post('/setup/:gameId', async (req, res) => {
         console.error('Error completing player setup:', err);
         return res.status(500).json({ error: 'Failed to update player' });
     }
-});
-
-// Active scan route - temporary extended vision
-router.post('/scan/:gameId', (req, res) => {
-    return res.status(410).json({ error: 'Active scan has been removed. Use abilities like survey_scanner.' });
 });
 
 // PHASE 1C: Get movement history for accurate trail rendering
@@ -184,7 +169,6 @@ router.get('/resource-nodes/:gameId/:shipId', async (req, res) => {
 // moved to cargo.routes.js
 
 // Ship type definitions
-// Legacy SHIP_TYPES removed; use blueprint-driven stats
 
 const { STRUCTURE_TYPES } = require('../domain/structures');
 

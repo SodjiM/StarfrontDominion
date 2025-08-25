@@ -35,8 +35,15 @@ async function spawnNodesForSector(sectorId) {
     // Helper: map mineral name -> resource_type id
     const getTypeId = async (name) => new Promise((resolve) => db.get('SELECT id FROM resource_types WHERE resource_name = ?', [name], (e, r) => resolve(r?.id || null)));
 
-    // Determine primaries (could vary by archetype later). Keep simple default for now.
-    const primaryMinerals = DEFAULT_PRIMARIES;
+    // Determine primaries/secondaries by archetype
+    let primaryMinerals = DEFAULT_PRIMARIES;
+    let secondaryMinerals = [];
+    try {
+        const { getArchetypeModule } = require('./unified-archetype-registry');
+        const mod = getArchetypeModule(archetypeKey);
+        if (mod && Array.isArray(mod.MINERALS?.primary)) primaryMinerals = mod.MINERALS.primary.slice();
+        if (mod && Array.isArray(mod.MINERALS?.secondary)) secondaryMinerals = mod.MINERALS.secondary.slice();
+    } catch {}
 
     // Node count per density tier
     const DENSITY_BASE = { high: 8, med: 5, low: 3 };
@@ -67,10 +74,14 @@ async function spawnNodesForSector(sectorId) {
 
         // Build mineral weight bag
         const weights = new Map();
+        // Allowed set: core + archetype primaries + secondaries
+        const allowed = new Set([...CORE_MINERALS, ...primaryMinerals, ...secondaryMinerals]);
         // Core five always present
-        for (const m of CORE_MINERALS) weights.set(m, (weights.get(m) || 0) + 1.0);
+        for (const m of CORE_MINERALS) if (allowed.has(m)) weights.set(m, (weights.get(m) || 0) + 1.0);
         // Primaries boosted
-        for (const m of primaryMinerals) weights.set(m, (weights.get(m) || 0) + 3.0);
+        for (const m of primaryMinerals) if (allowed.has(m)) weights.set(m, (weights.get(m) || 0) + 3.0);
+        // Secondaries light weight
+        for (const m of secondaryMinerals) if (allowed.has(m)) weights.set(m, (weights.get(m) || 0) + 1.5);
         // Region rules overlay
         const regionRules = byRegion.get(String(s.region_id));
         if (regionRules) {
@@ -80,7 +91,7 @@ async function spawnNodesForSector(sectorId) {
                     // Defer spawn for gated minerals below threshold
                     continue;
                 }
-                weights.set(mineral, (weights.get(mineral) || 0) + Math.max(0, Number(cfg.weight || 0)));
+                if (allowed.has(mineral)) weights.set(mineral, (weights.get(mineral) || 0) + Math.max(0, Number(cfg.weight || 0)));
             }
         }
         // If no weights, skip this wedge

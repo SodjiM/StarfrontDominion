@@ -35,6 +35,4 @@ export function showTravelOptions(game, adjacentGates) {
     });
 }
 
-// HTTP travel removed; using socket event interstellar:travel
-
 

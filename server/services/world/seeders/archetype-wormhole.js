@@ -1,5 +1,17 @@
 const { randInt, randFloat, choice } = require('../rng');
 
+// Wormhole Cluster — “Doors & Drift”
+// Primary: Riftstone, Phasegold; Secondary: Fluxium, Tachytrium, Aetherium, Quarzon, Spectrathene
+const MINERALS = {
+    primary: ['Riftstone','Phasegold'],
+    secondary: ['Fluxium','Tachytrium','Aetherium','Quarzon','Spectrathene']
+};
+
+const DISPLAY = {
+    name: 'Wormhole Cluster',
+    description: 'Hubs and throats with scheduled windows and drift trade.'
+};
+
 function plan({ sectorId, seed, rng }) {
     const hasB = (rng() < 0.2);
     const base = hasB
@@ -49,7 +61,6 @@ function plan({ sectorId, seed, rng }) {
 }
 
 async function persist({ sectorId, plan, db }) {
-    console.log(`🌌 [Seed] Persisting Wormhole Cluster for sector ${sectorId} with ${plan.planets.length} planets and ${plan.belts.length} belts; wormholes=${plan.wormholes.length}`);
     // Persist regions
     const { grid, health } = plan.regions;
     const cells = [];
@@ -103,7 +114,6 @@ async function persist({ sectorId, plan, db }) {
     };
     for (const b of plan.belts) {
         const sectors = b.sectors;
-        console.log(`🛰️ [Seed] Belt ${b.id}: inner=${b.inner} width=${b.width} sectors=${sectors}`);
         for (let i=0;i<sectors;i++) {
             const a0 = (i/sectors)*Math.PI*2; const a1 = ((i+1)/sectors)*Math.PI*2;
             const amid = (a0+a1)/2; const rmid = b.inner + b.width/2;
@@ -129,7 +139,6 @@ async function persist({ sectorId, plan, db }) {
                     (e)=> e?reject(e):resolve()
                 ));
             }
-            console.log(`   ↳ sector ${i} centroid=(${Math.round(x)},${Math.round(y)}) region=${regionId}`);
         }
     }
     // Wormhole endpoints sketch: create endpoints only (no exact coords for MVP)
@@ -144,6 +153,6 @@ async function persist({ sectorId, plan, db }) {
     }
 }
 
-module.exports = { plan, persist };
+module.exports = { plan, persist, MINERALS, DISPLAY };
 
 

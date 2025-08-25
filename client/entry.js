@@ -16,7 +16,6 @@ import './features/abilities/ability-controller.js';
 import './services/api.js';
 import './features/warp.js';
 import './features/mining.js';
-// cargo feature removed; UI flows live in ui/cargo-modal.js
 import './features/build.js';
 // UI modules now ESM; imported on-demand inside game.js
 import './ui/minimap.js';

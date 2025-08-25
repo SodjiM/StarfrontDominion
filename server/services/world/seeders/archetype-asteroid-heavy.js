@@ -1,5 +1,17 @@
 const { randInt, randFloat, choice } = require('../rng');
 
+// Minerals for Asteroid-Heavy Belt — “Rubble & Riches”
+// Primary: Quarzon, Mythrion; Secondary: Magnetrine, Starforged Carbon, Fluxium, Heliox Ore, Aetherium
+const MINERALS = {
+    primary: ['Quarzon','Mythrion'],
+    secondary: ['Magnetrine','Starforged Carbon','Fluxium','Heliox Ore','Aetherium']
+};
+
+const DISPLAY = {
+    name: 'Asteroid-Heavy Belt',
+    description: 'Dense rubble fields and foundry riches along the belts.'
+};
+
 function plan({ sectorId, seed, rng }) {
     // Regions AAB / AC B / ABB pattern
     const base = [['A','A','B'], ['A','C','B'], ['A','B','B']];
@@ -34,7 +46,6 @@ function plan({ sectorId, seed, rng }) {
 }
 
 async function persist({ sectorId, plan, db }) {
-    console.log(`🌌 [Seed] Persisting Asteroid-Heavy for sector ${sectorId} with ${plan.planets.length} planets and ${plan.belts.length} belts`);
     const { grid, health } = plan.regions;
     const cells = []; for (let r=0;r<3;r++) for (let c=0;c<3;c++) cells.push({row:r,col:c,label:grid[r][c]});
     const regionIds = Array.from(new Set(cells.map(c=>c.label)));
@@ -83,9 +94,9 @@ async function persist({ sectorId, plan, db }) {
         const row = Math.max(0, Math.min(2, Math.floor(y / cellH)));
         return grid[row][col];
     };
+    const highDensityCountsByBelt = new Map();
     for (const b of plan.belts) {
         const sectors = b.sectors; const inner=b.inner; const width=b.width;
-        console.log(`🛰️ [Seed] Belt ${b.id}: inner=${inner} width=${width} sectors=${sectors}`);
         for (let i=0;i<sectors;i++) {
             const a0 = (i/sectors)*Math.PI*2; const a1 = ((i+1)/sectors)*Math.PI*2;
             const amid = (a0+a1)/2; const rmid = inner + width/2;
@@ -97,6 +108,9 @@ async function persist({ sectorId, plan, db }) {
                 [sectorId, b.id, i, regionId, inner, width, a0, a1, (regionId==='A'?'high':'med'), (regionId==='A'?'med':'low')],
                 (e)=> e?reject(e):resolve()
             ));
+            if (regionId === 'A') {
+                highDensityCountsByBelt.set(b.id, (highDensityCountsByBelt.get(b.id) || 0) + 1);
+            }
             // Create belt centroid POI for warp targeting
             // Avoid duplicate centroid objects if seeding runs twice
             const existing = await new Promise((resolve)=>db.get(
@@ -112,12 +126,113 @@ async function persist({ sectorId, plan, db }) {
                     (e)=> e?reject(e):resolve()
                 ));
             }
-            console.log(`   ↳ sector ${i} centroid=(${Math.round(x)},${Math.round(y)}) region=${regionId}`);
         }
     }
-    // Lanes minimal stub: none persisted for MVP
+    // --- Lane generation (Asteroid-Heavy archetype-specific) ---
+    // Heuristics: pick densest belt (by count of 'A' region sectors) for trunk; add 1–2 arterials to central planet.
+    try {
+        // Fetch belt centroid POIs and planets for tap placement and arterial anchors
+        const beltPOIs = await new Promise((resolve)=>db.all(
+            `SELECT id, x, y, meta FROM sector_objects WHERE sector_id = ? AND type = 'belt'`,
+            [sectorId], (e, rows) => resolve(rows || [])
+        ));
+        const planetsPOIs = await new Promise((resolve)=>db.all(
+            `SELECT id, x, y, meta FROM sector_objects WHERE sector_id = ? AND celestial_type = 'planet'`,
+            [sectorId], (e, rows) => resolve(rows || [])
+        ));
+
+        function parseMeta(m){ try { return JSON.parse(m || '{}'); } catch { return {}; } }
+        const center = { x: 2500, y: 2500 };
+        const anchorPlanet = planetsPOIs.reduce((best, p) => {
+            const d = (p.x-center.x)*(p.x-center.x)+(p.y-center.y)*(p.y-center.y);
+            return (!best || d < best.d) ? { p, d } : best;
+        }, null)?.p || planetsPOIs[0];
+
+        // Pick densest belt id
+        let trunkBeltId = null; let maxHigh = -1;
+        for (const b of plan.belts) {
+            const c = highDensityCountsByBelt.get(b.id) || 0;
+            if (c > maxHigh) { maxHigh = c; trunkBeltId = b.id; }
+        }
+        if (!trunkBeltId && plan.belts.length) trunkBeltId = plan.belts[0].id;
+
+        // Build trunk polyline along the chosen belt: sample evenly around the ring following belt POIs order
+        const trunkPoints = [];
+        const trunkPOIs = (beltPOIs || []).filter(b=>parseMeta(b.meta).belt===trunkBeltId)
+            .sort((a,b)=>{
+                const aa = Math.atan2(a.y-center.y, a.x-center.x);
+                const bb = Math.atan2(b.y-center.y, b.x-center.x);
+                return aa-bb;
+            });
+        const sampleEvery = Math.max(1, Math.floor(trunkPOIs.length / 12));
+        for (let i=0;i<trunkPOIs.length;i+=sampleEvery) trunkPoints.push({ x: trunkPOIs[i].x, y: trunkPOIs[i].y });
+        if (trunkPoints.length >= 3) {
+            // Close minor gaps by ensuring last != first
+            if (Math.hypot(trunkPoints[0].x - trunkPoints[trunkPoints.length-1].x, trunkPoints[0].y - trunkPoints[trunkPoints.length-1].y) > 400) {
+                trunkPoints.push({ x: trunkPoints[0].x, y: trunkPoints[0].y });
+            }
+        }
+        const majorityRegion = (pts) => {
+            const counts = { A:0, B:0, C:0 };
+            for (const pt of pts) { const id = labelAt(pt.x, pt.y, plan.regions.grid); counts[id] = (counts[id]||0)+1; }
+            return (['A','B','C'].reduce((a,b)=> counts[b] > counts[a] ? b : a, 'A'));
+        };
+
+        async function insertLaneEdge({ cls, points, width_core, width_shoulder, lane_speed, cap_base, headway, mass_limit }) {
+            if (!points || points.length < 2) return null;
+            const polylineJson = JSON.stringify(points);
+            const region_id = majorityRegion(points);
+            const edgeId = await new Promise((resolve, reject)=>db.run(
+                `INSERT INTO lane_edges (sector_id, cls, region_id, polyline_json, width_core, width_shoulder, lane_speed, cap_base, headway, mass_limit, window_json, permits_json, protection_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+                [sectorId, cls, region_id, polylineJson, 190, 260, 4.2, 6, 40, 'heavy'],
+                function(e){ return e?reject(e):resolve(this.lastID); }
+            ));
+            await new Promise((resolve)=>db.run(`INSERT OR REPLACE INTO lane_edges_runtime (edge_id, load_cu) VALUES (?, 0)`, [edgeId], ()=>resolve()));
+            return edgeId;
+        }
+
+        async function insertTap(edgeId, x, y, poiId=null) {
+            await new Promise((resolve)=>db.run(
+                `INSERT INTO lane_taps (edge_id, x, y, poi_object_id, side) VALUES (?, ?, ?, ?, NULL)`,
+                [edgeId, Math.round(x), Math.round(y), poiId || null], ()=>resolve()
+            ));
+        }
+
+        function cumulativeDistance(points){ let d=0; const acc=[0]; for(let i=1;i<points.length;i++){ d+=Math.hypot(points[i].x-points[i-1].x, points[i].y-points[i-1].y); acc.push(d);} return { total:d, acc }; }
+        function pointAtDistance(points, acc, dist){ if (dist<=0) return points[0]; const total=acc[acc.length-1]; if (dist>=total) return points[points.length-1]; let i=1; while (i<acc.length && acc[i]<dist) i++; const t=(dist-acc[i-1])/Math.max(1e-6,(acc[i]-acc[i-1])); return { x: points[i-1].x+(points[i].x-points[i-1].x)*t, y: points[i-1].y+(points[i].y-points[i-1].y)*t } }
+
+        // Insert trunk edge
+        let trunkEdgeId = null;
+        if (trunkPoints.length >= 2) {
+            trunkEdgeId = await insertLaneEdge({ cls:'trunk', points: trunkPoints, width_core:190, width_shoulder:260, lane_speed:4.2, cap_base:6, headway:40, mass_limit:'heavy' });
+            // Place taps every ~1000 tiles
+            const cd = cumulativeDistance(trunkPoints);
+            const interval = 1000; const tapsCount = Math.max(2, Math.floor(cd.total / interval));
+            for (let i=1;i<=tapsCount;i++) { const p = pointAtDistance(trunkPoints, cd.acc, i*interval); await insertTap(trunkEdgeId, p.x, p.y, null); }
+            // Taps at nearby belt POIs
+            for (const b of trunkPOIs) { await insertTap(trunkEdgeId, b.x, b.y, b.id); }
+        }
+
+        // Build 1–2 arterials: from anchor planet to nearest trunk point(s)
+        if (anchorPlanet && trunkPoints.length >= 2) {
+            const nearest = trunkPoints.reduce((best, p)=>{ const d=Math.hypot(p.x-anchorPlanet.x, p.y-anchorPlanet.y); return (!best||d<best.d)?{p,d}:best; }, null).p;
+            const mid = { x: (anchorPlanet.x*2 + nearest.x)/3, y: (anchorPlanet.y*2 + nearest.y)/3 }; // gentle curve
+            const arterialPts = [ { x: anchorPlanet.x, y: anchorPlanet.y }, mid, { x: nearest.x, y: nearest.y } ];
+            const arterialEdgeId = await insertLaneEdge({ cls:'arterial', points: arterialPts, width_core:160, width_shoulder:220, lane_speed:3.6, cap_base:5, headway:40, mass_limit:'medium' });
+            if (arterialEdgeId) {
+                await insertTap(arterialEdgeId, anchorPlanet.x, anchorPlanet.y, anchorPlanet.id);
+                await insertTap(arterialEdgeId, nearest.x, nearest.y, null);
+                // Optionally a mid tap
+                await insertTap(arterialEdgeId, mid.x, mid.y, null);
+            }
+        }
+
+    } catch (e) {
+        // Lane generation error silently handled
+    }
 }
 
-module.exports = { plan, persist };
+module.exports = { plan, persist, MINERALS, DISPLAY };
 
 

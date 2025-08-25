@@ -41,16 +41,10 @@
     blueprints: () => getJson('/game/blueprints'),
     buildShip: (stationId, blueprintId, userId, freeBuild) => postJson('/game/build-ship', { stationId, blueprintId, userId, freeBuild }),
     buildShipLegacy: (stationId, shipType, cost, userId) => postJson('/game/build-ship', { stationId, shipType, cost, userId }),
-    // buildShipBasic removed in favor of blueprint-driven flow
     buildStructure: (stationId, structureType, cost, userId) => postJson('/game/build-structure', { stationId, structureType, cost, userId }),
     deployStructure: (shipId, structureType, userId) => postJson('/game/deploy-structure', { shipId, structureType, userId }),
     listSectors: (gameId, userId) => getJson(`/game/sectors?gameId=${gameId}&userId=${userId}`),
     deployInterstellarGate: (shipId, destinationSectorId, userId) => postJson('/game/deploy-interstellar-gate', { shipId, destinationSectorId, userId })
-  };
-
-  const Travel = {
-    // Deprecated HTTP; keep stub that throws to surface migration fast
-    interstellarTravel: () => { throw { data: { error: 'deprecated', hint: 'Use socket event interstellar:travel' } }; }
   };
 
   const State = {
@@ -69,7 +63,7 @@
     switchSector: (gameId, userId, sectorId) => postJson('/game/switch-sector', { gameId, userId, sectorId })
   };
 
-  window.SFApi = { getJson, postJson, Cargo, Resources, Abilities, Players, Build, Travel, State };
+  window.SFApi = { getJson, postJson, Cargo, Resources, Abilities, Players, Build, State };
 })();
 
 

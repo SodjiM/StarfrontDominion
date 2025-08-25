@@ -63,6 +63,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             // 6.5. Materialize next queued orders for idle ships into upcoming turn
             await materializeQueuedOrders(gameId, turnNumber + 1);
 
+            // Lane tick (Phase 1)
+            try { await tickLanes(gameId, turnNumber); } catch (e) { console.warn('Lane tick error', e); }
+
             // Create next turn and mark current as completed
             const nextTurn = turnNumber + 1;
             await new Promise((resolve, reject) => {
@@ -124,6 +127,72 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             io.to(`game-${gameId}`).emit('turn-error', { turnNumber, error: 'Turn resolution failed' });
         } finally {
             turnResolutionLocks.delete(lockKey);
+        }
+    }
+    async function tickLanes(gameId, turnNumber) {
+        const sectors = await new Promise((resolve)=>db.all('SELECT id FROM sectors WHERE game_id = ?', [gameId], (e,r)=>resolve(r||[])));
+        for (const s of sectors) {
+            const sectorId = s.id;
+            const edges = await new Promise((resolve)=>db.all(
+                `SELECT e.id, e.region_id, e.width_core, e.lane_speed, e.cap_base, e.headway
+                 FROM lane_edges e WHERE e.sector_id = ?`, [sectorId], (e, rows)=>resolve(rows||[])));
+            const healthRows = await new Promise((resolve)=>db.all('SELECT region_id, health FROM regions WHERE sector_id = ?', [sectorId], (e, rows)=>resolve(rows||[])));
+            const healthMap = new Map();
+            for (const r of healthRows) healthMap.set(String(r.region_id), Number(r.health||50));
+            for (const e of edges) {
+                const health = healthMap.get(String(e.region_id)) ?? 50;
+                const healthMult = health>=80?1.25:(health>=60?1.0:0.7);
+                const cap = Math.max(1, Math.floor(Number(e.cap_base) * (Number(e.width_core)/150) * healthMult));
+                const runtime = await new Promise((resolve)=>db.get('SELECT load_cu FROM lane_edges_runtime WHERE edge_id = ?', [e.id], (er, r)=>resolve(r||{load_cu:0})));
+                const loadCU = Number(runtime.load_cu || 0);
+                const rho = loadCU / Math.max(1, cap);
+                const speedMult = rho<=1?1:rho<=1.5?0.8:rho<=2?0.6:0.4;
+                const edgeSpeed = Number(e.lane_speed) * speedMult;
+                // Release slots from taps FIFO
+                const taps = await new Promise((resolve)=>db.all('SELECT id FROM lane_taps WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
+                const slotsPerTurn = Math.max(0, Math.floor(Number(e.lane_speed) / Math.max(1, Number(e.headway))));
+                let budgetCU = slotsPerTurn * 2; // slot carries 2 CU
+                for (const t of taps) {
+                    while (budgetCU > 0) {
+                        const q = await new Promise((resolve)=>db.get(
+                            `SELECT * FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued' ORDER BY enqueued_turn ASC, id ASC LIMIT 1`,
+                            [t.id], (er, row)=>resolve(row)));
+                        if (!q) break;
+                        if (q.cu > budgetCU) break;
+                        await new Promise((resolve)=>db.run('UPDATE lane_tap_queue SET status = ? WHERE id = ?', ['launched', q.id], ()=>resolve()));
+                        await new Promise((resolve)=>db.run(
+                            `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, entered_turn)
+                             VALUES (?, ?, ?, 0.0, ?, 'core', ?)`,
+                            [e.id, q.ship_id || null, 1, q.cu, turnNumber], ()=>resolve()));
+                        await new Promise((resolve)=>db.run(
+                            `UPDATE lane_edges_runtime SET load_cu = load_cu + ?, updated_at = CURRENT_TIMESTAMP WHERE edge_id = ?`,
+                            [q.cu, e.id], ()=>resolve()));
+                        budgetCU -= q.cu;
+                    }
+                }
+                // Progress transits
+                const transits = await new Promise((resolve)=>db.all('SELECT id, progress, cu, mode, merge_turns FROM lane_transits WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
+                for (const tr of transits) {
+                    // Shoulder merge countdown: after merge_turns expire, flip to core
+                    if (tr.mode === 'shoulder' && tr.merge_turns != null) {
+                        const left = Number(tr.merge_turns);
+                        if (left <= 1) {
+                            await new Promise((resolve)=>db.run('UPDATE lane_transits SET mode = ?, merge_turns = NULL WHERE id = ?', ['core', tr.id], ()=>resolve()));
+                        } else {
+                            await new Promise((resolve)=>db.run('UPDATE lane_transits SET merge_turns = ? WHERE id = ?', [left-1, tr.id], ()=>resolve()));
+                        }
+                    }
+                    const newProgress = Math.min(1, Number(tr.progress || 0) + (edgeSpeed / 5000));
+                    if (newProgress >= 1) {
+                        // Soft off-ramp on arrival (Phase 1 stub: just delete and reduce load)
+                        await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [tr.id], ()=>resolve()));
+                        await new Promise((resolve)=>db.run('UPDATE lane_edges_runtime SET load_cu = MAX(0, load_cu - ?) WHERE edge_id = ?', [tr.cu, e.id], ()=>resolve()));
+                        // Future: emit event for interdiction catch on arrival
+                    } else {
+                        await new Promise((resolve)=>db.run('UPDATE lane_transits SET progress = ? WHERE id = ?', [newProgress, tr.id], ()=>resolve()));
+                    }
+                }
+            }
         }
     }
 

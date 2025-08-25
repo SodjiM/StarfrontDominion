@@ -249,5 +249,3 @@ export function renderActiveEffectsChip(game, unit) {
         return `<span class=\"chip\" title=\"${safeTip}\">✨ Effects</span>`;
     } catch { return ''; }
 }
-
-// movement chips removed; single effects chip is sufficient

@@ -52,40 +52,20 @@ class GameWorldManager {
             const sector = await new Promise((resolve, reject) => {
                 db.get('SELECT archetype FROM sectors WHERE id = ?', [sectorId], (err, row) => err ? reject(err) : resolve(row));
             });
-            let archetype = sector?.archetype || null;
-            if (!archetype) {
-                archetype = GameWorldManager.pickRandomArchetype(gameId, player.user_id);
-                await new Promise((resolve) => db.run('UPDATE sectors SET archetype = ? WHERE id = ?', [archetype, sectorId], () => resolve()));
-            }
-            console.log(`🎯 Using archetype: ${archetype || 'standard'} for sector ${sectorId}`);
-            // Guard against double-seeding: only seed if sector has no sun and no belts persisted
-            const existing = await new Promise((resolve) => db.get(
-                `SELECT 
-                    (SELECT COUNT(1) FROM sector_objects WHERE sector_id = ? AND celestial_type = 'star') AS suns,
-                    (SELECT COUNT(1) FROM belt_sectors WHERE sector_id = ?) AS belts`,
-                [sectorId, sectorId],
-                (e, r) => resolve(r || { suns: 0, belts: 0 })
-            ));
-            if (Number(existing.suns || 0) === 0 && Number(existing.belts || 0) === 0) {
-                const generationResult = await seedSector({ sectorId, archetypeKey: archetype, seedBase: gameId });
-                console.log(`✅ Seeded sector:`, generationResult);
-            } else {
-                console.log(`ℹ️ Sector ${sectorId} already seeded (suns=${existing.suns}, belts=${existing.belts}); skipping seeding.`);
-            }
-            this.createStartingObjects(gameId, player, sectorId, onComplete, onError);
+            const archetype = sector?.archetype || null;
+            console.log(`🎯 Archetype for sector ${sectorId}: ${archetype || '(pipeline will select)'} `);
+            // Use unified generation pipeline only
+            const { SectorGenerationPipeline } = require('../world/generation-pipeline');
+            const pipeline = new SectorGenerationPipeline(sectorId, { gameId, player, createStartingObjects: true });
+            await pipeline.execute();
+            onComplete();
         } catch (error) {
             console.error(`❌ Failed to generate sector ${sectorId}:`, error);
             onError(error);
         }
     }
 
-    static pickRandomArchetype(gameId, userId) {
-        const archetypes = require('../registry/archetypes').ALL_ARCHETYPES_KEYS;
-        const seed = (Number(gameId) * 9301 + Number(userId) * 49297) % 233280;
-        const r = (seed / 233280);
-        const idx = Math.floor(r * archetypes.length) % archetypes.length;
-        return archetypes[idx];
-    }
+    static pickRandomArchetype(gameId, userId) { return 'standard'; }
 
     static createStartingObjects(gameId, player, sectorId, onComplete, onError) {
         db.all(

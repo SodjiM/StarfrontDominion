@@ -28,19 +28,11 @@ class PlayerSetupService {
             ));
             const sectorRow = await new Promise((resolve) => db.get('SELECT id FROM sectors WHERE game_id = ? AND owner_id = ?', [gameId, userId], (e, r) => resolve(r)));
             if (sectorRow && sectorRow.id) {
-                try {
-                    const { seedSector } = require('../world/seed-orchestrator');
-                    await seedSector({ sectorId: sectorRow.id, archetypeKey: ak, seedBase: gameId });
-                    // Create starting objects now that the sector is seeded
-                    const { GameWorldManager } = require('./game-world.service');
-                    const userRow = await new Promise((resolve) => db.get('SELECT username FROM users WHERE id = ?', [userId], (e, r) => resolve(r)));
-                    const player = { username: userRow?.username || `Player ${userId}`, user_id: userId };
-                    await new Promise((resolve, reject) => {
-                        GameWorldManager.generateSectorAndStartingObjects(gameId, player, sectorRow.id, () => resolve(), (err) => reject(err));
-                    });
-                } catch (e) {
-                    console.warn('Seeding on setup failed:', e?.message || e);
-                }
+                const { SectorGenerationPipeline } = require('../world/generation-pipeline');
+                const userRow = await new Promise((resolve) => db.get('SELECT username FROM users WHERE id = ?', [userId], (e, r) => resolve(r)));
+                const player = { username: userRow?.username || `Player ${userId}`, user_id: userId };
+                const pipeline = new SectorGenerationPipeline(sectorRow.id, { archetypeKey: ak, seedBase: gameId, gameId, player, createStartingObjects: true });
+                await pipeline.execute();
             }
         }
         return { success: true };

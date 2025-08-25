@@ -36,6 +36,86 @@ function registerGameChannel({ io, db, resolveTurn }) {
     const metrics = { moves: 0, warps: 0, abilities: 0, queued: 0, travels: 0 };
 
     io.on('connection', (socket) => {
+        // Travel planning: returns naive ETA and risk pips for top routes (Phase 1 minimal)
+        socket.on('travel:plan', async (payload, cb) => {
+            try {
+                if (!allow(socket, 'travel')) return cb && cb({ success:false, error:'rate_limited' });
+                const { gameId, sectorId, from, to } = payload || {};
+                if (!gameId || !sectorId || !from || !to) return cb && cb({ success:false, error:'bad_request' });
+                // Simple plan: pick nearest lane edge and tap near destination
+                const plans = await new Promise((resolve)=>db.all(
+                    `SELECT e.id, e.polyline_json, e.lane_speed, e.width_core, e.cap_base, e.headway
+                     FROM lane_edges e WHERE e.sector_id = ?`, [sectorId], (e, rows)=>resolve(rows||[])));
+                const parse = (s)=>{ try { return JSON.parse(s||'[]'); } catch { return []; } };
+                const dist = (p,q)=>Math.hypot(p.x-q.x,p.y-q.y);
+                const fromP = { x:Number(from.x), y:Number(from.y) }, toP = { x:Number(to.x), y:Number(to.y) };
+                const scored = plans.map(e=>{
+                    const pts = parse(e.polyline_json);
+                    const mid = pts[Math.floor(pts.length/2)] || pts[0] || {x:2500,y:2500};
+                    const dFrom = dist(fromP, mid); const dTo = dist(toP, mid);
+                    const laneLen = pts.reduce((acc, p,i)=> i? acc + dist(pts[i-1], p) : 0, 0);
+                    const eta = Math.ceil((dFrom/100) + (laneLen/ (e.lane_speed*200)) + (dTo/120));
+                    return { edgeId: e.id, eta, risk: 2, mid };
+                }).sort((a,b)=>a.eta-b.eta).slice(0,3);
+                cb && cb({ success:true, routes: scored });
+            } catch (e) {
+                cb && cb({ success:false, error:'server_error' });
+            }
+        });
+
+        // Travel enter: queue at tap or attempt wildcat merge
+        socket.on('travel:enter', async (payload, cb) => {
+            try {
+                if (!allow(socket, 'travel')) return cb && cb({ success:false, error:'rate_limited' });
+                const { sectorId, edgeId, mode, shipId, tapId } = payload || {};
+                if (!sectorId || !edgeId || !shipId) return cb && cb({ success:false, error:'bad_request' });
+                if (mode === 'tap') {
+                    // Read CU from ship class (default 1 CU)
+                    const ship = await new Promise((resolve)=>db.get('SELECT id, meta FROM sector_objects WHERE id = ?', [shipId], (e,r)=>resolve(r||null)));
+                    let cu = 1; try { const m = ship?.meta?JSON.parse(ship.meta):{}; cu = Number(m.convoyUnits||1); } catch {}
+                    const targetTap = tapId ? await new Promise((resolve)=>db.get('SELECT id FROM lane_taps WHERE id = ? AND edge_id = ?', [tapId, edgeId], (e,r)=>resolve(r||null))) : await new Promise((resolve)=>db.get('SELECT id FROM lane_taps WHERE edge_id = ? ORDER BY id ASC LIMIT 1', [edgeId], (e,r)=>resolve(r||null)));
+                    if (!targetTap) return cb && cb({ success:false, error:'tap_not_found' });
+                    await new Promise((resolve)=>db.run(
+                        `INSERT INTO lane_tap_queue (tap_id, ship_id, cu, enqueued_turn, status) VALUES (?, ?, ?, ?, 'queued')`,
+                        [targetTap.id, shipId, cu, 0], ()=>resolve()));
+                    return cb && cb({ success:true, queued:true });
+                } else if (mode === 'wildcat') {
+                    // Wildcat merge envelope: distance-based time and mishap
+                    const ship = await new Promise((resolve)=>db.get('SELECT id, x, y FROM sector_objects WHERE id = ?', [shipId], (e,r)=>resolve(r||null)));
+                    if (!ship) return cb && cb({ success:false, error:'ship_not_found' });
+                    const edge = await new Promise((resolve)=>db.get('SELECT id, polyline_json, width_core, width_shoulder FROM lane_edges WHERE id = ?', [edgeId], (e,r)=>resolve(r||null)));
+                    if (!edge) return cb && cb({ success:false, error:'edge_not_found' });
+                    const pts = (()=>{ try { return JSON.parse(edge.polyline_json||'[]'); } catch { return []; } })();
+                    if (pts.length < 2) return cb && cb({ success:false, error:'bad_edge' });
+                    const distToSegment = (p,a,b)=>{
+                        const apx=p.x-a.x, apy=p.y-a.y; const abx=b.x-a.x, aby=b.y-a.y;
+                        const ab2=abx*abx+aby*aby; const t=Math.max(0, Math.min(1, (apx*abx+apy*aby)/Math.max(1e-6,ab2)));
+                        const proj={ x:a.x+abx*t, y:a.y+aby*t }; return Math.hypot(p.x-proj.x, p.y-proj.y);
+                    };
+                    const p = { x: ship.x, y: ship.y };
+                    let dMin = Infinity; for (let i=1;i<pts.length;i++) dMin = Math.min(dMin, distToSegment(p, pts[i-1], pts[i]));
+                    const dMax = 300; const within = dMin <= dMax;
+                    if (!within) return cb && cb({ success:false, error:'out_of_envelope' });
+                    const k_d = 0.01; const base = 1; const T_merge = Math.max(1, Math.round(base + k_d * Math.max(0, dMin - edge.width_core)));
+                    const mishap = Math.min(0.4, 0.05 + 0.10*(dMin/dMax));
+                    const rolled = Math.random();
+                    if (rolled < mishap) {
+                        // Mishap: lose a turn (no insert)
+                        return cb && cb({ success:false, error:'mishap', mishap:true, delay:1 });
+                    }
+                    await new Promise((resolve)=>db.run(
+                        `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, merge_turns, entered_turn, meta)
+                         VALUES (?, ?, 1, 0.0, 1.0, 'shoulder', ?, 0, ?)`,
+                        [edgeId, shipId, T_merge, JSON.stringify({ dMin, mishap })], ()=>resolve()));
+                    await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + 1 WHERE edge_id = ?`, [edgeId], ()=>resolve()));
+                    return cb && cb({ success:true, entered:true, mergeTurns:T_merge, mishapChance:mishap });
+                } else {
+                    return cb && cb({ success:false, error:'bad_mode' });
+                }
+            } catch (e) {
+                cb && cb({ success:false, error:'server_error' });
+            }
+        });
         // Basic chat: game-wide, direct messages, and group channels (with persistence)
         socket.on('chat:send', async (msg) => {
             try {
@@ -288,6 +368,7 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 });
             });
         });
+
 
         const warpSchema = z.object({
             gameId: z.coerce.number().int().positive(),
