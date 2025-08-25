@@ -5,41 +5,33 @@ export async function populateSystemFacts(game) {
         const wrap = document.getElementById('sysMetaSummary');
         if (!wrap || !game?.gameState?.sector) return;
         const sector = game.gameState.sector; const systemId = sector.id;
-        let facts = null;
-        try { facts = await SFApi.State.systemFacts(systemId); } catch {}
-        if (!facts) {
-            const all = game.objects || [];
-            const planets = all.filter(o => (o.celestial_type === 'planet'));
-            const belts = all.filter(o => o.celestial_type === 'belt');
-            const nebulas = all.filter(o => o.celestial_type === 'nebula');
-            const rock = Math.max(1, belts.length * 3);
-            const gas = Math.max(1, nebulas.length * 2);
-            const energy = Math.max(1, planets.length);
-            const total = rock + gas + energy; const pct = (n) => `${Math.round((n / total) * 100)}%`;
-            const systemType = sector.archetype || 'standard';
-            const unique = (systemType === 'aurora-veil') ? ['aurorium','veil-crystal'] : (systemType === 'iron-forge') ? ['ferrox','slagite'] : ['cryo-ice','dust-opal'];
-            const wildcards = ['platinum','titanium','silicates'];
-            const gateSlots = typeof sector.gateSlots === 'number' ? sector.gateSlots : 3;
-            const usedGates = typeof sector.gatesUsed === 'number' ? sector.gatesUsed : 0;
-            facts = { name: sector.name, type: systemType, ratios: { rock: pct(rock), gas: pct(gas), energy: pct(energy) }, unique, wildcards, gateSlots, gatesUsed: usedGates };
+        // Aggregate minerals from visible objects
+        const objects = Array.isArray(game.objects) ? game.objects : [];
+        const nodes = objects.filter(o => o.type === 'resource_node' && o.meta && (o.meta.resourceType || o.meta.mineral));
+        const coreSet = new Set(['Ferrite Alloy','Crytite','Ardanium','Vornite','Zerothium']);
+        const primarySet = new Set(['Fluxium','Auralite']);
+        const counts = new Map();
+        for (const n of nodes) {
+            const key = String(n.meta.resourceType || n.meta.mineral || '').trim();
+            if (!key) continue;
+            counts.set(key, (counts.get(key) || 0) + 1);
         }
+        const primaryList = [];
+        const secondaryList = [];
+        counts.forEach((v, k) => {
+            if (primarySet.has(k)) primaryList.push([k, v]);
+            else if (!coreSet.has(k)) secondaryList.push([k, v]);
+        });
+        primaryList.sort((a,b)=>b[1]-a[1]);
+        secondaryList.sort((a,b)=>b[1]-a[1]);
+
         wrap.innerHTML = `
-            <div><b>Name:</b> ${facts.name || sector.name}</div>
-            <div><b>Type:</b> ${facts.type || sector.archetype || 'standard'}</div>
-            <div style="margin-top:8px;"><b>Core Mineral Bias</b></div>
-            <div>
-                • Ferrite Alloy: x${(facts.coreBias?.Ferrite || facts.coreBias?.FerriteAlloy || '1.00')}<br/>
-                • Crytite: x${(facts.coreBias?.Crytite || '1.00')}<br/>
-                • Ardanium: x${(facts.coreBias?.Ardanium || '1.00')}<br/>
-                • Vornite: x${(facts.coreBias?.Vornite || '1.00')}<br/>
-                • Zerothium: x${(facts.coreBias?.Zerothium || '1.00')}
-            </div>
-            <div style="margin-top:8px;"><b>Themed Minerals</b></div>
-            <div>${(facts.themed || facts.unique || []).join(', ') || '—'}</div>
-            <div style="margin-top:8px;"><b>Minor Minerals</b></div>
-            <div>${(facts.minor || facts.wildcards || []).join(', ') || '—'}</div>
-            <div style="margin-top:8px;"><b>Gate Slots</b></div>
-            <div>${facts.gatesUsed || 0} / ${facts.gateSlots || 3}</div>`;
+            <div><b>Name:</b> ${sector.name}</div>
+            <div><b>Type:</b> ${sector.archetype || 'standard'}</div>
+            <div style="margin-top:8px;"><b>Primary minerals present</b></div>
+            <div>${primaryList.length ? primaryList.map(([k,v])=>`${k} ×${v}`).join(', ') : '—'}</div>
+            <div style="margin-top:8px;"><b>Secondary minerals present</b></div>
+            <div>${secondaryList.length ? secondaryList.map(([k,v])=>`${k} ×${v}`).join(', ') : '—'}</div>`;
     } catch (e) {
         const wrap = document.getElementById('sysMetaSummary'); if (wrap) wrap.innerText = 'Failed to load system facts';
     }
@@ -120,6 +112,24 @@ export function openMapModal() {
                     </div>
                     <div style="flex:1 1 auto; min-height:0; display:grid; grid-template-columns: 3fr 1fr; gap:14px; align-items:stretch;">
                         <div style="display:flex; flex-direction:column; min-width:0;">
+                            <div style="flex:0 0 auto; margin: 0 0 8px 2px; color:#9ecbff; font-size:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                    <input type="checkbox" id="toggleRegions" checked>
+                                    <span>Show Regions/Health</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                    <input type="checkbox" id="toggleBelts" checked>
+                                    <span>Show Belts</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                    <input type="checkbox" id="toggleWormholes" checked>
+                                    <span>Show Wormholes</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:not-allowed; opacity:0.6;">
+                                    <input type="checkbox" id="toggleLanes" disabled>
+                                    <span>Show Warp Lanes (coming soon)</span>
+                                </label>
+                            </div>
                             <div style="flex:1; min-height:0;">
                                 <canvas id="fullMapCanvas" class="full-map-canvas" style="width:100%; height:100%; display:block;"></canvas>
                             </div>
@@ -170,7 +180,16 @@ function initializeFullMap() {
         ctx.strokeStyle = 'rgba(100,181,246,0.3)'; ctx.lineWidth = 2; ctx.strokeRect(2,2,canvas.width-4,canvas.height-4);
         if (!client.objects) return;
         const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
-        renderFullMapObjects(ctx, canvas, scaleX, scaleY);
+        const toggles = {
+            regions: document.getElementById('toggleRegions')?.checked !== false,
+            belts: document.getElementById('toggleBelts')?.checked !== false,
+            wormholes: document.getElementById('toggleWormholes')?.checked !== false
+        };
+        renderFullMap(ctx, canvas, scaleX, scaleY, toggles);
+        ['toggleRegions','toggleBelts','toggleWormholes'].forEach(id => {
+            const el = document.getElementById(id); if (!el) return;
+            el.onchange = () => initializeFullMap();
+        });
 }
 
 async function initializeGalaxyMap() {
@@ -193,12 +212,111 @@ async function initializeGalaxyMap() {
         } catch (e) { console.error('initializeGalaxyMap error:', e); const el=document.getElementById('galaxyLegend'); if (el) el.innerText='Failed to render galaxy map'; }
 }
 
-function renderFullMapObjects(ctx, canvas, scaleX, scaleY) {
+async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         const client = window.gameClient; if (!client || !client.objects) return;
+        // Regions overlay
+        if (toggles.regions && client.gameState?.sector?.id) {
+            try {
+                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
+                if (facts && Array.isArray(facts.regions) && facts.regions.length > 0) {
+                    const cellW = 5000 / 3, cellH = 5000 / 3;
+                    facts.regions.forEach(r => {
+                        // Fixed colors per region id: A=blue, B=red, C=gold
+                        let fill = 'rgba(100,149,237,0.10)'; // A default (cornflower blue)
+                        const id = String(r.id || '').toUpperCase();
+                        if (id === 'A') fill = 'rgba(80,130,255,0.10)';
+                        else if (id === 'B') fill = 'rgba(255,99,99,0.10)';
+                        else if (id === 'C') fill = 'rgba(255,200,80,0.10)';
+                        ctx.fillStyle = fill;
+                        (r.cells || []).forEach(c => {
+                            ctx.fillRect(c.col*cellW*scaleX, c.row*cellH*scaleY, cellW*scaleX, cellH*scaleY);
+                        });
+                        // label
+                        const first = (r.cells||[])[0];
+                        if (first) {
+                            const health = Number(r.health || 50);
+                            const cx = (first.col*cellW + cellW*0.1)*scaleX, cy = (first.row*cellH + 16)*scaleY;
+                            ctx.fillStyle = '#9ecbff'; ctx.font = '12px Arial'; ctx.textAlign='left'; ctx.textBaseline='top';
+                            ctx.fillText(`Region ${r.id} — Health ${health}`, cx, cy);
+                        }
+                    });
+                }
+            } catch {}
+        }
+        // Belts (from belt_sectors facts)
+        if (toggles.belts && client.gameState?.sector?.id) {
+            try {
+                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
+                const sectors = facts?.belts || [];
+                const cx = 2500*scaleX, cy = 2500*scaleY;
+                sectors.forEach(s => {
+                    const rInner = Number(s.inner_radius), rOuter = Number(s.inner_radius) + Number(s.width);
+                    const a0 = Number(s.arc_start), a1 = Number(s.arc_end);
+                    const rMid = (rInner + rOuter) / 2;
+                    const aMid = (a0 + a1) / 2;
+                    // Build thin wedge polygon
+                    const p0x = cx + Math.cos(a0)*rInner*scaleX, p0y = cy + Math.sin(a0)*rInner*scaleY;
+                    const p1x = cx + Math.cos(a1)*rInner*scaleX, p1y = cy + Math.sin(a1)*rInner*scaleY;
+                    const p2x = cx + Math.cos(a1)*rOuter*scaleX, p2y = cy + Math.sin(a1)*rOuter*scaleY;
+                    const p3x = cx + Math.cos(a0)*rOuter*scaleX, p3y = cy + Math.sin(a0)*rOuter*scaleY;
+                    // Fill and stroke
+                    ctx.beginPath();
+                    ctx.moveTo(p0x, p0y);
+                    ctx.lineTo(p1x, p1y);
+                    ctx.lineTo(p2x, p2y);
+                    ctx.lineTo(p3x, p3y);
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(158,203,255,0.08)';
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(158,203,255,0.35)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    // Centroid label
+                    const lx = cx + Math.cos(aMid)*rMid*scaleX;
+                    const ly = cy + Math.sin(aMid)*rMid*scaleY;
+                    ctx.fillStyle = 'rgba(200,230,255,0.9)'; ctx.font='10px Arial'; ctx.textAlign='center'; ctx.textBaseline='top';
+                    ctx.fillText(`Belt ${s.belt_key}-${s.sector_index}`, lx, ly + 2);
+
+                    // Hover details near centroid
+                    if (mouse && typeof mouse.x === 'number' && typeof mouse.y === 'number') {
+                        const dx = mouse.x - lx; const dy = mouse.y - ly; const d = Math.sqrt(dx*dx + dy*dy);
+                        if (d <= 10) {
+                            const tip = `Region ${s.region_id} • ${String(s.density || 'med').toUpperCase()}`;
+                            const tw = ctx.measureText(tip).width + 8; const th = 14;
+                            const tx = lx + 12; const ty = ly - 4;
+                            ctx.fillStyle = 'rgba(15,25,45,0.9)'; ctx.fillRect(tx, ty, tw, th);
+                            ctx.strokeStyle = 'rgba(158,203,255,0.6)'; ctx.strokeRect(tx, ty, tw, th);
+                            ctx.fillStyle = '#cfe8ff'; ctx.font='10px Arial'; ctx.textAlign='left'; ctx.textBaseline='top';
+                            ctx.fillText(tip, tx + 4, ty + 2);
+                        }
+                    }
+                });
+            } catch {}
+        }
+        // Wormholes (from facts)
+        if (toggles.wormholes && client.gameState?.sector?.id) {
+            try {
+                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
+                const endpoints = facts?.wormholeEndpoints || [];
+                ctx.fillStyle = '#b388ff'; ctx.strokeStyle = '#b388ff';
+                endpoints.forEach(w => {
+                    const x = w.x * scaleX, y = w.y * scaleY;
+                    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+                });
+            } catch {}
+        }
+        // Base objects with labels
         client.objects.forEach(obj => {
             const x = obj.x * scaleX, y = obj.y * scaleY; ctx.fillStyle = '#64b5f6';
             if (client.isCelestialObject(obj)) {
                 ctx.fillStyle = '#9ecbff'; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill();
+                const meta = obj.meta || {}; const t = obj.celestial_type || obj.type;
+                if (t === 'sun' || t === 'planet' || t === 'wormhole' || t === 'belt') {
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font='11px Arial'; ctx.textAlign='center'; ctx.textBaseline='top';
+                    const name = meta.name || (t==='sun'?'Sun': t==='planet'?'Planet':'Wormhole');
+                    ctx.fillText(String(name).slice(0,18), x, y + 6);
+                }
             } else if (obj.type === 'resource_node') {
                 ctx.fillStyle = '#ffd54f'; ctx.fillRect(x-2,y-2,4,4);
             } else {
@@ -218,9 +336,20 @@ async function loadGalaxyDataInternal() {
 async function populateSystemFactsInternal() {
         try {
             const client = window.gameClient; const wrap = document.getElementById('sysMetaSummary'); if (!wrap || !client?.gameState?.sector) return;
-            const sector = client.gameState.sector; const all = client.objects || []; const planets = all.filter(o=>o.celestial_type==='planet'); const belts = all.filter(o=>o.celestial_type==='belt'); const nebulas = all.filter(o=>o.celestial_type==='nebula');
-            const rock = Math.max(1, belts.length*3), gas = Math.max(1, nebulas.length*2), energy = Math.max(1, planets.length); const total = rock+gas+energy; const pct = n=>`${Math.round((n/total)*100)}%`;
-            wrap.innerHTML = `<div><b>Name:</b> ${sector.name}</div><div><b>Type:</b> ${sector.archetype||'standard'}</div><div style="margin-top:8px;"><b>Core Mineral Bias</b></div><div>• Ferrite Alloy: x1.00<br/>• Crytite: x1.00<br/>• Ardanium: x1.00<br/>• Vornite: x1.00<br/>• Zerothium: x1.00</div><div style="margin-top:8px;"><b>Estimated Ratios</b></div><div>Rock ${pct(rock)}, Gas ${pct(gas)}, Energy ${pct(energy)}</div>`;
+            const sector = client.gameState.sector; const objects = Array.isArray(client.objects) ? client.objects : [];
+            const nodes = objects.filter(o => o.type === 'resource_node' && o.meta && (o.meta.resourceType || o.meta.mineral));
+            const coreSet = new Set(['Ferrite Alloy','Crytite','Ardanium','Vornite','Zerothium']);
+            const primarySet = new Set(['Fluxium','Auralite']);
+            const counts = new Map();
+            for (const n of nodes) {
+                const key = String(n.meta.resourceType || n.meta.mineral || '').trim();
+                if (!key) continue;
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+            const primaryList = []; const secondaryList = [];
+            counts.forEach((v,k)=>{ if (primarySet.has(k)) primaryList.push([k,v]); else if (!coreSet.has(k)) secondaryList.push([k,v]); });
+            primaryList.sort((a,b)=>b[1]-a[1]); secondaryList.sort((a,b)=>b[1]-a[1]);
+            wrap.innerHTML = `<div><b>Name:</b> ${sector.name}</div><div><b>Type:</b> ${sector.archetype||'standard'}</div><div style="margin-top:8px;"><b>Primary minerals present</b></div><div>${primaryList.length?primaryList.map(([k,v])=>`${k} ×${v}`).join(', '):'—'}</div><div style="margin-top:8px;"><b>Secondary minerals present</b></div><div>${secondaryList.length?secondaryList.map(([k,v])=>`${k} ×${v}`).join(', '):'—'}</div>`;
         } catch {}
 }
 

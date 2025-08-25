@@ -124,11 +124,12 @@ router.post('/setup/:gameId', async (req, res) => {
         avatar: require('zod').z.string().min(1),
         colorPrimary: require('zod').z.string().min(1),
         colorSecondary: require('zod').z.string().min(1),
-        systemName: require('zod').z.string().min(1)
+        systemName: require('zod').z.string().min(1),
+        archetypeKey: require('zod').z.string().optional()
     });
     const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
-    const { userId, avatar, colorPrimary, colorSecondary, systemName } = parsed.data;
+    const { userId, avatar, colorPrimary, colorSecondary, systemName, archetypeKey } = parsed.data;
     
     console.log(`🎨 Setup request for game ${gameId}, user ${userId}:`, {
         avatar, colorPrimary, colorSecondary, systemName
@@ -137,7 +138,7 @@ router.post('/setup/:gameId', async (req, res) => {
     try {
         const { PlayerSetupService } = require('../services/game/player-setup.service');
         const svc = new PlayerSetupService();
-        await svc.completeSetup({ gameId, userId, avatar, colorPrimary, colorSecondary, systemName });
+        await svc.completeSetup({ gameId, userId, avatar, colorPrimary, colorSecondary, systemName, archetypeKey });
         console.log(`✅ Player ${userId} completed setup for game ${gameId}`);
         res.json({ 
             success: true,

@@ -20,6 +20,8 @@ const initializeDatabase = async () => {
         const gamesSchema = fs.readFileSync(path.join(__dirname, 'models/games.sql'), 'utf8');
         const gameworldSchema = fs.readFileSync(path.join(__dirname, 'models/gameworld.sql'), 'utf8');
         const celestialSchema = fs.readFileSync(path.join(__dirname, 'models/celestial_objects.sql'), 'utf8');
+        const regionsSchema = fs.readFileSync(path.join(__dirname, 'models/regions.sql'), 'utf8');
+        const beltsLanesSchema = fs.readFileSync(path.join(__dirname, 'models/belts_wormholes_lanes.sql'), 'utf8');
         const resourceSchema = fs.readFileSync(path.join(__dirname, 'models/resource_system.sql'), 'utf8');
         const combatSchema = fs.readFileSync(path.join(__dirname, 'models/combat.sql'), 'utf8');
         
@@ -127,24 +129,39 @@ const initializeDatabase = async () => {
                                             reject(err);
                                         } else {
                                             console.log('✅ Celestial objects schema applied');
-                                            
-                                            // Apply resource system then combat schema (protect against FK issues on upsert)
-                                            db.exec(resourceSchema, (err) => {
-                                                if (err) {
-                                                    console.error('Error applying resource system schema:', err);
-                                                    reject(err);
-                                                } else {
-                                                    console.log('✅ Resource system schema applied');
-                                                    db.exec(combatSchema, (cerr) => {
-                                                        if (cerr) {
-                                                            console.error('Error applying combat system schema:', cerr);
-                                                            reject(cerr);
+                                            // Apply regions schema
+                                            db.exec(regionsSchema, (rErr) => {
+                                                if (rErr) {
+                                                    console.error('Error applying regions schema:', rErr);
+                                                    return reject(rErr);
+                                                }
+                                                console.log('✅ Regions schema applied');
+                                                // Apply belts/wormholes/lanes schema
+                                                db.exec(beltsLanesSchema, (bErr) => {
+                                                    if (bErr) {
+                                                        console.error('Error applying belts/wormholes/lanes schema:', bErr);
+                                                        return reject(bErr);
+                                                    }
+                                                    console.log('✅ Belts/Wormholes/Lanes schema applied');
+                                                    // Apply resource system then combat schema (protect against FK issues on upsert)
+                                                    db.exec(resourceSchema, (err) => {
+                                                        if (err) {
+                                                            console.error('Error applying resource system schema:', err);
+                                                            reject(err);
                                                         } else {
-                                                            console.log('✅ Combat system schema applied');
-                                                            resolve();
+                                                            console.log('✅ Resource system schema applied');
+                                                            db.exec(combatSchema, (cerr) => {
+                                                                if (cerr) {
+                                                                    console.error('Error applying combat system schema:', cerr);
+                                                                    reject(cerr);
+                                                                } else {
+                                                                    console.log('✅ Combat system schema applied');
+                                                                    resolve();
+                                                                }
+                                                            });
                                                         }
                                                     });
-                                                }
+                                                });
                                             });
                                         }
                                     });

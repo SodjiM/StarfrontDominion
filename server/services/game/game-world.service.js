@@ -1,5 +1,5 @@
 const db = require('../../db');
-const { SystemGenerator } = require('../world/system-generator');
+const { seedSector } = require('../world/seed-orchestrator');
 const { CargoManager } = require('./cargo-manager');
 
 class GameWorldManager {
@@ -32,16 +32,16 @@ class GameWorldManager {
         const sectorName = `${player.username}'s Domain`;
         console.log(`🌍 Creating sector for ${player.username}`);
         const initialGateSlots = 2 + Math.floor(Math.random() * 3);
+        // Defer archetype selection and seeding to player setup; create sector with NULL archetype
         db.run(
-            'INSERT INTO sectors (game_id, owner_id, name, archetype, gate_slots) VALUES (?, ?, ?, ?, ?)',
-            [gameId, player.user_id, sectorName, GameWorldManager.pickRandomArchetype(gameId, player.user_id), initialGateSlots],
+            'INSERT INTO sectors (game_id, owner_id, name, archetype, gate_slots) VALUES (?, ?, ?, NULL, ?)',
+            [gameId, player.user_id, sectorName, initialGateSlots],
             function(err) {
                 if (err) return reject(err);
                 const sectorId = this.lastID;
                 console.log(`📍 Created sector ${sectorId} for ${player.username}`);
-                GameWorldManager.generateSectorAndStartingObjects(gameId, player, sectorId, () => {
-                    GameWorldManager.createPlayerSectors(gameId, players, index + 1, resolve, reject);
-                }, reject);
+                // Do not seed yet; wait for player setup to select archetype
+                GameWorldManager.createPlayerSectors(gameId, players, index + 1, resolve, reject);
             }
         );
     }
@@ -58,8 +58,20 @@ class GameWorldManager {
                 await new Promise((resolve) => db.run('UPDATE sectors SET archetype = ? WHERE id = ?', [archetype, sectorId], () => resolve()));
             }
             console.log(`🎯 Using archetype: ${archetype || 'standard'} for sector ${sectorId}`);
-            const generationResult = await SystemGenerator.generateSystem(sectorId, archetype);
-            console.log(`✅ System generation complete:`, generationResult);
+            // Guard against double-seeding: only seed if sector has no sun and no belts persisted
+            const existing = await new Promise((resolve) => db.get(
+                `SELECT 
+                    (SELECT COUNT(1) FROM sector_objects WHERE sector_id = ? AND celestial_type = 'star') AS suns,
+                    (SELECT COUNT(1) FROM belt_sectors WHERE sector_id = ?) AS belts`,
+                [sectorId, sectorId],
+                (e, r) => resolve(r || { suns: 0, belts: 0 })
+            ));
+            if (Number(existing.suns || 0) === 0 && Number(existing.belts || 0) === 0) {
+                const generationResult = await seedSector({ sectorId, archetypeKey: archetype, seedBase: gameId });
+                console.log(`✅ Seeded sector:`, generationResult);
+            } else {
+                console.log(`ℹ️ Sector ${sectorId} already seeded (suns=${existing.suns}, belts=${existing.belts}); skipping seeding.`);
+            }
             this.createStartingObjects(gameId, player, sectorId, onComplete, onError);
         } catch (error) {
             console.error(`❌ Failed to generate sector ${sectorId}:`, error);
@@ -76,29 +88,36 @@ class GameWorldManager {
     }
 
     static createStartingObjects(gameId, player, sectorId, onComplete, onError) {
-        db.get(
+        db.all(
             `SELECT p.id, p.x, p.y, p.meta
              FROM sector_objects p
-             LEFT JOIN sector_objects s ON s.parent_object_id = p.id AND s.type = 'station'
-             WHERE p.sector_id = ? AND p.celestial_type = 'planet' AND s.id IS NULL
-             ORDER BY RANDOM() LIMIT 1`,
+             WHERE p.sector_id = ? AND p.celestial_type = 'planet'`,
             [sectorId],
-            (err, planet) => {
+            (err, planets) => {
                 if (err) return onError(err);
-                let spawnX, spawnY;
-                if (planet) {
-                    const planetMeta = JSON.parse(planet.meta || '{}');
-                    const distance = 35 + Math.floor(Math.random() * 11);
+                let anchorPlanet = null; let spawnX, spawnY;
+                if (Array.isArray(planets) && planets.length > 0) {
+                    // Prefer the planet nearest to sector center for safer spawn
+                    const centerX = 2500, centerY = 2500;
+                    anchorPlanet = planets.reduce((best, p) => {
+                        const dx = (p.x - centerX); const dy = (p.y - centerY); const d = dx*dx + dy*dy;
+                        if (!best) return { p, d };
+                        return d < best.d ? { p, d } : best;
+                    }, null)?.p || planets[0];
+                    const distance = 18 + Math.floor(Math.random() * 10); // tighter ring 18–27
                     const angle = Math.random() * 2 * Math.PI;
-                    spawnX = Math.round(planet.x + Math.cos(angle) * distance);
-                    spawnY = Math.round(planet.y + Math.sin(angle) * distance);
-                    spawnX = Math.max(1, Math.min(4999, spawnX));
-                    spawnY = Math.max(1, Math.min(4999, spawnY));
-                    console.log(`🌍 Spawning ${player.username} on ring ${distance}T from planet "${planetMeta.name}" at (${spawnX}, ${spawnY}) [planetId=${planet.id}]`);
+                    spawnX = Math.max(1, Math.min(4999, Math.round(anchorPlanet.x + Math.cos(angle) * distance)));
+                    spawnY = Math.max(1, Math.min(4999, Math.round(anchorPlanet.y + Math.sin(angle) * distance)));
+                    const pm = (() => { try { return JSON.parse(anchorPlanet.meta || '{}'); } catch { return {}; } })();
+                    console.log(`🌍 Spawning ${player.username} at ${distance}T from planet "${pm.name || 'Planet'}" (${anchorPlanet.id}) → (${spawnX},${spawnY})`);
                 } else {
-                    spawnX = 1000 + Math.floor(Math.random() * 3000);
-                    spawnY = 1000 + Math.floor(Math.random() * 3000);
-                    console.warn(`⚠️ No planets found for ${player.username}, using fallback spawn at (${spawnX}, ${spawnY})`);
+                    // Fallback near sun center
+                    const sun = { x: 2500, y: 2500 };
+                    const distance = 25 + Math.floor(Math.random() * 10);
+                    const angle = Math.random() * 2 * Math.PI;
+                    spawnX = Math.round(sun.x + Math.cos(angle) * distance);
+                    spawnY = Math.round(sun.y + Math.sin(angle) * distance);
+                    console.warn(`⚠️ No planets found for ${player.username}, fallback near sun at (${spawnX}, ${spawnY})`);
                 }
 
                 const stationClass = 'planet-station';
@@ -165,8 +184,8 @@ class GameWorldManager {
                     });
                 };
 
-                if (planet && planet.id) {
-                    insertAnchored(planet.id);
+                if (anchorPlanet && anchorPlanet.id) {
+                    insertAnchored(anchorPlanet.id);
                 } else {
                     db.get(`SELECT id FROM sector_objects WHERE sector_id = ? AND celestial_type = 'sun' LIMIT 1`, [sectorId], (e2, sunRow) => {
                         insertAnchored(sunRow && sunRow.id ? sunRow.id : null);

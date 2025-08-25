@@ -48,6 +48,15 @@
 			} else {
 				ctx.fillRect(x - size/2, y - size/2, size, size);
 			}
+			// Labels for sun/planets/wormholes
+			if (celestialType === 'star' || celestialType === 'planet' || celestialType === 'wormhole') {
+				const name = (meta && (meta.name || meta.displayName)) || (celestialType === 'star' ? 'Sun' : (celestialType === 'planet' ? 'Planet' : 'Wormhole'));
+				ctx.fillStyle = 'rgba(255,255,255,0.9)';
+				ctx.font = '8px Arial';
+				ctx.textAlign = 'center';
+				ctx.textBaseline = 'top';
+				ctx.fillText(String(name).slice(0,14), x, y + (size/2) + 2);
+			}
 		});
 
 		const resourceFieldLabels = new Map();
@@ -84,6 +93,26 @@
 			const label = field.type === 'rock' ? 'Asteroid Belt' : 'Nebula Field';
 			ctx.fillText(label, cx, cy + 15);
 			ctx.shadowBlur = 0;
+		});
+
+		// Belt and wormhole icons with brief labels
+		celestialObjects.filter(o => (o.celestial_type === 'belt')).forEach(b => {
+			const x = b.x * scaleX, y = b.y * scaleY;
+			ctx.fillStyle = 'rgba(158,203,255,0.9)';
+			ctx.beginPath(); ctx.arc(x, y, 1.5, 0, Math.PI*2); ctx.fill();
+			const name = (b.meta && (b.meta.name || 'Belt'));
+			ctx.fillStyle = 'rgba(220,235,255,0.9)'; ctx.font='7px Arial'; ctx.textAlign='center'; ctx.textBaseline='top';
+			ctx.fillText(String(name).slice(0,10), x, y + 2);
+		});
+
+		// Wormhole markers (if present)
+		objects.filter(o => (o.celestial_type === 'wormhole')).forEach(w => {
+			const x = w.x * scaleX, y = w.y * scaleY;
+			ctx.fillStyle = '#b388ff';
+			ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI*2); ctx.fill();
+			const name = (w.meta && (w.meta.name || 'Wormhole'));
+			ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font='8px Arial'; ctx.textAlign='center'; ctx.textBaseline='top';
+			ctx.fillText(String(name).slice(0,14), x, y + 4);
 		});
 
 		shipObjects.forEach(obj => {

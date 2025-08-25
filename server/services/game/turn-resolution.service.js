@@ -57,6 +57,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             await cleanupExpiredEffectsAndWrecks(gameId, turnNumber);
             await regenerateShipEnergy(gameId, turnNumber);
 
+            // 6.2 Region health tick (upkeep/decay + history)
+            try { const { tickRegionHealth } = require('../world/region-health.tick'); await tickRegionHealth(gameId, turnNumber); } catch {}
+
             // 6.5. Materialize next queued orders for idle ships into upcoming turn
             await materializeQueuedOrders(gameId, turnNumber + 1);
 

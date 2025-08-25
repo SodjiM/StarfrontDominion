@@ -1,26 +1,49 @@
 // Sprite registry, preloader, and simple sheet animator
 
 const SPRITE_PATHS = {
-    ship: 'assets/ships/ship.png',
+    ship: 'assets/ships/explorer.png',
     explorer: 'assets/ships/explorer.png',
     'needle-gunship': 'assets/ships/needle-gunship.png',
     'swift-courier': 'assets/ships/swift-courier.png',
     'drill-skiff': 'assets/ships/drill-skiff.png',
-    station: 'assets/structures/station.png',
+    station: 'assets/structures/planet-station.png',
     'sun-station': 'assets/structures/sun-station.png',
     'planet-station': 'assets/structures/planet-station.png',
     'moon-station': 'assets/structures/moon-station.png',
-    'storage-box': 'assets/structures/storage-box.png',
-    'warp-beacon': 'assets/structures/warp-beacon.png',
-    'interstellar-gate': 'assets/structures/interstellar-gate.png',
+    // Resource node sprites. Prefer mineral-name keys; fallbacks provided.
     resource: {
-        rock: 'assets/resources/rock.png',
-        gas: 'assets/resources/gas.png',
-        energy: 'assets/resources/energy.png'
+        'Aetherium': 'assets/resources/Aetherium.png',
+        'Ardanium': 'assets/resources/Ardanium.png',
+        'Auralite': 'assets/resources/Auralite.png',
+        'Aurivex': 'assets/resources/Aurivex.png',
+        'Corvexite-plasma': 'assets/resources/Corvexite-plasma.png',
+        'Cryphos': 'assets/resources/Cryphos.png',
+        'Crytite': 'assets/resources/Crytite.png',
+        'Drakonium': 'assets/resources/Drakonium.png',
+        'Ferrite-alloy': 'assets/resources/Ferrite-alloy.png',
+        'Fluxium': 'assets/resources/Fluxium.png',
+        'Gravium': 'assets/resources/Gravium.png',
+        'Heliox-ore': 'assets/resources/Heliox-ore.png',
+        'Kryon-dust': 'assets/resources/Kryon-dust.png',
+        'Luminite': 'assets/resources/Luminite.png',
+        'Magnetrine': 'assets/resources/Magnetrine.png',
+        'Mythrion': 'assets/resources/Mythrion.png',
+        'Nebryllium': 'assets/resources/Nebryllium.png',
+        'Neurogel': 'assets/resources/Neurogel.png',
+        'Oblivium': 'assets/resources/Oblivium.png',
+        'Phasegold': 'assets/resources/Phasegold.png',
+        'Pyronex': 'assets/resources/Pyronex.png',
+        'Quarzon': 'assets/resources/Quarzon.png',
+        'Riftstone': 'assets/resources/Riftstone.png',
+        'Starforged-carbon': 'assets/resources/Starforged-carbon.png',
+        'Tachytrium': 'assets/resources/Tachytrium.png',
+        'Voidglass': 'assets/resources/Voidglass.png',
+        'Vornite': 'assets/resources/Vornite.png',
+        'Zerothium': 'assets/resources/Zerothium.png',
     },
     // Animated sheets (PNG + JSON descriptor)
     sheets: {
-        explorer: 'assets/sheets/explorer.sheet.json'
+        
     }
 };
 
@@ -74,8 +97,30 @@ export function getSpriteForObject(obj) {
     if (SPRITE_PATHS[typeKey] && imageCache.has(SPRITE_PATHS[typeKey])) return imageCache.get(SPRITE_PATHS[typeKey]);
     if (SPRITE_PATHS[obj.type] && imageCache.has(SPRITE_PATHS[obj.type])) return imageCache.get(SPRITE_PATHS[obj.type]);
     if (obj.type === 'resource_node') {
-        const r = (meta.resourceType || '').toLowerCase();
-        const p = SPRITE_PATHS.resource && SPRITE_PATHS.resource[r];
+        // Prefer mineral-name sprite; match case-insensitively against keys
+        const raw = String(meta.resourceType || meta.mineral || '');
+        const slug = raw.toLowerCase().replace(/\s+/g, '-');
+        let p = null;
+        if (SPRITE_PATHS.resource) {
+            // Exact key
+            p = SPRITE_PATHS.resource[raw] || SPRITE_PATHS.resource[slug];
+            if (!p) {
+                // Case-insensitive lookup across keys
+                const keys = Object.keys(SPRITE_PATHS.resource);
+                const match = keys.find(k => k.toLowerCase().replace(/\s+/g, '-') === slug);
+                if (match) p = SPRITE_PATHS.resource[match];
+            }
+        }
+        if (!p) {
+            // Fallback to category if provided
+            const cat = (meta.category || '').toLowerCase();
+            p = SPRITE_PATHS.resource && SPRITE_PATHS.resource[cat];
+        }
+        if (!p) {
+            // Last fallback: legacy resourceType values 'rock'|'gas'|'energy'
+            const r = (meta.resourceType || '').toLowerCase();
+            p = SPRITE_PATHS.resource && SPRITE_PATHS.resource[r];
+        }
         if (p && imageCache.has(p)) return imageCache.get(p);
     }
     const fallback = SPRITE_PATHS.ship;

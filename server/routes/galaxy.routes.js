@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const router = express.Router();
+const CONFIG = require('../config').loadConfig ? require('../config').loadConfig() : null;
 
 // Galaxy graph: systems and interstellar gates
 router.get('/:gameId/galaxy-graph', (req, res) => {
@@ -41,12 +42,28 @@ router.get('/system/:sectorId/facts', async (req, res) => {
     const { sectorId } = req.params;
     try {
         const { SystemFactsService } = require('../services/world/system-facts.service');
-        const svc = new SystemFactsService();
-        const facts = await svc.getFacts(sectorId);
+        const facts = await SystemFactsService.getSectorSummary(sectorId);
         if (!facts) return res.status(404).json({ error: 'sector_not_found' });
         res.json(facts);
     } catch (e) {
+        console.error('facts_error:', e);
         res.status(500).json({ error: 'facts_error' });
+    }
+});
+
+// Admin: re-run resource node spawning for a sector (on-demand)
+router.post('/system/:sectorId/respawn-resources', async (req, res) => {
+    const { sectorId } = req.params;
+    try {
+        const secret = req.header('x-admin-secret') || req.query.adminSecret || req.body?.adminSecret;
+        const adminOk = CONFIG?.adminSecret ? (secret === CONFIG.adminSecret) : true;
+        if (!adminOk) return res.status(403).json({ error: 'forbidden' });
+        const { spawnNodesForSector } = require('../services/world/resource-node-generator');
+        const out = await spawnNodesForSector(Number(sectorId));
+        res.json({ success: true, result: out });
+    } catch (e) {
+        console.error('respawn-resources error:', e);
+        res.status(500).json({ error: 'server_error' });
     }
 });
 

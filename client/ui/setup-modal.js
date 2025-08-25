@@ -32,6 +32,14 @@ export function showSetupModal(game) {
                 </div>
             </div>
             <div class="form-section">
+                <h3>🧬 Archetype</h3>
+                <select id="archetypeSelect" class="form-input">
+                    <option value="WORMHOLE">Wormhole Cluster — Doors & Drift</option>
+                    <option value="ASTBELT">Asteroid-Heavy Belt — Rubble & Riches</option>
+                    <option value="STANDARD">Standard Sector</option>
+                </select>
+            </div>
+            <div class="form-section">
                 <h3>🌌 Solar System Name</h3>
                 <input type="text" id="systemName" class="form-input" placeholder="Enter system name..." maxlength="30" required>
             </div>`;
@@ -73,6 +81,7 @@ async function submit(game) {
         const selectedAvatar = document.querySelector('.avatar-option.selected')?.dataset.avatar;
         const primaryColor = document.getElementById('primaryColor')?.value;
         const secondaryColor = document.getElementById('secondaryColor')?.value;
+        const archetypeKey = document.getElementById('archetypeSelect')?.value || 'STANDARD';
         const systemName = document.getElementById('systemName')?.value?.trim();
         if (!selectedAvatar) { UI.showAlert('Please select an avatar'); return false; }
         if (!systemName) { UI.showAlert('Please enter a system name'); return false; }
@@ -85,7 +94,8 @@ async function submit(game) {
                     avatar: selectedAvatar,
                     colorPrimary: primaryColor,
                     colorSecondary: secondaryColor,
-                    systemName
+                    systemName,
+                    archetypeKey
                 })
             });
             if (!response.ok) {
