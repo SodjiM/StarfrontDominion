@@ -45,9 +45,10 @@ body {
 }
 .encyclopedia-body {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 350px 1fr;
   gap: 12px;
   min-height: 640px;
+  height: 100%;
 }
 .encyclopedia-sidebar { display: grid; grid-template-rows: auto auto 1fr; gap: 10px; overflow: hidden; min-height: 0; }
 .encyclopedia-tabs {
@@ -74,7 +75,7 @@ body {
 .encyclopedia-item { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); cursor: pointer; }
 .encyclopedia-item:hover { background: rgba(255,255,255,0.06); }
 .encyclopedia-item.active { background: rgba(100,181,246,0.12); }
-.encyclopedia-content { border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+.encyclopedia-content { border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow-y: auto; overflow-x: hidden; min-height: 0; max-width: 100%; box-sizing: border-box; }
 .encyclopedia-content h3 { margin: 0 0 8px 0; color: var(--primary); }
 .encyclopedia-content .meta { color: var(--muted); margin-bottom: 10px; }
 
@@ -277,4 +278,830 @@ body {
 #unitsList::-webkit-scrollbar-track { background: rgba(255,255,255,0.06); border-left: 1px solid var(--border); }
 #unitsList::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(100,181,246,0.35), rgba(100,181,246,0.18)); border: 1px solid rgba(100,181,246,0.45); border-radius: 6px; }
 #unitsList { scrollbar-color: rgba(100,181,246,0.5) rgba(255,255,255,0.06); scrollbar-width: thin; overflow-x: hidden; }
+
+/* Encyclopedia Styles */
+.encyclopedia-modal {
+  max-width: 1200px;
+  width: 95vw;
+  height: 80vh;
+  max-height: 800px;
+}
+
+.encyclopedia-body {
+  display: flex;
+  height: 100%;
+  gap: 0;
+}
+
+.encyclopedia-sidebar {
+  width: 320px;
+  background: rgba(0, 0, 0, 0.8);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.encyclopedia-tabs {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.encyclopedia-tab {
+  padding: 12px 16px;
+  margin: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
+}
+
+.encyclopedia-tab:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.encyclopedia-tab.active {
+  background: rgba(100, 181, 246, 0.2);
+  color: #64b5f6;
+  border-left-color: #64b5f6;
+}
+
+.encyclopedia-search {
+  margin: 12px 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.encyclopedia-search:focus {
+  outline: none;
+  border-color: #64b5f6;
+  box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
+}
+
+.encyclopedia-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.encyclopedia-item {
+  padding: 12px 16px;
+  margin: 2px 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
+}
+
+.encyclopedia-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.encyclopedia-item.active {
+  background: rgba(100, 181, 246, 0.15);
+  border-left-color: #64b5f6;
+}
+
+.entry-icon {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.entry-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.entry-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+
+.encyclopedia-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.encyclopedia-entry {
+  max-width: 800px;
+}
+
+.encyclopedia-entry h1 {
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  font-size: 24px;
+}
+
+.encyclopedia-entry .entry-summary {
+  color: var(--text-secondary);
+  font-size: 16px;
+  margin-bottom: 20px;
+  font-style: italic;
+}
+
+.encyclopedia-placeholder {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 40px;
+  font-style: italic;
+}
+
+/* Ship Blueprint Styles */
+.ship-blueprint {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+
+.ship-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ship-header h3 {
+  margin: 0;
+  color: #64b5f6;
+}
+
+.ship-class {
+  background: rgba(100, 181, 246, 0.2);
+  color: #64b5f6;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ship-role {
+  background: rgba(255, 193, 7, 0.2);
+  color: #ffc107;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.ship-description {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.ship-stats {
+  margin: 16px 0;
+}
+
+.ship-stats h4 {
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.stat-item {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 8px 12px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.ship-requirements {
+  margin: 16px 0;
+}
+
+.ship-requirements h4 {
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.requirements-section {
+  margin-bottom: 12px;
+}
+
+.requirements-section h5 {
+  color: #81c784;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.ship-abilities,
+.ship-upkeep {
+  margin: 16px 0;
+}
+
+.ship-abilities h4,
+.ship-upkeep h4 {
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.ship-abilities ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.ship-abilities li {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* Ability Details Styles */
+.ability-details {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+
+.ability-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ability-header h3 {
+  margin: 0;
+  color: #64b5f6;
+}
+
+.ability-type {
+  background: rgba(255, 193, 7, 0.2);
+  color: #ffc107;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.ability-description {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.ability-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.stat-label {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.stat-value {
+  color: #81c784;
+  font-weight: 600;
+}
+
+/* Archetype Details Styles */
+.archetype-details {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+
+.archetype-details h3 {
+  color: #64b5f6;
+  margin-bottom: 8px;
+}
+
+.archetype-description {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.archetype-bias h4,
+.archetype-specialized h4,
+.archetype-strategy h4 {
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.archetype-bias ul,
+.archetype-specialized ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.archetype-bias li,
+.archetype-specialized li {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* Welcome Content Styles */
+.welcome-content h2 {
+  color: #64b5f6;
+  margin-bottom: 16px;
+}
+
+.welcome-content h3 {
+  color: var(--text-primary);
+  margin: 20px 0 8px 0;
+}
+
+.welcome-content ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.welcome-content li {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* Quick Start Styles */
+.quickstart-content h3 {
+  color: #81c784;
+  margin: 16px 0 8px 0;
+}
+
+.quickstart-content p {
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+/* First Steps Styles */
+.first-steps-content h3 {
+  color: #81c784;
+  margin: 16px 0 8px 0;
+}
+
+.first-steps-content ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.first-steps-content li {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.first-steps-content h3:last-of-type {
+  color: #ffb74d;
+}
+
+/* Content Section Styles */
+.construction-content h3,
+.combat-content h3,
+.celestial-content h3,
+.resource-distribution h3,
+.turn-resolution h3,
+.movement-travel h3,
+.mining-economy h3,
+.visibility-scanning h3,
+.stations-structures h3,
+.logistics-cargo h3,
+.fleet-management h3,
+.economic-systems h3 {
+  color: #64b5f6;
+  margin-bottom: 12px;
+}
+
+.construction-content h4,
+.combat-content h4,
+.celestial-content h4,
+.resource-distribution h4,
+.turn-resolution h4,
+.movement-travel h4,
+.mining-economy h4,
+.visibility-scanning h4,
+.stations-structures h4,
+.logistics-cargo h4,
+.fleet-management h4,
+.economic-systems h4 {
+  color: var(--text-primary);
+  margin: 16px 0 8px 0;
+}
+
+.construction-content ul,
+.combat-content ul,
+.celestial-content ul,
+.resource-distribution ul,
+.movement-travel ul,
+.mining-economy ul,
+.visibility-scanning ul,
+.stations-structures ul,
+.logistics-cargo ul,
+.fleet-management ul,
+.economic-systems ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.construction-content li,
+.combat-content li,
+.celestial-content li,
+.resource-distribution li,
+.movement-travel li,
+.mining-economy li,
+.visibility-scanning li,
+.stations-structures li,
+.logistics-cargo li,
+.fleet-management li,
+.economic-systems li {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.construction-content ol,
+.turn-resolution ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.construction-content li,
+.turn-resolution li {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* Enhanced Interactive Elements */
+.search-result-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 8px 16px;
+  background: rgba(100, 181, 246, 0.1);
+  border-radius: 4px;
+  margin: 4px 8px;
+}
+
+.search-score {
+  color: var(--text-secondary);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.no-search-results {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.no-results-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.no-results-text {
+  font-size: 14px;
+}
+
+.search-highlight {
+  background-color: rgba(255, 193, 7, 0.3);
+  color: #ffc107;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* Ship Blueprint Enhancements */
+.ship-blueprint.interactive {
+  transition: all 0.3s ease;
+}
+
+.ship-blueprint.interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(100, 181, 246, 0.2);
+}
+
+.ship-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.ship-image {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+}
+
+.ship-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ship-icon-fallback {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 32px;
+  color: var(--text-secondary);
+}
+
+.ship-info h3 {
+  margin: 0 0 8px 0;
+  color: #64b5f6;
+}
+
+.ship-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ship-class {
+  background: rgba(100, 181, 246, 0.2);
+  color: #64b5f6;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ship-role {
+  background: rgba(255, 193, 7, 0.2);
+  color: #ffc107;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+/* Collapsible Elements */
+.collapsible {
+  margin: 16px 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.collapsible-header {
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: all 0.2s ease;
+}
+
+.collapsible-header::after {
+  content: '▶';
+  transition: transform 0.2s;
+  color: var(--text-secondary);
+}
+
+.collapsible-header.expanded {
+  background: rgba(100, 181, 246, 0.1);
+  color: #64b5f6;
+}
+
+.collapsible-header.expanded::after {
+  transform: rotate(90deg);
+}
+
+.collapsible-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.collapsible-content.expanded {
+  max-height: 1000px;
+  padding: 12px 16px;
+}
+
+/* Mineral Enhancements */
+.mineral-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.mineral-item {
+  background: rgba(100, 181, 246, 0.1);
+  color: #64b5f6;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.mineral-item:hover {
+  background: rgba(100, 181, 246, 0.2);
+  border-color: rgba(100, 181, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.core-mineral {
+  background: rgba(76, 175, 80, 0.1);
+  color: #4caf50;
+}
+
+.core-mineral:hover {
+  background: rgba(76, 175, 80, 0.2);
+  border-color: rgba(76, 175, 80, 0.4);
+}
+
+.specialized-mineral {
+  background: rgba(255, 193, 7, 0.1);
+  color: #ffc107;
+}
+
+.specialized-mineral:hover {
+  background: rgba(255, 193, 7, 0.2);
+  border-color: rgba(255, 193, 7, 0.4);
+}
+
+.upkeep-mineral {
+  background: rgba(244, 67, 54, 0.1);
+  color: #f44336;
+}
+
+.upkeep-mineral:hover {
+  background: rgba(244, 67, 54, 0.2);
+  border-color: rgba(244, 67, 54, 0.4);
+}
+
+/* Ability Enhancements */
+.ability-list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.ability-item {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-left: 3px solid rgba(100, 181, 246, 0.5);
+}
+
+.ability-item:hover {
+  background: rgba(100, 181, 246, 0.1);
+  border-left-color: #64b5f6;
+  transform: translateX(2px);
+}
+
+/* Mineral Display with Images */
+.mineral-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.mineral-display:hover {
+  transform: translateY(-1px);
+  border-color: rgba(100, 181, 246, 0.4);
+}
+
+.mineral-image {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.mineral-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.mineral-icon-fallback {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+.mineral-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mineral-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mineral-amount {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+/* Tooltip System */
+.mineral-tooltip-popup {
+  position: fixed;
+  background: rgba(0, 0, 0, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 300px;
+  z-index: 10000;
+  display: none;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
+}
+
+.tooltip-header {
+  color: #64b5f6;
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.tooltip-content {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Enhanced focus states */
+.encyclopedia-search.focused {
+  border-color: #64b5f6;
+  box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
+}
+
+/* Error content styling */
+.error-content {
+  text-align: center;
+  padding: 20px;
+}
+
+.error-content h3 {
+  color: #f44336;
+  margin-bottom: 12px;
+}
+
+.error-content p {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.error-content button {
+  background: rgba(100, 181, 246, 0.2);
+  color: #64b5f6;
+  border: 1px solid rgba(100, 181, 246, 0.3);
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.error-content button:hover {
+  background: rgba(100, 181, 246, 0.3);
+  border-color: rgba(100, 181, 246, 0.5);
+}
 

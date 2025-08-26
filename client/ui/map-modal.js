@@ -340,11 +340,25 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                 </div>`;
                             document.body.appendChild(box);
                             box.querySelector('#btnTapEnter').onclick = async () => {
-                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'tap', shipId: client.selectedUnit?.id }, (resp)=>{});
+                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'tap', shipId: client.selectedUnit?.id }, (resp)=>{
+                                    if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Tap entry failed', 'error'); }
+                                    else if (resp.queued) { client.addLogEntry(`Queued at tap • ETA to slot: ${resp.queueEtaTurns || 1} turn(s)`, 'info'); }
+                                    else { client.addLogEntry('Entered lane via tap', 'success'); }
+                                });
                                 document.body.removeChild(box);
                             };
                             box.querySelector('#btnWildcat').onclick = async () => {
-                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'wildcat', shipId: client.selectedUnit?.id }, (resp)=>{});
+                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'wildcat', shipId: client.selectedUnit?.id }, (resp)=>{
+                                    if (!resp || !resp.success) {
+                                        const reason = resp?.error;
+                                        if (reason === 'over_capacity') client.addLogEntry('Wildcat denied: lane overloaded', 'warning');
+                                        else if (reason === 'out_of_envelope') client.addLogEntry('Wildcat denied: out of merge envelope', 'warning');
+                                        else if (resp?.mishap) client.addLogEntry('Merge mishap • delayed 1 turn', 'warning');
+                                        else client.addLogEntry(reason || 'Wildcat entry failed', 'error');
+                                    } else {
+                                        client.addLogEntry(`Wildcat merge started • merge turns: ${resp.mergeTurns} • risk ${(Math.round((resp.mishapChance||0)*100))}%`, 'info');
+                                    }
+                                });
                                 document.body.removeChild(box);
                             };
                         }

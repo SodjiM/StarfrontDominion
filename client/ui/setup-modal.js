@@ -36,6 +36,17 @@ export function showSetupModal(game) {
                 <select id="archetypeSelect" class="form-input">
                     <option value="WORMHOLE">Wormhole Cluster — Doors & Drift</option>
                     <option value="ASTBELT">Asteroid-Heavy Belt — Rubble & Riches</option>
+                    <option value="DIPLOMATIC_EXPANSE">Diplomatic Expanse — Auric Courts</option>
+                    <option value="GRAVITON">Graviton Sink — Weight & Whorls</option>
+                    <option value="RELAY">Starlight Relay — Beacons & Slipstreams</option>
+                    <option value="FORGEYARD">Capital Forgeyard — Hull & Bulwark</option>
+                    <option value="SOLAR">Solar Flare Engine — Light & Rhythm</option>
+                    <option value="ION_TEMPEST">Ion Tempest — EM Weather</option>
+                    <option value="DARK_NEBULA">Dark Nebula Nursery — Shadows & Birth</option>
+                    <option value="CRYO_COMET">Cryo Comet Rain — Cold Logistics</option>
+                    <option value="BINARY">Binary Star System — Duality & Tides</option>
+                    <option value="SUPERNOVA">Supernova Remnant — Furnace & Shrapnel</option>
+                    <option value="GHOST_NET">Ghost Net Array — Drones & Deception</option>
                     <option value="STANDARD">Standard Sector</option>
                 </select>
             </div>

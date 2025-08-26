@@ -30,6 +30,10 @@ class SectorGenerationPipeline {
     }
 
     async execute() {
+        // Ensure database migrations/columns are ready before generation
+        if (db && db.ready) {
+            try { await db.ready; } catch {}
+        }
         // Wrap generation in a transaction to avoid partial state
         await new Promise((resolve, reject) => db.run('BEGIN IMMEDIATE TRANSACTION', (e) => e ? reject(e) : resolve()));
         try {
