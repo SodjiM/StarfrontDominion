@@ -90,6 +90,17 @@
       const abilitiesData = processApiResult(loadResults[1], 'abilities');
       const archetypesData = processApiResult(loadResults[2], 'archetypes');
 
+      console.log('API Data loaded:', {
+        blueprints: blueprintsData.blueprints?.length || 0,
+        abilities: Object.keys(abilitiesData.abilities || {}).length,
+        archetypes: archetypesData.archetypes?.length || 0
+      });
+
+      // Log archetype data structure for debugging
+      if (archetypesData.archetypes && archetypesData.archetypes.length > 0) {
+        console.log('Sample archetype data:', archetypesData.archetypes[0]);
+      }
+
       // Build encyclopedia data structure
       const data = { ...ENCYCLOPEDIA_STRUCTURE };
 
@@ -100,6 +111,10 @@
           abilities: abilitiesData.abilities || [],
           archetypes: archetypesData.archetypes || []
         });
+        console.log(`Generated ${category.entries.length} entries for category: ${category.id}`);
+        if (category.entries.length > 0) {
+          console.log(`Sample entries for ${category.id}:`, category.entries.slice(0, 3).map(e => ({ id: e.id, title: e.title })));
+        }
       });
 
       // Add metadata about data freshness
@@ -415,16 +430,27 @@
     const entries = [];
 
     // Add all system archetypes dynamically
-    dynamicData.archetypes.forEach(archetype => {
-      entries.push({
-        id: `archetype-${archetype.key}`,
-        title: archetype.displayName,
-        icon: '🌀',
-        tags: ['archetype', 'system'],
-        summary: archetype.description,
-        content: formatArchetypeDetails(archetype)
+    if (dynamicData.archetypes && Array.isArray(dynamicData.archetypes)) {
+      dynamicData.archetypes.forEach(archetype => {
+        // Ensure we have the required fields, fallback if not
+        const key = archetype.key || 'unknown';
+        const displayName = archetype.displayName || archetype.name || `${key.charAt(0).toUpperCase() + key.slice(1)} System`;
+        const description = archetype.description || 'A unique system archetype with special characteristics.';
+
+        console.log(`Creating archetype entry: ${key} -> ${displayName}`);
+
+        entries.push({
+          id: `archetype-${key}`,
+          title: displayName,
+          icon: '🌀',
+          tags: ['archetype', 'system', key],
+          summary: description,
+          content: formatArchetypeDetails(archetype)
+        });
       });
-    });
+    } else {
+      console.warn('No archetypes data available, using fallbacks');
+    }
 
     // Add celestial objects
     entries.push(
@@ -450,10 +476,11 @@
         icon: '📊',
         tags: ['resources', 'strategy'],
         summary: 'Core, primary, and secondary resource patterns',
-        content: formatResourceDistributionContent(dynamicData.archetypes)
+        content: formatResourceDistributionContent(dynamicData.archetypes || [])
       }
     );
 
+    console.log(`Generated ${entries.length} archetype entries:`, entries.map(e => ({ id: e.id, title: e.title })));
     return entries;
   }
 
@@ -1673,142 +1700,98 @@
       {
         key: 'diplomatic',
         displayName: 'Diplomatic Expanse',
-        icon: '🏛️',
         description: 'Auric courts with arbitration corridors and permit systems',
-        minerals: { primary: ['Aurivex', 'Auralite'], secondary: ['Luminite', 'Aetherium', 'Mythrion', 'Quarzon', 'Heliox Ore'] },
-        travel: 'C-Spine Corridor with arbitration protection and customs enforcement'
+        minerals: { primary: ['Aurivex', 'Auralite'], secondary: ['Luminite', 'Aetherium', 'Mythrion', 'Quarzon', 'Heliox Ore'] }
       },
       {
         key: 'wormhole',
         displayName: 'Wormhole Cluster',
-        icon: '🕳️',
         description: 'Hub-and-spoke network with periodic stability windows',
-        minerals: { primary: ['Riftstone', 'Phasegold'], secondary: ['Fluxium', 'Tachytrium', 'Aetherium', 'Quarzon', 'Spectrathene'] },
-        travel: 'Ringway around wormhole hub with customs pylons and stability cycles'
+        minerals: { primary: ['Riftstone', 'Phasegold'], secondary: ['Fluxium', 'Tachytrium', 'Aetherium', 'Quarzon', 'Spectrathene'] }
       },
       {
         key: 'graviton',
         displayName: 'Graviton Sink Zone',
-        icon: '🌪️',
         description: 'Shear dynamics and slingshot acceleration mechanics',
-        minerals: { primary: ['Gravium', 'Fluxium'], secondary: ['Spectrathene', 'Magnetrine', 'Voidglass', 'Cryphos', 'Pyronex'] },
-        travel: 'Slingshot arcs with convoy windows and enhanced scatter effects'
+        minerals: { primary: ['Gravium', 'Fluxium'], secondary: ['Spectrathene', 'Magnetrine', 'Voidglass', 'Cryphos', 'Pyronex'] }
       },
       {
         key: 'asteroid-heavy',
         displayName: 'Asteroid-Heavy Belt',
-        icon: '☄️',
         description: 'Dense rubble fields with foundry riches and clearance mechanics',
-        minerals: { primary: ['Quarzon', 'Mythrion'], secondary: ['Magnetrine', 'Starforged Carbon', 'Fluxium', 'Heliox Ore', 'Aetherium'] },
-        travel: 'Belt trails with debris clearance windows and natural bottlenecks'
+        minerals: { primary: ['Quarzon', 'Mythrion'], secondary: ['Magnetrine', 'Starforged Carbon', 'Fluxium', 'Heliox Ore', 'Aetherium'] }
       },
       {
         key: 'solar',
         displayName: 'Solar Flare Engine',
-        icon: '☀️',
         description: 'Flare-synchronized speed surges and edge snare opportunities',
-        minerals: { primary: ['Solarite', 'Pyronex'], secondary: ['Fluxium', 'Crytite', 'Auralite', 'Drakonium', 'Luminite'] },
-        travel: 'Lattice network with flare-synced speed and protection fluctuations'
+        minerals: { primary: ['Solarite', 'Pyronex'], secondary: ['Fluxium', 'Crytite', 'Auralite', 'Drakonium', 'Luminite'] }
       },
       {
         key: 'dark-nebula',
         displayName: 'Dark Nebula Nursery',
-        icon: '🌌',
         description: 'Shadow alleys for stealth operations and gas harvesting',
-        minerals: { primary: ['Voidglass', 'Nebryllium'], secondary: ['Spectrathene', 'Fluxium', 'Aetherium', 'Phasegold', 'Kryon Dust'] },
-        travel: 'Shadow alleys with stealth advantages and bright bypass alternatives'
+        minerals: { primary: ['Voidglass', 'Nebryllium'], secondary: ['Spectrathene', 'Fluxium', 'Aetherium', 'Phasegold', 'Kryon Dust'] }
       },
       {
         key: 'ion-tempest',
         displayName: 'Ion Tempest',
-        icon: '⚡',
         description: 'EM interference and storm-safe grounded rail corridors',
-        minerals: { primary: ['Cryphos', 'Magnetrine'], secondary: ['Fluxium', 'Aetherium', 'Quarzon', 'Auralite', 'Luminite'] },
-        travel: 'Grounded rails with weather windows and EM interference effects'
+        minerals: { primary: ['Cryphos', 'Magnetrine'], secondary: ['Fluxium', 'Aetherium', 'Quarzon', 'Auralite', 'Luminite'] }
       },
       {
         key: 'relay',
         displayName: 'Starlight Relay Network',
-        icon: '📡',
         description: 'Beacon-synchronized slipstream corridors and permit gating',
-        minerals: { primary: ['Aetherium', 'Quarzon'], secondary: ['Luminite', 'Fluxium', 'Auralite', 'Cryphos', 'Phasegold'] },
-        travel: 'Slipstream cores with beacon sync and 35% permit reservations'
+        minerals: { primary: ['Aetherium', 'Quarzon'], secondary: ['Luminite', 'Fluxium', 'Auralite', 'Cryphos', 'Phasegold'] }
       },
       {
         key: 'cryo-comet',
         displayName: 'Cryo Comet Rain',
-        icon: '🧊',
         description: 'Icing events and specialized cryo cargo logistics',
-        minerals: { primary: ['Kryon Dust', 'Voidglass'], secondary: ['Fluxium', 'Heliox Ore', 'Nebryllium', 'Phasegold', 'Spectrathene'] },
-        travel: 'Cold chain loops with icing events and convoy windows'
+        minerals: { primary: ['Kryon Dust', 'Voidglass'], secondary: ['Fluxium', 'Heliox Ore', 'Nebryllium', 'Phasegold', 'Spectrathene'] }
       },
       {
         key: 'supernova',
         displayName: 'Supernova Remnant',
-        icon: '🔥',
         description: 'Heat pockets and brief calm swells in turbulent space',
-        minerals: { primary: ['Pyronex', 'Drakonium'], secondary: ['Solarite', 'Fluxium', 'Luminite', 'Cryphos', 'Aetherium'] },
-        travel: 'Shockfront rings with heat pockets and shielding restoration options'
+        minerals: { primary: ['Pyronex', 'Drakonium'], secondary: ['Solarite', 'Fluxium', 'Luminite', 'Cryphos', 'Aetherium'] }
       },
       {
         key: 'binary',
         displayName: 'Binary Star System',
-        icon: '💫',
         description: 'Tidal slings and eclipse window timing mechanics',
-        minerals: { primary: ['Solarite', 'Fluxium'], secondary: ['Pyronex', 'Crytite', 'Auralite', 'Drakonium', 'Luminite'] },
-        travel: 'Eclipse corridors with tidal sling boosts and periastron risks'
+        minerals: { primary: ['Solarite', 'Fluxium'], secondary: ['Pyronex', 'Crytite', 'Auralite', 'Drakonium', 'Luminite'] }
       },
       {
         key: 'forgeyard',
         displayName: 'Capital Forgeyard',
-        icon: '🚢',
         description: 'Heavy industry with tow lanes and construction cadences',
-        minerals: { primary: ['Starforged Carbon', 'Magnetrine'], secondary: ['Ferrite Alloy', 'Crytite', 'Ardanium', 'Vornite', 'Zerothium'] },
-        travel: 'Tow lanes with 40% heavy ship priority and yard release windows'
+        minerals: { primary: ['Starforged Carbon', 'Magnetrine'], secondary: ['Ferrite Alloy', 'Crytite', 'Ardanium', 'Vornite', 'Zerothium'] }
       },
       {
         key: 'ghost-net',
         displayName: 'Ghost Net Array',
-        icon: '👻',
         description: 'Decoy phases and ambiguous visual interference mechanics',
-        minerals: { primary: ['Nebryllium', 'Spectrathene'], secondary: ['Voidglass', 'Phasegold', 'Fluxium', 'Aetherium', 'Kryon Dust'] },
-        travel: 'Ambiguous spines with masking cycles and detection jitter'
+        minerals: { primary: ['Nebryllium', 'Spectrathene'], secondary: ['Voidglass', 'Phasegold', 'Fluxium', 'Aetherium', 'Kryon Dust'] }
       },
       {
         key: 'standard',
         displayName: 'Standard System',
-        icon: '🌟',
         description: 'Balanced, predictable system with no special mechanics',
-        minerals: { primary: ['Fluxium', 'Auralite'], secondary: ['Ferrite Alloy', 'Crytite', 'Ardanium', 'Vornite', 'Zerothium'] },
-        travel: 'Standard lane behavior with predictable capacity and timing'
+        minerals: { primary: ['Fluxium', 'Auralite'], secondary: ['Ferrite Alloy', 'Crytite', 'Ardanium', 'Vornite', 'Zerothium'] }
       }
     ];
+
+    console.log('Generating fallback archetypes:', archetypes.length);
 
     return archetypes.map(archetype => ({
       id: `archetype-${archetype.key}`,
       title: archetype.displayName,
-      icon: archetype.icon,
+      icon: '🌀',
       tags: ['archetype', 'system', archetype.key],
       summary: archetype.description,
-      content: `
-        <div class="archetype-fallback">
-          <h3>${archetype.displayName}</h3>
-          <p class="archetype-description">${archetype.description}</p>
-
-          <div class="archetype-details">
-            <h4>Primary Minerals</h4>
-            <div class="mineral-list">
-              ${archetype.minerals.primary.map(mineral => `<span class="mineral-item primary-mineral" data-mineral="${mineral}">${mineral}</span>`).join('')}
-            </div>
-
-            <h4>Travel Mechanics</h4>
-            <p>${archetype.travel}</p>
-
-            <h4>Strategic Notes</h4>
-            <p>Each system archetype offers unique opportunities and challenges. Understanding these patterns helps optimize resource extraction, fleet composition, and travel strategies.</p>
-          </div>
-        </div>
-      `
+      content: formatArchetypeDetails(archetype)
     }));
   }
 
@@ -1934,6 +1917,21 @@
       `;
 
       item.onclick = () => {
+        console.log(`Navigating to entry: ${entry.id} - ${entry.title} (current category: ${activeCategoryId})`);
+
+        // Find which category this entry belongs to
+        let entryCategory = null;
+        for (const category of data.categories) {
+          if (category.entries.some(e => e.id === entry.id)) {
+            entryCategory = category.id;
+            break;
+          }
+        }
+
+        if (entryCategory && entryCategory !== activeCategoryId) {
+          console.log(`Entry ${entry.id} belongs to category ${entryCategory}, switching from ${activeCategoryId}`);
+        }
+
         activeEntryId = entry.id;
         renderList(root, data);
         renderContent(root, data);
@@ -1941,6 +1939,12 @@
 
       list.appendChild(item);
     });
+
+    // Debug logging
+    if (entries.length > 0) {
+      console.log(`Rendered ${entries.length} entries in category ${activeCategoryId}:`,
+        entries.map(e => ({ id: e.id, title: e.title })));
+    }
 
     // Show "no results" message if search returned nothing
     if (searchTerm && searchTerm.trim() && entries.length === 0) {
@@ -2014,7 +2018,7 @@
     const { content } = root._refs;
     content.innerHTML = '';
 
-    if (!activeCategoryId || !activeEntryId) {
+    if (!activeEntryId) {
       const defaultEntry = data.defaultEntry;
       if (defaultEntry) {
         activeCategoryId = defaultEntry.categoryId;
@@ -2025,19 +2029,61 @@
       }
     }
 
-    const category = data.categories.find(c => c.id === activeCategoryId);
-    const entry = category?.entries.find(e => e.id === activeEntryId);
+    // Find the entry across ALL categories, not just the current activeCategoryId
+    let foundEntry = null;
+    let foundCategory = null;
 
-    if (!entry) {
-      content.innerHTML = '<div class="encyclopedia-placeholder">Entry not found</div>';
+    for (const category of data.categories) {
+      const entry = category.entries.find(e => e.id === activeEntryId);
+      if (entry) {
+        foundEntry = entry;
+        foundCategory = category;
+        break;
+      }
+    }
+
+    if (!foundEntry || !foundCategory) {
+      console.error(`Entry not found: ${activeEntryId} in any category`);
+
+      // Try to find a similar entry by partial ID match across all categories
+      for (const category of data.categories) {
+        const similarEntry = category.entries.find(e => e.id.includes(activeEntryId) || activeEntryId.includes(e.id));
+        if (similarEntry) {
+          console.log('Found similar entry:', similarEntry.id, 'in category:', category.id);
+          activeEntryId = similarEntry.id;
+          activeCategoryId = category.id;
+          renderContent(root, data);
+          return;
+        }
+      }
+
+      // Show helpful error message with available entries
+      const allEntries = data.categories.flatMap(c => c.entries.map(e => `${e.title} (${c.name})`)).slice(0, 5);
+      content.innerHTML = `
+        <div class="encyclopedia-placeholder">
+          <h3>Entry not found: "${activeEntryId}"</h3>
+          <p>This entry could not be found in any category.</p>
+          <p>Available entries: ${allEntries.join(', ')}${allEntries.length >= 5 ? '...' : ''}</p>
+          <button onclick="window.Encyclopedia.refresh()" class="sf-btn sf-btn-secondary">Refresh Encyclopedia</button>
+        </div>
+      `;
       return;
+    }
+
+    // Update activeCategoryId to the correct category where the entry was found
+    if (activeCategoryId !== foundCategory.id) {
+      console.log(`Switching category from ${activeCategoryId} to ${foundCategory.id} for entry ${activeEntryId}`);
+      activeCategoryId = foundCategory.id;
+      // Update the UI to reflect the category change
+      renderTabs(root, data);
+      renderList(root, data);
     }
 
     content.innerHTML = `
       <div class="encyclopedia-entry">
-        <h1>${entry.icon} ${entry.title}</h1>
-        <p class="entry-summary">${entry.summary}</p>
-        <div class="entry-content">${entry.content}</div>
+        <h1>${foundEntry.icon} ${foundEntry.title}</h1>
+        <p class="entry-summary">${foundEntry.summary}</p>
+        <div class="entry-content">${foundEntry.content}</div>
       </div>
     `;
 

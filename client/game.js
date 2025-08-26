@@ -236,7 +236,7 @@ export class GameClient {
         uiRenderUnitDetails(this, unit, {
             onAction: (action) => {
                 if (action === 'set-move-mode') { this.setMoveMode && this.setMoveMode(); return; }
-                if (action === 'set-warp-mode') { try { showWarpTargetSelection(this); } catch {} return; }
+                if (action === 'set-warp-mode') { try { const { openMapModal } = require('./ui/map-modal.js'); openMapModal && openMapModal(); } catch { import('./ui/map-modal.js').then(m=>m.openMapModal && m.openMapModal()); } return; }
                 if (action === 'show-travel-options') { this.showInterstellarTravelOptions && this.showInterstellarTravelOptions(); return; }
                 if (action === 'toggle-mining') { try { SFMining.toggleMining(); } catch {} return; }
                 if (action === 'show-cargo') { try { UICargo.showCargo(this); } catch {} return; }

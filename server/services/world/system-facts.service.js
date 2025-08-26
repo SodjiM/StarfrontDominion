@@ -36,15 +36,31 @@ class SystemFactsService {
              FROM lane_edges WHERE sector_id = ?`,
             [sectorId], (e, rows) => resolve(rows || [])
         ));
+        const runtimeRows = await new Promise((resolve) => db.all(
+            `SELECT edge_id, load_cu FROM lane_edges_runtime WHERE edge_id IN (
+                 SELECT id FROM lane_edges WHERE sector_id = ?
+             )`,
+            [sectorId], (e, rows) => resolve(rows || [])
+        ));
+        const runtimeMap = new Map(runtimeRows.map(r => [Number(r.edge_id), Number(r.load_cu||0)]));
         const laneTaps = await new Promise((resolve) => db.all(
             `SELECT id, edge_id, x, y, poi_object_id, side FROM lane_taps WHERE edge_id IN (
                  SELECT id FROM lane_edges WHERE sector_id = ?
              )`,
             [sectorId], (e, rows) => resolve(rows || [])
         ));
+        // Per-tap queue counts
+        const tapIds = (laneTaps || []).map(t => t.id);
+        const queues = tapIds.length ? await new Promise((resolve) => db.all(
+            `SELECT tap_id, SUM(CASE WHEN status='queued' THEN cu ELSE 0 END) as queued_cu
+             FROM lane_tap_queue WHERE tap_id IN (${tapIds.map(()=>'?').join(',')})
+             GROUP BY tap_id`,
+            tapIds, (e, rows) => resolve(rows || [])
+        )) : [];
+        const queuedByTap = new Map(queues.map(q => [Number(q.tap_id), Number(q.queued_cu||0)]));
         const tapsByEdge = {};
         for (const t of (laneTaps || [])) {
-            (tapsByEdge[t.edge_id] = tapsByEdge[t.edge_id] || []).push({ id: t.id, x: t.x, y: t.y, poi_object_id: t.poi_object_id, side: t.side });
+            (tapsByEdge[t.edge_id] = tapsByEdge[t.edge_id] || []).push({ id: t.id, x: t.x, y: t.y, poi_object_id: t.poi_object_id, side: t.side, queued_cu: queuedByTap.get(Number(t.id)) || 0 });
         }
         return {
             id: sector.id,
@@ -67,7 +83,8 @@ class SystemFactsService {
                 mass_limit: e.mass_limit,
                 window: safeJsonObject(e.window_json, null),
                 permits: safeJsonObject(e.permits_json, null),
-                protection: safeJsonObject(e.protection_json, null)
+                protection: safeJsonObject(e.protection_json, null),
+                runtime: { load_cu: runtimeMap.get(Number(e.id)) || 0 }
             })),
             laneTapsByEdge: tapsByEdge,
             minerals: mineralCounts,

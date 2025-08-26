@@ -79,6 +79,11 @@ function buildHandlers(game) {
         'harvesting-started': (data) => { game.addLogEntry(data.message, 'success'); game.loadGameState && game.loadGameState(); },
         'harvesting-stopped': (data) => { game.addLogEntry(data.message, 'info'); game.loadGameState && game.loadGameState(); },
         'harvesting-error': (data) => { game.addLogEntry(`Mining error: ${data.error}`, 'error'); },
+        'lane:hard-offramp': (data) => {
+            if (data && data.shipId) {
+                game.addLogEntry('Hard off-ramp: forced off lane and stunned', 'warning');
+            }
+        },
         'object:teleport': (payload) => {
             try {
                 const obj = game.objects.find(o => o.id === payload.id);

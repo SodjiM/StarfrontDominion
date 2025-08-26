@@ -20,15 +20,27 @@ export async function populateSystemFacts(game) {
             secondaryList.sort((a,b)=>b[1]-a[1]);
         } catch {}
 
+        const chip = (txt) => `<span style="display:inline-block; padding:2px 6px; border:1px solid rgba(100,181,246,0.25); border-radius:10px; margin:2px; font-size:11px; color:#cfe8ff; white-space:nowrap;">${txt}</span>`;
+        const chipList = (arr) => arr.length ? `<div style="display:flex; flex-wrap:wrap; align-items:flex-start;">${arr.map(chip).join('')}</div>` : '—';
         wrap.innerHTML = `
-            <div><b>Name:</b> ${sector.name}</div>
-            <div><b>Type:</b> ${sector.archetype || 'standard'}</div>
-            <div style="margin-top:8px;"><b>Core minerals</b></div>
-            <div>${coreList.length ? coreList.join(', ') : '—'}</div>
-            <div style="margin-top:8px;"><b>Primary minerals present</b></div>
-            <div>${primaryList.length ? primaryList.join(', ') : '—'}</div>
-            <div style="margin-top:8px;"><b>Secondary minerals present</b></div>
-            <div>${secondaryList.length ? secondaryList.join(', ') : '—'}</div>`;
+            <div class="facts-grid" style="display:grid; grid-template-columns: 1.1fr 1fr 1fr 1fr; column-gap:14px; row-gap:8px; align-items:start;">
+                <div>
+                    <div style="margin-bottom:6px;"><b>Name:</b> ${sector.name}</div>
+                    <div><b>Type:</b> ${sector.archetype || 'standard'}</div>
+                </div>
+                <div>
+                    <div style="margin-bottom:4px;"><b>Core</b></div>
+                    ${chipList(coreList)}
+                </div>
+                <div>
+                    <div style="margin-bottom:4px;"><b>Primary</b></div>
+                    ${chipList(primaryList)}
+                </div>
+                <div>
+                    <div style="margin-bottom:4px;"><b>Secondary</b></div>
+                    ${chipList(secondaryList)}
+                </div>
+            </div>`;
     } catch (e) {
         const wrap = document.getElementById('sysMetaSummary'); if (wrap) wrap.innerText = 'Failed to load system facts';
     }
@@ -102,12 +114,19 @@ export function openMapModal() {
                 <button class="map-tab sf-btn sf-btn-secondary" data-tab="galaxy">🌌 Galaxy</button>
             </div>
             <div id="solar-system-tab" class="map-tab-content" style="height: calc(100% - 56px); overflow: hidden; padding: 8px 14px 12px;">
-                <div style="display:flex; flex-direction:column; height:100%; min-width:0;">
-                    <div style="margin: 0 0 6px 0; flex: 0 0 auto;">
-                        <h3 style="color: #64b5f6; margin: 0 0 6px 0;">🌌 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
-                        <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
+                <div style="display:flex; flex-direction:column; height:100%; min-width:0; gap:8px;">
+                    <div style="margin: 0 0 4px 0; flex: 0 0 auto; display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <h3 style="color: #64b5f6; margin: 0 0 6px 0;">🌌 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
+                            <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <label style="font-size:12px; color:#9ecbff;">X <input id="coordX" type="number" style="width:84px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/></label>
+                            <label style="font-size:12px; color:#9ecbff;">Y <input id="coordY" type="number" style="width:84px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/></label>
+                            <button class="sf-btn sf-btn-primary" id="btnPlanCoords">Plan</button>
+                        </div>
                     </div>
-                    <div style="flex:1 1 auto; min-height:0; display:grid; grid-template-columns: 3fr 1fr; gap:14px; align-items:stretch;">
+                    <div style="flex:1 1 auto; min-height:0; display:grid; grid-template-columns: 3fr 1.2fr; grid-template-rows: 1fr 260px; gap:12px; align-items:stretch;">
                         <div style="display:flex; flex-direction:column; min-width:0;">
                             <div style="flex:0 0 auto; margin: 0 0 8px 2px; color:#9ecbff; font-size:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
                                 <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
@@ -131,7 +150,21 @@ export function openMapModal() {
                                 <canvas id="fullMapCanvas" class="full-map-canvas" style="width:100%; height:100%; display:block;"></canvas>
                             </div>
                         </div>
-                        <div id="systemFacts" style="background:#0b1220; border:1px solid rgba(100,181,246,0.25); border-radius:8px; padding:12px; color:#e3f2fd; overflow:hidden;">
+                        <div id="plannerPanel" style="background:#0b1220; border:1px solid rgba(100,181,246,0.25); border-radius:8px; padding:12px; color:#e3f2fd; overflow:auto; display:flex; flex-direction:column; gap:10px;">
+                            <h4 style="margin:0; color:#9ecbff;">Warp Planner</h4>
+                            <div id="plannerHelp" style="font-size:12px; color:#9ecbff;">Click on the map or pick a POI to plan a route.</div>
+                            <div id="poiSelector" style="display:flex; flex-direction:column; gap:6px;">
+                                <div style="display:flex; gap:6px;">
+                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="planets">Planets</button>
+                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="wormholes">Wormholes</button>
+                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="taps">Taps</button>
+                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="belts">Belts</button>
+                                </div>
+                                <div id="poiList" style="max-height:200px; overflow:auto; border:1px solid rgba(100,181,246,0.15); border-radius:6px; padding:4px;"></div>
+                            </div>
+                            <div id="plannerRoutes" style="display:flex; flex-direction:column; gap:8px;"></div>
+                        </div>
+                        <div id="systemFacts" style="grid-column: 1 / span 2; background:#0b1220; border:1px solid rgba(100,181,246,0.25); border-radius:8px; padding:12px; color:#e3f2fd; overflow:auto; min-height:220px;">
                             <h4 style="margin:0 0 8px 0; color:#9ecbff;">System Facts</h4>
                             <div id="sysMetaSummary" style="font-size:13px; line-height:1.6;">Loading...</div>
                         </div>
@@ -148,9 +181,22 @@ export function openMapModal() {
                 </div>
                 <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.</div>
             </div>`;
-        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:820 });
+        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:940 });
         // Bind tab switching without globals
         bindTabEvents(modalContent);
+        // Planner coordinate inputs
+        try {
+            const btn = modalContent.querySelector('#btnPlanCoords');
+            const xEl = modalContent.querySelector('#coordX');
+            const yEl = modalContent.querySelector('#coordY');
+            const doPlan = () => { if (!xEl || !yEl) return; const x = Number(xEl.value||0); const y = Number(yEl.value||0); if (!Number.isFinite(x) || !Number.isFinite(y)) return; planToDestination({ x, y }); };
+            if (btn) btn.onclick = doPlan;
+            if (xEl) xEl.onkeydown = (e)=>{ if (e.key==='Enter') doPlan(); };
+            if (yEl) yEl.onkeydown = (e)=>{ if (e.key==='Enter') doPlan(); };
+            // POI selector tabs
+            modalContent.querySelectorAll('[data-poi-tab]').forEach(btn => btn.addEventListener('click', ()=>populatePoiList(modalContent, btn.dataset.poiTab)));
+            setTimeout(()=>populatePoiList(modalContent, 'planets'), 150);
+        } catch {}
         setTimeout(() => { try { initializeFullMap(); loadGalaxyDataInternal(); populateSystemFactsInternal(); } catch (e) { console.error('map init error', e); } }, 100);
 }
 
@@ -168,6 +214,33 @@ function switchMapTab(root, tabName, clickedEl) {
         const tab = root.querySelector('#' + tabName + '-tab'); if (tab) tab.classList.remove('hidden');
         if (tabName === 'solar-system') setTimeout(() => initializeFullMap(), 50); else if (tabName === 'galaxy') setTimeout(() => initializeGalaxyMap(), 50);
 }
+
+async function populatePoiList(root, tab) {
+        const client = window.gameClient; if (!client || !client.gameState?.sector?.id) return;
+        const wrap = root.querySelector('#poiList'); if (!wrap) return;
+        const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
+        const items = [];
+        if (tab === 'planets') {
+            const planets = client.objects.filter(o => (o.celestial_type === 'planet'));
+            planets.forEach(p => items.push({ label: p.meta?.name || `Planet ${p.id}`, x: p.x, y: p.y }));
+        } else if (tab === 'wormholes') {
+            (facts?.wormholeEndpoints||[]).forEach(w => items.push({ label: (safeName(w.meta?.name) || `Wormhole ${w.id}`), x: w.x, y: w.y }));
+        } else if (tab === 'taps') {
+            const tapsByEdge = facts?.laneTapsByEdge || {}; Object.keys(tapsByEdge).forEach(eid => {
+                (tapsByEdge[eid]||[]).forEach((t, i) => items.push({ label: `Tap ${eid}-${i+1}`, x: t.x, y: t.y }));
+            });
+        } else if (tab === 'belts') {
+            (facts?.belts||[]).forEach(b => {
+                const cx = 2500, cy = 2500; const rMid = Number(b.inner_radius) + Number(b.width)/2; const aMid = (Number(b.arc_start)+Number(b.arc_end))/2; items.push({ label: `Belt ${b.belt_key}-${b.sector_index}`, x: Math.round(cx+Math.cos(aMid)*rMid), y: Math.round(cy+Math.sin(aMid)*rMid) });
+            });
+        }
+        wrap.innerHTML = items.map((it, idx)=>`<div class="poi-item" data-idx="${idx}" style="padding:4px 6px; cursor:pointer; border-radius:4px;">${it.label}</div>`).join('');
+        wrap.querySelectorAll('.poi-item').forEach(el => el.onmouseenter = ()=>{ el.style.background = 'rgba(100,181,246,0.08)'; });
+        wrap.querySelectorAll('.poi-item').forEach(el => el.onmouseleave = ()=>{ el.style.background = 'transparent'; });
+        wrap.onclick = (e)=>{ const row = e.target.closest('.poi-item'); if (!row) return; const it = items[Number(row.dataset.idx||0)]; const xEl = root.querySelector('#coordX'); const yEl = root.querySelector('#coordY'); if (xEl && yEl) { xEl.value = it.x; yEl.value = it.y; } planToDestination({ x: it.x, y: it.y }); };
+}
+
+function safeName(n){ try { if (!n) return null; return String(n); } catch { return null; } }
 
 function initializeFullMap() {
         const client = window.gameClient; const canvas = document.getElementById('fullMapCanvas');
@@ -212,6 +285,10 @@ async function initializeGalaxyMap() {
 
 async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         const client = window.gameClient; if (!client || !client.objects) return;
+        // Always clear and redraw the base frame to avoid visual stacking on repeated calls
+        try { ctx.clearRect(0,0,canvas.width,canvas.height); } catch {}
+        ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.strokeStyle = 'rgba(100,181,246,0.3)'; ctx.lineWidth = 2; ctx.strokeRect(2,2,canvas.width-4,canvas.height-4);
         // Enable lanes toggle dynamically if data exists
         try {
             const facts = client.gameState?.sector?.id ? await SFApi.State.systemFacts(client.gameState.sector.id) : null;
@@ -322,7 +399,8 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
                 const lanes = facts?.lanes || [];
                 const tapsByEdge = facts?.laneTapsByEdge || {};
-                // Simple planner click: show small overlay with ETA/risk/fuel (stub) and tap/wildcat buttons
+                const healthByRegion = new Map((facts?.regions||[]).map(r=>[String(r.id), Number(r.health||50)]));
+                // Planner click: show list of up to 3 routes with tap queue ETA and wildcat option
                 canvas.onclick = async (ev) => {
                     const rect = canvas.getBoundingClientRect();
                     const click = { x: (ev.clientX-rect.left)/scaleX, y: (ev.clientY-rect.top)/scaleY };
@@ -331,36 +409,47 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                             SFApi.Socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: click }, (resp)=>resolve(resp));
                         });
                         if (routes?.success && Array.isArray(routes.routes)) {
-                            const r = routes.routes[0];
-                            const box = document.createElement('div'); box.style.position='absolute'; box.style.left=ev.clientX+'px'; box.style.top=ev.clientY+'px'; box.style.background='#0b1220'; box.style.border='1px solid rgba(100,181,246,0.35)'; box.style.padding='8px'; box.style.borderRadius='6px'; box.style.color='#cfe8ff'; box.style.zIndex=10000;
-                            box.innerHTML = `<div style="font-size:12px; margin-bottom:4px;">ETA ${r.eta} turns • Risk ${'★'.repeat(r.risk)}</div>
-                                <div style="display:flex; gap:6px;">
-                                    <button class="sf-btn sf-btn-primary" id="btnTapEnter">Enter via Tap</button>
-                                    <button class="sf-btn sf-btn-secondary" id="btnWildcat">Wildcat Merge</button>
-                                </div>`;
-                            document.body.appendChild(box);
-                            box.querySelector('#btnTapEnter').onclick = async () => {
-                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'tap', shipId: client.selectedUnit?.id }, (resp)=>{
-                                    if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Tap entry failed', 'error'); }
-                                    else if (resp.queued) { client.addLogEntry(`Queued at tap • ETA to slot: ${resp.queueEtaTurns || 1} turn(s)`, 'info'); }
-                                    else { client.addLogEntry('Entered lane via tap', 'success'); }
+                            const list = routes.routes.slice(0,3);
+                            const container = document.getElementById('plannerRoutes');
+                            if (container) {
+                                container.innerHTML = '';
+                                list.forEach((r, idx) => {
+                                    const rho = Number(r.rho || 0); const color = rho<=1?'#66bb6a':(rho<=1.5?'#ffca28':'#ef5350');
+                                    const row = document.createElement('div'); row.style.display='grid'; row.style.gridTemplateColumns='1fr auto'; row.style.gap='6px'; row.style.alignItems='center'; row.style.border='1px solid rgba(100,181,246,0.25)'; row.style.padding='6px'; row.style.borderRadius='6px';
+                                    row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● Lane ρ ${rho.toFixed(2)}</div><div style=\"font-size:12px; color:#cfe8ff;\">ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div>${(typeof r.tapQueueEta==='number')?`<div style=\"font-size:11px; color:#9ecbff;\">Tap queue ETA: ${r.tapQueueEta}T</div>`:''}</div>
+                                        <div style=\"display:flex; gap:6px;\">
+                                            <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"tap\">Tap</button>
+                                            <button class=\"sf-btn sf-btn-secondary\" data-route-index=\"${idx}\" data-action=\"wild\">Wildcat</button>
+                                        </div>`;
+                                    container.appendChild(row);
                                 });
-                                document.body.removeChild(box);
-                            };
-                            box.querySelector('#btnWildcat').onclick = async () => {
-                                SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'wildcat', shipId: client.selectedUnit?.id }, (resp)=>{
-                                    if (!resp || !resp.success) {
-                                        const reason = resp?.error;
-                                        if (reason === 'over_capacity') client.addLogEntry('Wildcat denied: lane overloaded', 'warning');
-                                        else if (reason === 'out_of_envelope') client.addLogEntry('Wildcat denied: out of merge envelope', 'warning');
-                                        else if (resp?.mishap) client.addLogEntry('Merge mishap • delayed 1 turn', 'warning');
-                                        else client.addLogEntry(reason || 'Wildcat entry failed', 'error');
-                                    } else {
-                                        client.addLogEntry(`Wildcat merge started • merge turns: ${resp.mergeTurns} • risk ${(Math.round((resp.mishapChance||0)*100))}%`, 'info');
+                                // Ensure planner panel is visible (no tabs now)
+                                // Bind actions (delegated)
+                                container.onclick = (e) => {
+                                    const btn = e.target.closest('button'); if (!btn) return;
+                                    const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
+                                    const action = btn.getAttribute('data-action');
+                                    if (action === 'tap') {
+                                        SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'tap', shipId: client.selectedUnit?.id }, (resp)=>{
+                                            if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Tap entry failed', 'error'); }
+                                            else if (resp.queued) { client.addLogEntry(`Queued at tap • ETA to slot: ${resp.queueEtaTurns || 1} turn(s)`, 'info'); }
+                                            else { client.addLogEntry('Entered lane via tap', 'success'); }
+                                        });
+                                    } else if (action === 'wild') {
+                                        SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'wildcat', shipId: client.selectedUnit?.id }, (resp)=>{
+                                            if (!resp || !resp.success) {
+                                                const reason = resp?.error;
+                                                if (reason === 'over_capacity') client.addLogEntry('Wildcat denied: lane overloaded', 'warning');
+                                                else if (reason === 'out_of_envelope') client.addLogEntry('Wildcat denied: out of merge envelope', 'warning');
+                                                else if (resp?.mishap) client.addLogEntry('Merge mishap • delayed 1 turn', 'warning');
+                                                else client.addLogEntry(reason || 'Wildcat entry failed', 'error');
+                                            } else {
+                                                client.addLogEntry(`Wildcat merge started • merge turns: ${resp.mergeTurns} • risk ${(Math.round((resp.mishapChance||0)*100))}%`, 'info');
+                                            }
+                                        });
                                     }
-                                });
-                                document.body.removeChild(box);
-                            };
+                                };
+                            }
                         }
                     } catch {}
                 };
@@ -368,6 +457,13 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 lanes.forEach(l => {
                     const pts = Array.isArray(l.polyline) ? l.polyline : [];
                     if (pts.length < 2) return;
+                    // Compute rho for coloring
+                    const health = healthByRegion.get(String(l.region_id)) ?? 50;
+                    const healthMult = health>=80?1.25:(health>=60?1.0:0.7);
+                    const cap = Math.max(1, Math.floor(Number(l.cap_base||0) * (Number(l.width_core||150)/150) * healthMult));
+                    const load = Number(l.runtime?.load_cu || 0);
+                    const rho = load / Math.max(1, cap);
+                    const coreColor = rho<=1?'rgba(102,187,106,0.95)':(rho<=1.5?'rgba(255,202,40,0.95)':'rgba(239,83,80,0.95)');
                     // Shoulder halo
                     ctx.strokeStyle = 'rgba(100,181,246,0.2)';
                     ctx.lineWidth = Math.max(1, (l.width_shoulder || 220) * 0.5 * ((scaleX+scaleY)/2));
@@ -377,7 +473,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
                     ctx.stroke();
                     // Core ribbon
-                    ctx.strokeStyle = 'rgba(158,203,255,0.85)';
+                    ctx.strokeStyle = coreColor;
                     ctx.lineWidth = Math.max(2, (l.width_core || 180) * 0.35 * ((scaleX+scaleY)/2));
                     ctx.beginPath();
                     ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
@@ -395,6 +491,13 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                         ctx.lineTo(x-4, y);
                         ctx.closePath();
                         ctx.fill();
+                        // queued CU label
+                        const q = Number(t.queued_cu || 0);
+                        if (q > 0) {
+                            ctx.fillStyle = '#cfe8ff'; ctx.font='10px Arial'; ctx.textAlign='left'; ctx.textBaseline='middle';
+                            ctx.fillText(String(q), x+6, y);
+                            ctx.fillStyle = 'rgba(200,230,255,0.95)';
+                        }
                     });
                 });
             } catch {}

@@ -171,7 +171,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                     }
                 }
                 // Progress transits
-                const transits = await new Promise((resolve)=>db.all('SELECT id, progress, cu, mode, merge_turns FROM lane_transits WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
+                const transits = await new Promise((resolve)=>db.all('SELECT id, ship_id, progress, cu, mode, merge_turns FROM lane_transits WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
                 for (const tr of transits) {
                     // Shoulder merge countdown: after merge_turns expire, flip to core
                     if (tr.mode === 'shoulder' && tr.merge_turns != null) {
@@ -184,10 +184,19 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                     }
                     const newProgress = Math.min(1, Number(tr.progress || 0) + (edgeSpeed / 5000));
                     if (newProgress >= 1) {
-                        // Soft off-ramp on arrival (Phase 1 stub: just delete and reduce load)
+                        // Decide soft vs hard off-ramp (simple low-prob hard)
+                        const hard = Math.random() < 0.05;
                         await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [tr.id], ()=>resolve()));
                         await new Promise((resolve)=>db.run('UPDATE lane_edges_runtime SET load_cu = MAX(0, load_cu - ?) WHERE edge_id = ?', [tr.cu, e.id], ()=>resolve()));
-                        // Future: emit event for interdiction catch on arrival
+                        if (hard && tr.ship_id) {
+                            // Apply 1-turn stun via status effect and emit socket event
+                            const stunData = JSON.stringify({ stunTurns: 1 });
+                            await new Promise((resolve)=>db.run(
+                                `INSERT INTO ship_status_effects (ship_id, effect_key, effect_data, expires_turn) VALUES (?, 'stunned', ?, NULL)`,
+                                [tr.ship_id, stunData], ()=>resolve()
+                            ));
+                            try { io.to(`game-${gameId}`).emit('lane:hard-offramp', { shipId: tr.ship_id, edgeId: e.id, effect: 'stun', turns: 1 }); } catch {}
+                        }
                     } else {
                         await new Promise((resolve)=>db.run('UPDATE lane_transits SET progress = ? WHERE id = ?', [newProgress, tr.id], ()=>resolve()));
                     }
