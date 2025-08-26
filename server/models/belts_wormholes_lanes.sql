@@ -137,3 +137,21 @@ CREATE TABLE IF NOT EXISTS interdiction_buoys (
 CREATE INDEX IF NOT EXISTS idx_buoys_sector ON interdiction_buoys(sector_id);
 
 
+
+-- Minimal itinerary storage (single or multi-leg in future)
+CREATE TABLE IF NOT EXISTS lane_itineraries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ship_id INTEGER NOT NULL,
+    sector_id INTEGER NOT NULL,
+    created_turn INTEGER NOT NULL,
+    freshness_turns INTEGER NOT NULL DEFAULT 3,
+    status TEXT NOT NULL DEFAULT 'active', -- active|consumed|cancelled|expired
+    itinerary_json TEXT NOT NULL, -- [{edgeId, entry, sStart, sEnd, mergeTurns?}, ...]
+    meta TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ship_id) REFERENCES sector_objects(id),
+    FOREIGN KEY (sector_id) REFERENCES sectors(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lane_itineraries_ship ON lane_itineraries(ship_id, status);
+CREATE INDEX IF NOT EXISTS idx_lane_itineraries_sector ON lane_itineraries(sector_id, status);

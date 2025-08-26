@@ -160,10 +160,30 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                         if (!q) break;
                         if (q.cu > budgetCU) break;
                         await new Promise((resolve)=>db.run('UPDATE lane_tap_queue SET status = ? WHERE id = ?', ['launched', q.id], ()=>resolve()));
+                        // Initialize progress and target window from itinerary if available
+                        let initialProgress = 0.0; let metaJson = null;
+                        try {
+                            const itin = await new Promise((resolve)=>db.get(
+                                `SELECT id, itinerary_json FROM lane_itineraries WHERE ship_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
+                                [q.ship_id], (er, row)=>resolve(row||null)));
+                            if (itin) {
+                                let legs = []; try { legs = JSON.parse(itin.itinerary_json||'[]'); } catch {}
+                                const leg = legs.find(L => !L.done && Number(L.edgeId) === Number(e.id) && String(L.entry) === 'tap');
+                                if (leg) {
+                                    const edgeRow = await new Promise((resolve)=>db.get('SELECT polyline_json FROM lane_edges WHERE id = ?', [e.id], (er, r)=>resolve(r||null)));
+                                    const pts = (()=>{ try { return JSON.parse(edgeRow?.polyline_json||'[]'); } catch { return []; } })();
+                                    let total = 1; if (pts.length>1) { let d=0; for(let i=1;i<pts.length;i++){ d+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); } total = Math.max(1, d); }
+                                    const targetStartP = Math.max(0, Math.min(1, Number(leg.sStart||0) / total));
+                                    const targetEndP = Math.max(0, Math.min(1, Number(leg.sEnd||total) / total));
+                                    initialProgress = targetStartP;
+                                    metaJson = JSON.stringify({ targetStartP, targetEndP });
+                                }
+                            }
+                        } catch {}
                         await new Promise((resolve)=>db.run(
-                            `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, entered_turn)
-                             VALUES (?, ?, ?, 0.0, ?, 'core', ?)`,
-                            [e.id, q.ship_id || null, 1, q.cu, turnNumber], ()=>resolve()));
+                            `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, entered_turn, meta)
+                             VALUES (?, ?, ?, ?, ?, 'core', ?, ?)`,
+                            [e.id, q.ship_id || null, 1, initialProgress, q.cu, turnNumber, metaJson], ()=>resolve()));
                         await new Promise((resolve)=>db.run(
                             `UPDATE lane_edges_runtime SET load_cu = load_cu + ?, updated_at = CURRENT_TIMESTAMP WHERE edge_id = ?`,
                             [q.cu, e.id], ()=>resolve()));
@@ -171,7 +191,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                     }
                 }
                 // Progress transits
-                const transits = await new Promise((resolve)=>db.all('SELECT id, ship_id, progress, cu, mode, merge_turns FROM lane_transits WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
+                const transits = await new Promise((resolve)=>db.all('SELECT id, ship_id, progress, cu, mode, merge_turns, meta FROM lane_transits WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
                 for (const tr of transits) {
                     // Shoulder merge countdown: after merge_turns expire, flip to core
                     if (tr.mode === 'shoulder' && tr.merge_turns != null) {
@@ -182,20 +202,68 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                             await new Promise((resolve)=>db.run('UPDATE lane_transits SET merge_turns = ? WHERE id = ?', [left-1, tr.id], ()=>resolve()));
                         }
                     }
-                    const newProgress = Math.min(1, Number(tr.progress || 0) + (edgeSpeed / 5000));
-                    if (newProgress >= 1) {
-                        // Decide soft vs hard off-ramp (simple low-prob hard)
-                        const hard = Math.random() < 0.05;
+                    let targetStartP = null, targetEndP = null;
+                    try { const m = tr.meta ? JSON.parse(tr.meta) : null; if (m) { if (typeof m.targetStartP === 'number') targetStartP = m.targetStartP; if (typeof m.targetEndP === 'number') targetEndP = m.targetEndP; } } catch {}
+                    const deltaP = (edgeSpeed / 5000);
+                    let curP = Number(tr.progress || 0);
+                    if (targetStartP != null && curP < targetStartP) curP = targetStartP;
+                    const targetP = (targetEndP != null) ? targetEndP : 1;
+                    const newProgress = Math.min(targetP, curP + deltaP);
+                    if (newProgress >= targetP) {
+                        // Off-ramp and attempt itinerary handoff
                         await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [tr.id], ()=>resolve()));
                         await new Promise((resolve)=>db.run('UPDATE lane_edges_runtime SET load_cu = MAX(0, load_cu - ?) WHERE edge_id = ?', [tr.cu, e.id], ()=>resolve()));
-                        if (hard && tr.ship_id) {
-                            // Apply 1-turn stun via status effect and emit socket event
-                            const stunData = JSON.stringify({ stunTurns: 1 });
-                            await new Promise((resolve)=>db.run(
-                                `INSERT INTO ship_status_effects (ship_id, effect_key, effect_data, expires_turn) VALUES (?, 'stunned', ?, NULL)`,
-                                [tr.ship_id, stunData], ()=>resolve()
-                            ));
-                            try { io.to(`game-${gameId}`).emit('lane:hard-offramp', { shipId: tr.ship_id, edgeId: e.id, effect: 'stun', turns: 1 }); } catch {}
+                        // Check for active itinerary for this ship in this sector
+                        const itinRow = await new Promise((resolve)=>db.get(
+                            `SELECT id, created_turn, freshness_turns, itinerary_json, status FROM lane_itineraries 
+                             WHERE ship_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
+                            [tr.ship_id], (er, row)=>resolve(row||null)));
+                        if (itinRow) {
+                            let itinerary = []; try { itinerary = JSON.parse(itinRow.itinerary_json||'[]'); } catch {}
+                            const curIdx = itinerary.findIndex(L => !L.done && Number(L.edgeId) === Number(e.id));
+                            if (curIdx !== -1) itinerary[curIdx].done = true;
+                            const nextLeg = itinerary.find(L => !L.done);
+                            const isFresh = (Number(itinRow.created_turn||0) + Number(itinRow.freshness_turns||0)) >= Number(turnNumber);
+                            if (!nextLeg) {
+                                // Completed itinerary
+                                await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = ? WHERE id = ?', ['consumed', itinRow.id], ()=>resolve()));
+                            } else if (isFresh) {
+                                // Start next leg: enqueue at tap or shoulder merge
+                                if (nextLeg.entry === 'tap' && nextLeg.tapId) {
+                                    const slotEdge = await new Promise((resolve)=>db.get('SELECT lane_speed, headway FROM lane_edges WHERE id = ?', [nextLeg.edgeId], (er, r)=>resolve(r||null)));
+                                    const slotsPerTurn = Math.max(0, Math.floor(Number(slotEdge?.lane_speed || 0) / Math.max(1, Number(slotEdge?.headway || 40))));
+                                    const ahead = await new Promise((resolve)=>db.get(`SELECT COALESCE(SUM(cu), 0) as cu FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued'`, [nextLeg.tapId], (er, r)=>resolve(Number(r?.cu || 0))));
+                                    // Simple: enqueue CU  tr.cu
+                                    await new Promise((resolve)=>db.run(
+                                        `INSERT INTO lane_tap_queue (tap_id, ship_id, cu, enqueued_turn, status) VALUES (?, ?, ?, ?, 'queued')`,
+                                        [nextLeg.tapId, tr.ship_id, tr.cu, Number(turnNumber)], ()=>resolve()));
+                                    try { io.to(`game-${gameId}`).emit('lane:queued-next-leg', { shipId: tr.ship_id, nextEdgeId: nextLeg.edgeId, tapId: nextLeg.tapId }); } catch {}
+                                    await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(itinerary), itinRow.id], ()=>resolve()));
+                                } else if (nextLeg.entry === 'wildcat') {
+                                    // Shoulder merge transit for next edge
+                                    await new Promise((resolve)=>db.run(
+                                        `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, merge_turns, entered_turn, meta)
+                                         VALUES (?, ?, 1, 0.0, ?, 'shoulder', ?, ?, NULL)`,
+                                        [nextLeg.edgeId, tr.ship_id, tr.cu, Math.max(1, Number(nextLeg.mergeTurns || 1)), Number(turnNumber)], ()=>resolve()));
+                                    await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + ? WHERE edge_id = ?`, [tr.cu, nextLeg.edgeId], ()=>resolve()));
+                                    try { io.to(`game-${gameId}`).emit('lane:next-leg-started', { shipId: tr.ship_id, nextEdgeId: nextLeg.edgeId, mode: 'wildcat' }); } catch {}
+                                    await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(itinerary), itinRow.id], ()=>resolve()));
+                                }
+                            } else {
+                                // Itinerary expired
+                                await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = ? WHERE id = ?', ['expired', itinRow.id], ()=>resolve()));
+                            }
+                        } else {
+                            // No itinerary: simple off-ramp effect (retain existing behavior: occasional hard)
+                            const hard = Math.random() < 0.05;
+                            if (hard && tr.ship_id) {
+                                const stunData = JSON.stringify({ stunTurns: 1 });
+                                await new Promise((resolve)=>db.run(
+                                    `INSERT INTO ship_status_effects (ship_id, effect_key, effect_data, expires_turn) VALUES (?, 'stunned', ?, NULL)`,
+                                    [tr.ship_id, stunData], ()=>resolve()
+                                ));
+                                try { io.to(`game-${gameId}`).emit('lane:hard-offramp', { shipId: tr.ship_id, edgeId: e.id, effect: 'stun', turns: 1 }); } catch {}
+                            }
                         }
                     } else {
                         await new Promise((resolve)=>db.run('UPDATE lane_transits SET progress = ? WHERE id = ?', [newProgress, tr.id], ()=>resolve()));

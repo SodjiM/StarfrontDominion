@@ -42,83 +42,14 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 if (!allow(socket, 'travel')) return cb && cb({ success:false, error:'rate_limited' });
                 const { gameId, sectorId, from, to } = payload || {};
                 if (!gameId || !sectorId || !from || !to) return cb && cb({ success:false, error:'bad_request' });
-                // Gather edges, runtime load, region health, taps
-                const edges = await new Promise((resolve)=>db.all(
-                    `SELECT e.id, e.region_id, e.polyline_json, e.lane_speed, e.width_core, e.cap_base, e.headway
-                     FROM lane_edges e WHERE e.sector_id = ?`, [sectorId], (e, rows)=>resolve(rows||[])));
-                if (!edges || edges.length === 0) return cb && cb({ success:true, routes: [] });
-                const runtimeByEdge = new Map((await new Promise((resolve)=>db.all(
-                    `SELECT edge_id, load_cu FROM lane_edges_runtime WHERE edge_id IN (${edges.map(()=>'?').join(',')})`,
-                    edges.map(r=>r.id), (e, rows)=>resolve(rows||[])
-                ))).map(r=>[Number(r.edge_id), Number(r.load_cu||0)]));
-                const regionHealthRows = await new Promise((resolve)=>db.all(
-                    `SELECT region_id, health FROM regions WHERE sector_id = ?`, [sectorId], (e, rows)=>resolve(rows||[])));
-                const healthByRegion = new Map(regionHealthRows.map(r=>[String(r.region_id), Number(r.health||50)]));
-                const tapsByEdge = new Map((await new Promise((resolve)=>db.all(
-                    `SELECT id, edge_id, x, y FROM lane_taps WHERE edge_id IN (${edges.map(()=>'?').join(',')})`,
-                    edges.map(r=>r.id), (e, rows)=>resolve(rows||[])
-                ))).reduce((acc,t)=>{ const arr = acc.get(t.edge_id)||[]; arr.push(t); acc.set(t.edge_id, arr); return acc; }, new Map()));
-
-                const parse = (s)=>{ try { return JSON.parse(s||'[]'); } catch { return []; } };
-                const dist = (p,q)=>Math.hypot(p.x-q.x,p.y-q.y);
-                const cumulative = (pts)=>{ let d=0; const acc=[0]; for(let i=1;i<pts.length;i++){ d+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); acc.push(d);} return { acc, total:d }; };
-                const projectToSegment = (p,a,b)=>{ const apx=p.x-a.x, apy=p.y-a.y; const abx=b.x-a.x, aby=b.y-a.y; const ab2=Math.max(1e-6,abx*abx+aby*aby); const t=Math.max(0, Math.min(1, (apx*abx+apy*aby)/ab2)); return { x:a.x+abx*t, y:a.y+aby*t, t }; };
-                const projectToPolyline = (p, pts)=>{ let best={d:Infinity, i:0, t:0, point:pts[0]}; for(let i=1;i<pts.length;i++){ const pr=projectToSegment(p, pts[i-1], pts[i]); const d=Math.hypot(p.x-pr.x, p.y-pr.y); if(d<best.d){ best={ d, i:i-1, t:pr.t, point:{x:pr.x,y:pr.y} }; } } return best; };
-                const sAt = (proj, acc)=> acc[proj.i] + proj.t * (acc[proj.i+1]-acc[proj.i]);
-                const fromP = { x:Number(from.x), y:Number(from.y) }, toP = { x:Number(to.x), y:Number(to.y) };
-                const defaultCu = 1; const slotCapacityCU = 2;
-
-                const candidates = [];
-                for (const e of edges) {
-                    const pts = parse(e.polyline_json);
-                    if (pts.length < 2) continue;
-                    const { acc, total } = cumulative(pts);
-                    const health = healthByRegion.get(String(e.region_id)) ?? 50;
-                    const healthMult = health>=80?1.25:(health>=60?1.0:0.7);
-                    const cap = Math.max(1, Math.floor(Number(e.cap_base) * (Number(e.width_core)/150) * healthMult));
-                    const loadCU = Number(runtimeByEdge.get(e.id) || 0);
-                    const rho = loadCU / Math.max(1, cap);
-                    const speedMult = rho<=1?1:rho<=1.5?0.8:rho<=2?0.6:0.4;
-                    const v = Math.max(0.001, Number(e.lane_speed) * speedMult);
-                    // Destination projection along the lane
-                    const destProj = projectToPolyline(toP, pts);
-                    const sDest = sAt(destProj, acc);
-                    const taps = tapsByEdge.get(e.id) || [];
-                    // Tap candidate: nearest tap to origin
-                    if (taps.length > 0) {
-                        const nearest = taps.reduce((best, t) => { const d=dist(fromP,{x:t.x,y:t.y}); return (!best||d<best.d)?{t,d}:best; }, null);
-                        if (nearest) {
-                            const sTap = sAt({ i: projectToPolyline({x:nearest.t.x,y:nearest.t.y}, pts).i, t: projectToPolyline({x:nearest.t.x,y:nearest.t.y}, pts).t }, acc);
-                            const laneDist = Math.abs(sDest - sTap);
-                            const laneTime = laneDist / Math.max(1, v*200);
-                            const approachTime = nearest.d / 120; // crude impulse speed estimate
-                            const slotsPerTurn = Math.max(0, Math.floor(Number(e.lane_speed) / Math.max(1, Number(e.headway||40))));
-                            const aheadRow = await new Promise((resolve)=>db.get(`SELECT COALESCE(SUM(cu), 0) as cu FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued'`, [nearest.t.id], (er, row)=>resolve(row||{cu:0})));
-                            const tapQueueEta = slotsPerTurn>0 ? Math.ceil((Number(aheadRow.cu||0) + defaultCu) / (slotsPerTurn * slotCapacityCU)) : 1;
-                            const eta = Math.ceil(approachTime + tapQueueEta + laneTime + 1); // include 1T off-ramp
-                            candidates.push({ edgeId: e.id, entry: 'tap', nearestTapId: nearest.t.id, tapQueueEta, eta, rho, speedMult, risk: (rho>1.5?3:(rho>1?2:1)) });
-                        }
-                    }
-                    // Wildcat candidate: project from origin if allowed by rho
-                    if (rho < 1.2) {
-                        const fromProj = projectToPolyline(fromP, pts);
-                        const sFrom = sAt(fromProj, acc);
-                        const laneDist = Math.abs(sDest - sFrom);
-                        const laneTime = laneDist / Math.max(1, v*200);
-                        const dMin = fromProj.d; const dMax = 300;
-                        const base = 1; const k_d = 0.01;
-                        let mergeTurns = base + k_d * Math.max(0, dMin - Number(e.width_core||0));
-                        if (health>=60) mergeTurns *= 0.8; else if (health<=40) mergeTurns *= 1.25;
-                        if (rho>1) mergeTurns += Math.max(0.5, (rho-1));
-                        const mishap = Math.max(0, Math.min(0.4, 0.05 + 0.10*(dMin/dMax) + (rho>1?0.10:0)));
-                        const approachTime = dMin / 120;
-                        const eta = Math.ceil(approachTime + mergeTurns + laneTime + 1);
-                        candidates.push({ edgeId: e.id, entry: 'wildcat', mergeTurns: Math.round(Math.max(1, mergeTurns)), mishapChance: mishap, eta, rho, speedMult, risk: (rho>1.5?3:(rho>1?2:2)) });
-                    }
-                }
-
-                const scored = candidates.sort((a,b)=>a.eta-b.eta).slice(0,3);
-                cb && cb({ success:true, routes: scored });
+                const currentTurn = await new Promise((resolve)=>db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (e,r)=>resolve(r?.turn_number || 1)));
+                const { LaneGraphService } = require('../services/world/lane-graph.service');
+                const planner = new LaneGraphService(db);
+                const single = await planner.planSingleLegRoutes(sectorId, from, to);
+                const multi = await planner.planDijkstraRoutes(sectorId, from, to);
+                // Merge, prefer best ETAs overall; include top 3
+                const routes = [...single, ...multi].sort((a,b)=>a.eta-b.eta).slice(0,3);
+                cb && cb({ success:true, routes, currentTurn });
             } catch (e) {
                 cb && cb({ success:false, error:'server_error' });
             }
@@ -197,15 +128,87 @@ function registerGameChannel({ io, db, resolveTurn }) {
                     if (Math.random() < mishap) {
                         return cb && cb({ success:false, error:'mishap', mishap:true, delay:1, mishapChance:mishap, mergeTurns });
                     }
+                    // Normalize sStart/sEnd to param fraction if itinerary exists
+                    let metaJson = { dMin, rho, mishapChance:mishap };
+                    try {
+                        const itin = await new Promise((resolve)=>db.get(
+                            `SELECT itinerary_json FROM lane_itineraries WHERE ship_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
+                            [shipId], (er, r)=>resolve(r||null)));
+                        if (itin) {
+                            let legs = []; try { legs = JSON.parse(itin.itinerary_json||'[]'); } catch {}
+                            const leg = legs.find(L => !L.done && Number(L.edgeId) === Number(edgeId) && String(L.entry) === 'wildcat');
+                            if (leg) {
+                                let total = 1; if (pts.length>1) { let d=0; for(let i=1;i<pts.length;i++){ d+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); } total = Math.max(1, d); }
+                                metaJson.targetStartP = Math.max(0, Math.min(1, Number(leg.sStart||0) / total));
+                                metaJson.targetEndP = Math.max(0, Math.min(1, Number(leg.sEnd||total) / total));
+                            }
+                        }
+                    } catch {}
                     await new Promise((resolve)=>db.run(
                         `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, merge_turns, entered_turn, meta)
-                         VALUES (?, ?, 1, 0.0, ?, 'shoulder', ?, 0, ?)`,
-                        [edgeId, shipId, cu, mergeTurns, JSON.stringify({ dMin, rho, mishapChance:mishap })], ()=>resolve()));
+                         VALUES (?, ?, 1, ?, ?, 'shoulder', ?, 0, ?)`,
+                        [edgeId, shipId, (typeof metaJson.targetStartP==='number'?metaJson.targetStartP:0.0), cu, mergeTurns, JSON.stringify(metaJson)], ()=>resolve()));
                     await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + ? WHERE edge_id = ?`, [cu, edgeId], ()=>resolve()));
                     return cb && cb({ success:true, entered:true, mergeTurns, mishapChance:mishap, rho });
                 } else {
                     return cb && cb({ success:false, error:'bad_mode' });
                 }
+            } catch (e) {
+                cb && cb({ success:false, error:'server_error' });
+            }
+        });
+
+        // Confirm a planned route: minimal single-leg itinerary persistence
+        const travelConfirmSchema = z.object({
+            gameId: z.coerce.number().int().positive(),
+            sectorId: z.coerce.number().int().positive(),
+            shipId: z.coerce.number().int().positive(),
+            freshnessTurns: z.number().int().min(1).max(6).optional(),
+            leg: z.object({
+                edgeId: z.coerce.number().int().positive(),
+                entry: z.enum(['tap','wildcat']),
+                sStart: z.number(),
+                sEnd: z.number(),
+                mergeTurns: z.number().int().optional(),
+                tapId: z.coerce.number().int().optional()
+            }).optional(),
+            legs: z.array(z.object({
+                edgeId: z.coerce.number().int().positive(),
+                entry: z.enum(['tap','wildcat']),
+                sStart: z.number(),
+                sEnd: z.number(),
+                mergeTurns: z.number().int().optional(),
+                tapId: z.coerce.number().int().optional()
+            })).optional()
+        });
+        socket.on('travel:confirm', async (raw, cb) => {
+            try {
+                if (!allow(socket, 'travel')) return cb && cb({ success:false, error:'rate_limited' });
+                const parsed = travelConfirmSchema.safeParse(raw || {});
+                if (!parsed.success) return cb && cb({ success:false, error:'invalid_confirm_payload', issues: parsed.error.issues });
+                const { gameId, sectorId, shipId, freshnessTurns, leg, legs } = parsed.data;
+                // Ownership check
+                const ship = await new Promise((resolve)=>db.get('SELECT owner_id, sector_id FROM sector_objects WHERE id = ?', [shipId], (e,r)=>resolve(r||null)));
+                if (!ship) return cb && cb({ success:false, error:'ship_not_found' });
+                if (Number(ship.owner_id) !== Number(socket.userId)) return cb && cb({ success:false, error:'not_owner' });
+                if (Number(ship.sector_id) !== Number(sectorId)) return cb && cb({ success:false, error:'wrong_sector' });
+                // Validate edge belongs to sector
+                const legsArr = Array.isArray(legs) && legs.length ? legs : [leg];
+                if (!Array.isArray(legsArr) || !legsArr.length) return cb && cb({ success:false, error:'no_legs' });
+                const firstEdgeId = Number(legsArr[0].edgeId);
+                const edge = await new Promise((resolve)=>db.get('SELECT id FROM lane_edges WHERE id = ? AND sector_id = ?', [firstEdgeId, sectorId], (e,r)=>resolve(r||null)));
+                if (!edge) return cb && cb({ success:false, error:'edge_not_in_sector' });
+                // Freshness baseline
+                const currentTurn = await new Promise((resolve)=>db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (e,r)=>resolve(r?.turn_number || 1)));
+                const itinerary = legsArr.map(L => ({ edgeId: Number(L.edgeId), entry: L.entry, sStart: Number(L.sStart), sEnd: Number(L.sEnd), mergeTurns: (typeof L.mergeTurns==='number'?Number(L.mergeTurns):undefined), tapId: (typeof L.tapId==='number'?Number(L.tapId):undefined), done: false }));
+                const fresh = Math.max(1, Math.min(6, Number(freshnessTurns || 3)));
+                await new Promise((resolve, reject)=>db.run(
+                    `INSERT INTO lane_itineraries (ship_id, sector_id, created_turn, freshness_turns, status, itinerary_json)
+                     VALUES (?, ?, ?, ?, 'active', ?)`,
+                    [shipId, sectorId, Number(currentTurn), fresh, JSON.stringify(itinerary)],
+                    (err)=> err ? reject(err) : resolve()
+                ));
+                cb && cb({ success:true, stored:true, legs: itinerary.length, itinerary, createdTurn: Number(currentTurn), freshnessTurns: fresh });
             } catch (e) {
                 cb && cb({ success:false, error:'server_error' });
             }
@@ -686,6 +689,45 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 }
             } catch (error) {
                 socket.emit('harvesting-error', { shipId, error: 'Server error stopping harvesting operation' });
+            }
+        });
+
+        // Active lane transits in a sector for visualization
+        const lanesActiveSchema = z.object({ sectorId: z.coerce.number().int().positive() });
+        socket.on('lanes:active', async (raw, cb) => {
+            try {
+                const parsed = lanesActiveSchema.safeParse(raw || {});
+                if (!parsed.success) return cb && cb({ success:false, error:'invalid_payload', issues: parsed.error.issues });
+                const { sectorId } = parsed.data;
+                const rows = await new Promise((resolve)=>db.all(
+                    `SELECT lt.edge_id as edgeId, lt.ship_id as shipId, lt.progress as progress, lt.mode as mode, lt.merge_turns as mergeTurns
+                     FROM lane_transits lt
+                     WHERE lt.edge_id IN (SELECT id FROM lane_edges WHERE sector_id = ?)`,
+                    [sectorId], (e, r)=>resolve(r||[])));
+                cb && cb({ success:true, transits: rows });
+            } catch (e) {
+                cb && cb({ success:false, error:'server_error' });
+            }
+        });
+
+        // Movement/warp status for a ship (for UI overlays)
+        const movementStatusSchema = z.object({ shipId: z.coerce.number().int().positive() });
+        socket.on('movement:status', async (raw, cb) => {
+            try {
+                const parsed = movementStatusSchema.safeParse(raw || {});
+                if (!parsed.success) return cb && cb({ success:false, error:'invalid_payload', issues: parsed.error.issues });
+                const { shipId } = parsed.data;
+                const order = await new Promise((resolve)=>db.get(
+                    `SELECT status, warp_preparation_turns as prep, meta
+                     FROM movement_orders WHERE object_id = ?
+                     AND status IN ('warp_preparing','active','blocked')
+                     ORDER BY created_at DESC LIMIT 1`,
+                    [shipId], (e,r)=>resolve(r||null)));
+                if (!order) return cb && cb({ success:true, status:null });
+                let required = 0; try { const m = order.meta?JSON.parse(order.meta):{}; if (typeof m.warpPreparationTurns==='number') required = Math.max(0, Math.floor(m.warpPreparationTurns)); } catch {}
+                cb && cb({ success:true, status: order.status, preparationTurns: Number(order.prep||0), requiredPreparationTurns: required });
+            } catch (e) {
+                cb && cb({ success:false, error:'server_error' });
             }
         });
 

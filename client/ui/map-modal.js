@@ -108,51 +108,54 @@ function isCelestialObject(game, obj) {
 export function openMapModal() {
         const client = window.gameClient; if (!client) return;
         const modalContent = document.createElement('div');
+        modalContent.className = 'map-root';
         modalContent.innerHTML = `
-            <div class="map-tabs" style="display:flex; gap:8px; align-items:center; padding: 12px 16px 8px 16px;">
+            <div class="map-tabs">
                 <button class="map-tab active sf-btn sf-btn-secondary" data-tab="solar-system">🌌 Solar System</button>
                 <button class="map-tab sf-btn sf-btn-secondary" data-tab="galaxy">🌌 Galaxy</button>
             </div>
-            <div id="solar-system-tab" class="map-tab-content" style="height: calc(100% - 56px); overflow: hidden; padding: 8px 14px 12px;">
-                <div style="display:flex; flex-direction:column; height:100%; min-width:0; gap:8px;">
-                    <div style="margin: 0 0 4px 0; flex: 0 0 auto; display:flex; justify-content:space-between; align-items:center;">
-                        <div>
-                            <h3 style="color: #64b5f6; margin: 0 0 6px 0;">🌌 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
-                            <p style="color: #ccc; margin: 0; font-size: 0.9em;">Full tactical overview of your sector</p>
+            <div id="solar-system-tab" class="map-tab-content">
+                <div class="map-row">
+                    <div class="map-left">
+                        <div style="flex:0 0 auto;">
+                            <h3 style="color: #64b5f6; margin: 0 0 4px 0; font-size:1.1em;">🌌 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
+                            <p style="color: #ccc; margin: 0; font-size: 0.85em;">Strategic sector overview</p>
                         </div>
-                        <div style="display:flex; gap:8px; align-items:center;">
-                            <label style="font-size:12px; color:#9ecbff;">X <input id="coordX" type="number" style="width:84px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/></label>
-                            <label style="font-size:12px; color:#9ecbff;">Y <input id="coordY" type="number" style="width:84px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/></label>
-                            <button class="sf-btn sf-btn-primary" id="btnPlanCoords">Plan</button>
+                        <div style="flex:0 0 auto; margin: 0 0 4px 2px; color:#9ecbff; font-size:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" id="toggleRegions" checked>
+                                <span>Show Regions/Health</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" id="toggleBelts" checked>
+                                <span>Show Belts</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" id="toggleWormholes" checked>
+                                <span>Show Wormholes</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" id="toggleLanes">
+                                <span>Show Warp Lanes</span>
+                            </label>
+                        </div>
+                        <div id="miniLegend" style="flex:0 0 auto; margin: 0 2px 6px 2px; background:rgba(100,181,246,0.08); border-radius:6px; padding:6px; display:flex; gap:10px; align-items:center; color:#9ecbff; font-size:11px;">
+                            <div style="display:flex; align-items:center; gap:4px;"><span style="width:8px; height:8px; border-radius:50%; background:#4CAF50; display:inline-block;"></span><span>Yours</span></div>
+                            <div style="display:flex; align-items:center; gap:4px;"><span style="width:8px; height:8px; border-radius:50%; background:#FF9800; display:inline-block;"></span><span>Others</span></div>
+                        </div>
+                        <div class="map-canvas-wrap">
+                            <canvas id="fullMapCanvas" class="full-map-canvas"></canvas>
                         </div>
                     </div>
-                    <div style="flex:1 1 auto; min-height:0; display:grid; grid-template-columns: 3fr 1.2fr; grid-template-rows: 1fr 260px; gap:12px; align-items:stretch;">
-                        <div style="display:flex; flex-direction:column; min-width:0;">
-                            <div style="flex:0 0 auto; margin: 0 0 8px 2px; color:#9ecbff; font-size:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                    <input type="checkbox" id="toggleRegions" checked>
-                                    <span>Show Regions/Health</span>
-                                </label>
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                    <input type="checkbox" id="toggleBelts" checked>
-                                    <span>Show Belts</span>
-                                </label>
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                    <input type="checkbox" id="toggleWormholes" checked>
-                                    <span>Show Wormholes</span>
-                                </label>
-                                <label style="display:flex; align-items:center; gap:6px; cursor:not-allowed; opacity:0.6;">
-                                    <input type="checkbox" id="toggleLanes" disabled>
-                                    <span>Show Warp Lanes (coming soon)</span>
-                                </label>
-                            </div>
-                            <div style="flex:1; min-height:0;">
-                                <canvas id="fullMapCanvas" class="full-map-canvas" style="width:100%; height:100%; display:block;"></canvas>
-                            </div>
-                        </div>
-                        <div id="plannerPanel" style="background:#0b1220; border:1px solid rgba(100,181,246,0.25); border-radius:8px; padding:12px; color:#e3f2fd; overflow:auto; display:flex; flex-direction:column; gap:10px;">
+                    <div class="map-rail">
+                        <div id="plannerPanel" class="section">
                             <h4 style="margin:0; color:#9ecbff;">Warp Planner</h4>
                             <div id="plannerHelp" style="font-size:12px; color:#9ecbff;">Click on the map or pick a POI to plan a route.</div>
+                            <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
+                                <input id="coordX" type="number" placeholder="X" style="width:60px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/>
+                                <input id="coordY" type="number" placeholder="Y" style="width:60px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/>
+                                <button class="sf-btn sf-btn-primary small" id="btnPlanCoords">Plan</button>
+                            </div>
                             <div id="poiSelector" style="display:flex; flex-direction:column; gap:6px;">
                                 <div style="display:flex; gap:6px;">
                                     <button class="sf-btn sf-btn-secondary small" data-poi-tab="planets">Planets</button>
@@ -164,22 +167,31 @@ export function openMapModal() {
                             </div>
                             <div id="plannerRoutes" style="display:flex; flex-direction:column; gap:8px;"></div>
                         </div>
-                        <div id="systemFacts" style="grid-column: 1 / span 2; background:#0b1220; border:1px solid rgba(100,181,246,0.25); border-radius:8px; padding:12px; color:#e3f2fd; overflow:auto; min-height:220px;">
-                            <h4 style="margin:0 0 8px 0; color:#9ecbff;">System Facts</h4>
+                        <div id="systemFacts" class="section scroll">
+                            <h4 style="margin:0 0 8px 0; color:#9ecbff; font-size:0.9em;">System Facts</h4>
                             <div id="sysMetaSummary" style="font-size:13px; line-height:1.6;">Loading...</div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div id="galaxy-tab" class="map-tab-content hidden" style="height: calc(100% - 56px); overflow:hidden; padding: 12px 16px 16px;">
-                <div style="margin-bottom: 10px;">
-                    <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 Galaxy Overview</h3>
-                    <p style="color: #ccc; margin: 0; font-size: 0.9em;">All known solar systems in the galaxy</p>
+            <div id="galaxy-tab" class="map-tab-content hidden">
+                <div class="map-row">
+                    <div class="map-left">
+                        <div style="margin-bottom: 10px;">
+                            <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 Galaxy Overview</h3>
+                            <p style="color: #ccc; margin: 0; font-size: 0.9em;">All known solar systems in the galaxy</p>
+                        </div>
+                        <div class="map-canvas-wrap">
+                            <canvas id="galaxyCanvas" class="full-map-canvas"></canvas>
+                        </div>
+                        <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.</div>
+                    </div>
+                    <div class="map-rail">
+                        <div id="galaxySystemsList" class="section scroll" style="flex:1;">
+                            <!-- Galaxy systems list will be populated here -->
+                        </div>
+                    </div>
                 </div>
-                <div style="height: calc(100% - 52px); min-height: 280px;">
-                    <canvas id="galaxyCanvas" class="full-map-canvas" style="height:100%; width:100%; display:block;"></canvas>
-                </div>
-                <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.</div>
             </div>`;
         window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:940 });
         // Bind tab switching without globals
@@ -242,10 +254,95 @@ async function populatePoiList(root, tab) {
 
 function safeName(n){ try { if (!n) return null; return String(n); } catch { return null; } }
 
+function buildLaneCache(canvas, facts) {
+	try {
+		if (!facts || !canvas) {
+			canvas.__laneCache = { edges: [], taps: [] };
+			return;
+		}
+
+		const edges = [];
+		const taps = [];
+
+		// Build health by region map (same logic as renderFullMap)
+		const healthByRegion = new Map((facts.regions || []).map(r => [String(r.id), Number(r.health || 50)]));
+
+		// Process lanes to build edge cache
+		const lanes = facts.lanes || [];
+		lanes.forEach(l => {
+			const pts = Array.isArray(l.polyline) ? l.polyline : [];
+			if (pts.length < 2) return;
+
+			// Calculate rho and capacity (same logic as renderFullMap)
+			const health = healthByRegion.get(String(l.region_id)) ?? 50;
+			const healthMult = health >= 80 ? 1.25 : (health >= 60 ? 1.0 : 0.7);
+			const cap = Math.max(1, Math.floor(Number(l.cap_base || 0) * (Number(l.width_core || 150) / 150) * healthMult));
+			const load = Number(l.runtime?.load_cu || 0);
+			const rho = load / Math.max(1, cap);
+
+			edges.push({
+				pts: pts,
+				rho: rho,
+				cap: cap,
+				headway: l.headway || 0
+			});
+		});
+
+		// Process taps to build tap cache
+		const tapsByEdge = facts.laneTapsByEdge || {};
+		Object.keys(tapsByEdge).forEach(edgeId => {
+			(tapsByEdge[edgeId] || []).forEach(t => {
+				taps.push({
+					x: Number(t.x || 0),
+					y: Number(t.y || 0),
+					queued: Number(t.queued_cu || 0)
+				});
+			});
+		});
+
+		// Store the cache on the canvas
+		canvas.__laneCache = { edges, taps };
+	} catch (error) {
+		console.error('Error building lane cache:', error);
+		canvas.__laneCache = { edges: [], taps: [] };
+	}
+}
+
+function observeCanvas(canvas) {
+    if (canvas.__ro) return;
+    const ro = new ResizeObserver(() => {
+        const rect = canvas.getBoundingClientRect();
+        const w = Math.max(200, Math.floor(rect.width));
+        const h = Math.max(200, Math.floor(rect.height));
+        if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
+            // Read toggles again for resize
+            const toggles = {
+                regions: document.getElementById('toggleRegions')?.checked !== false,
+                belts: document.getElementById('toggleBelts')?.checked !== false,
+                wormholes: document.getElementById('toggleWormholes')?.checked !== false,
+                lanes: (function(){ try { const pref = localStorage.getItem('ui.showLanes'); const el = document.getElementById('toggleLanes'); if (el && pref!=null) el.checked = (pref==='1'); return el?.checked === true; } catch { return document.getElementById('toggleLanes')?.checked === true; } })()
+            };
+            renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
+        }
+    });
+    ro.observe(canvas.parentElement || canvas);
+    canvas.__ro = ro;
+}
+
 function initializeFullMap() {
         const client = window.gameClient; const canvas = document.getElementById('fullMapCanvas');
         if (!client || !canvas) return;
-        const rect = canvas.getBoundingClientRect(); canvas.width = rect.width; canvas.height = rect.height;
+
+        // Initial size
+        const rect = canvas.getBoundingClientRect();
+        canvas.width  = Math.max(200, Math.floor(rect.width));
+        canvas.height = Math.max(200, Math.floor(rect.height));
+
+        observeCanvas(canvas);
         const ctx = canvas.getContext('2d'); ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
         ctx.strokeStyle = 'rgba(100,181,246,0.3)'; ctx.lineWidth = 2; ctx.strokeRect(2,2,canvas.width-4,canvas.height-4);
         if (!client.objects) return;
@@ -254,18 +351,49 @@ function initializeFullMap() {
             regions: document.getElementById('toggleRegions')?.checked !== false,
             belts: document.getElementById('toggleBelts')?.checked !== false,
             wormholes: document.getElementById('toggleWormholes')?.checked !== false,
-            lanes: document.getElementById('toggleLanes')?.checked === true
+            lanes: (function(){ try { const pref = localStorage.getItem('ui.showLanes'); const el = document.getElementById('toggleLanes'); if (el && pref!=null) el.checked = (pref==='1'); return el?.checked === true; } catch { return document.getElementById('toggleLanes')?.checked === true; } })()
         };
-        renderFullMap(ctx, canvas, scaleX, scaleY, toggles);
+        // Prepare a DOM tooltip and build lane cache
+        let tip = document.getElementById('mapHoverTip');
+        if (!tip) {
+            tip = document.createElement('div'); tip.id = 'mapHoverTip';
+            tip.style.position = 'fixed'; tip.style.pointerEvents = 'none'; tip.style.zIndex = '99999';
+            tip.style.background = 'rgba(15,25,45,0.92)'; tip.style.border = '1px solid rgba(158,203,255,0.6)';
+            tip.style.borderRadius = '4px'; tip.style.padding = '3px 6px'; tip.style.color = '#cfe8ff'; tip.style.font = '13px Arial'; tip.style.display = 'none';
+            document.body.appendChild(tip);
+        }
+        canvas.__tipEl = tip;
+        (async ()=>{ try { const sid = client.gameState?.sector?.id; if (sid) { const now=Date.now(); if (!client.__factsCache||client.__factsCache.until<=now){ const facts=await SFApi.State.systemFacts(sid); client.__factsCache={facts,until:now+5000}; } buildLaneCache(canvas, client.__factsCache.facts); } } catch {} renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null); })();
+        canvas.onmousemove = (ev)=>{
+            const r = canvas.getBoundingClientRect();
+            const wx = (ev.clientX - r.left) / scaleX, wy = (ev.clientY - r.top) / scaleY;
+            const pxScale = (scaleX + scaleY) / 2;
+            const cache = canvas.__laneCache || { edges: [], taps: [] };
+            let tipText = '';
+            for (const t of cache.taps) { const dpx = Math.hypot(wx - t.x, wy - t.y) * pxScale; if (dpx < 12) { tipText = `Tap queue: ${t.queued} CU`; break; } }
+            if (!tipText) {
+                let best = { dpx: Infinity, edge: null };
+                const projectToSegment = (p,a,b)=>{ const apx=p.x-a.x, apy=p.y-a.y; const abx=b.x-a.x, aby=b.y-a.y; const ab2=Math.max(1e-6,abx*abx+aby*aby); const t=Math.max(0, Math.min(1, (apx*abx+apy*aby)/ab2)); return { x:a.x+abx*t, y:a.y+aby*t, t }; };
+                for (const e of cache.edges) { const pts=e.pts; if (pts.length<2) continue; for (let i=1;i<pts.length;i++){ const pr=projectToSegment({x:wx,y:wy}, pts[i-1], pts[i]); const dpx=Math.hypot(wx-pr.x, wy-pr.y)*pxScale; if (dpx<best.dpx) best={dpx, edge:e}; } }
+                if (best.edge && best.dpx < 14) tipText = `ρ ${best.edge.rho.toFixed(2)}  • cap ${best.edge.cap}  • headway ${best.edge.headway}`;
+            }
+            if (tipText) { tip.style.display='block'; tip.textContent = tipText; tip.style.left = `${ev.clientX + 12}px`; tip.style.top = `${ev.clientY - 10}px`; }
+            else tip.style.display='none';
+        };
+        canvas.onmouseleave = ()=>{ if (canvas.__tipEl) canvas.__tipEl.style.display='none'; };
+        renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
         ['toggleRegions','toggleBelts','toggleWormholes','toggleLanes'].forEach(id => {
             const el = document.getElementById(id); if (!el) return;
-            el.onchange = () => initializeFullMap();
+            el.onchange = () => { if (id==='toggleLanes') { try { localStorage.setItem('ui.showLanes', el.checked ? '1' : '0'); } catch {} } initializeFullMap(); };
         });
 }
 
 async function initializeGalaxyMap() {
         const client = window.gameClient; const canvas = document.getElementById('galaxyCanvas'); if (!client || !canvas) return;
-        const rect = canvas.getBoundingClientRect(); canvas.width = rect.width; canvas.height = Math.max(360, rect.height);
+        // Set initial size based on container
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = Math.max(200, Math.floor(rect.width));
+        canvas.height = Math.max(200, Math.floor(rect.height));
         const ctx = canvas.getContext('2d');
         try {
             const graph = await SFApi.State.galaxyGraph(client.gameId); if (!graph || !Array.isArray(graph.systems)) return;
@@ -287,11 +415,37 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         const client = window.gameClient; if (!client || !client.objects) return;
         // Always clear and redraw the base frame to avoid visual stacking on repeated calls
         try { ctx.clearRect(0,0,canvas.width,canvas.height); } catch {}
-        ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
-        ctx.strokeStyle = 'rgba(100,181,246,0.3)'; ctx.lineWidth = 2; ctx.strokeRect(2,2,canvas.width-4,canvas.height-4);
+        // Cached gradient background + optional subtle grid
+        if (!canvas.__bgCache || canvas.__bgCache.w !== canvas.width || canvas.__bgCache.h !== canvas.height) {
+            const bg = document.createElement('canvas'); bg.width = canvas.width; bg.height = canvas.height;
+            const bctx = bg.getContext('2d');
+            const grad = bctx.createRadialGradient(bg.width/2, bg.height/2, 0, bg.width/2, bg.height/2, Math.max(bg.width, bg.height)/2);
+            grad.addColorStop(0, '#0a0a1a'); grad.addColorStop(1, '#050510');
+            bctx.fillStyle = grad; bctx.fillRect(0,0,bg.width,bg.height);
+            // Subtle grid pattern
+            bctx.strokeStyle = 'rgba(100,181,246,0.06)'; bctx.lineWidth = 1;
+            const gridSize = 50; for (let x=0; x<bg.width; x+=gridSize){ bctx.beginPath(); bctx.moveTo(x,0); bctx.lineTo(x,bg.height); bctx.stroke(); }
+            for (let y=0; y<bg.height; y+=gridSize){ bctx.beginPath(); bctx.moveTo(0,y); bctx.lineTo(bg.width,y); bctx.stroke(); }
+            canvas.__bgCache = { w: canvas.width, h: canvas.height, img: bg };
+        }
+        ctx.drawImage(canvas.__bgCache.img, 0, 0);
+        ctx.strokeStyle = 'rgba(100,181,246,0.25)'; ctx.lineWidth = 2; ctx.strokeRect(2,2,canvas.width-4,canvas.height-4);
+        // Fetch and cache system facts once per short interval to avoid repeated API calls during hover
+        let facts = null;
+        try {
+            const sectorId = client.gameState?.sector?.id;
+            if (sectorId) {
+                const now = Date.now();
+                const cache = client.__factsCache;
+                if (!cache || cache.until <= now) {
+                    const fetched = await SFApi.State.systemFacts(sectorId);
+                    client.__factsCache = { facts: fetched, until: now + 5000 };
+                }
+                facts = client.__factsCache?.facts || null;
+            }
+        } catch {}
         // Enable lanes toggle dynamically if data exists
         try {
-            const facts = client.gameState?.sector?.id ? await SFApi.State.systemFacts(client.gameState.sector.id) : null;
             const hasLanes = !!(facts && Array.isArray(facts.lanes) && facts.lanes.length > 0);
             const lanesToggle = document.getElementById('toggleLanes');
             const lanesLabel = lanesToggle?.closest('label');
@@ -304,7 +458,6 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         // Regions overlay
         if (toggles.regions && client.gameState?.sector?.id) {
             try {
-                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
                 if (facts && Array.isArray(facts.regions) && facts.regions.length > 0) {
                     const cellW = 5000 / 3, cellH = 5000 / 3;
                     facts.regions.forEach(r => {
@@ -333,7 +486,6 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         // Belts (from belt_sectors facts)
         if (toggles.belts && client.gameState?.sector?.id) {
             try {
-                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
                 const sectors = facts?.belts || [];
                 const cx = 2500*scaleX, cy = 2500*scaleY;
                 sectors.forEach(s => {
@@ -384,7 +536,6 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         // Wormholes (from facts)
         if (toggles.wormholes && client.gameState?.sector?.id) {
             try {
-                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
                 const endpoints = facts?.wormholeEndpoints || [];
                 ctx.fillStyle = '#b388ff'; ctx.strokeStyle = '#b388ff';
                 endpoints.forEach(w => {
@@ -396,7 +547,6 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         // Warp Lanes & Taps (read-only overlay)
         if (toggles.lanes && client.gameState?.sector?.id) {
             try {
-                const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
                 const lanes = facts?.lanes || [];
                 const tapsByEdge = facts?.laneTapsByEdge || {};
                 const healthByRegion = new Map((facts?.regions||[]).map(r=>[String(r.id), Number(r.health||50)]));
@@ -416,10 +566,11 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                 list.forEach((r, idx) => {
                                     const rho = Number(r.rho || 0); const color = rho<=1?'#66bb6a':(rho<=1.5?'#ffca28':'#ef5350');
                                     const row = document.createElement('div'); row.style.display='grid'; row.style.gridTemplateColumns='1fr auto'; row.style.gap='6px'; row.style.alignItems='center'; row.style.border='1px solid rgba(100,181,246,0.25)'; row.style.padding='6px'; row.style.borderRadius='6px';
-                                    row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● Lane ρ ${rho.toFixed(2)}</div><div style=\"font-size:12px; color:#cfe8ff;\">ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div>${(typeof r.tapQueueEta==='number')?`<div style=\"font-size:11px; color:#9ecbff;\">Tap queue ETA: ${r.tapQueueEta}T</div>`:''}</div>
+                                    const legs = Array.isArray(r.legs) ? r.legs : [{ edgeId: r.edgeId, entry: r.entry, sStart: r.sStart, sEnd: r.sEnd, tapId: r.nearestTapId, mergeTurns: r.mergeTurns }];
+                                    const legsText = legs.map((L,i)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
+                                    row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● ρ ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
                                         <div style=\"display:flex; gap:6px;\">
-                                            <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"tap\">Tap</button>
-                                            <button class=\"sf-btn sf-btn-secondary\" data-route-index=\"${idx}\" data-action=\"wild\">Wildcat</button>
+                                            <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"confirm\">Confirm</button>
                                         </div>`;
                                     container.appendChild(row);
                                 });
@@ -429,23 +580,13 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                     const btn = e.target.closest('button'); if (!btn) return;
                                     const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
                                     const action = btn.getAttribute('data-action');
-                                    if (action === 'tap') {
-                                        SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'tap', shipId: client.selectedUnit?.id }, (resp)=>{
-                                            if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Tap entry failed', 'error'); }
-                                            else if (resp.queued) { client.addLogEntry(`Queued at tap • ETA to slot: ${resp.queueEtaTurns || 1} turn(s)`, 'info'); }
-                                            else { client.addLogEntry('Entered lane via tap', 'success'); }
-                                        });
-                                    } else if (action === 'wild') {
-                                        SFApi.Socket.emit('travel:enter', { sectorId: client.gameState.sector.id, edgeId: r.edgeId, mode: 'wildcat', shipId: client.selectedUnit?.id }, (resp)=>{
-                                            if (!resp || !resp.success) {
-                                                const reason = resp?.error;
-                                                if (reason === 'over_capacity') client.addLogEntry('Wildcat denied: lane overloaded', 'warning');
-                                                else if (reason === 'out_of_envelope') client.addLogEntry('Wildcat denied: out of merge envelope', 'warning');
-                                                else if (resp?.mishap) client.addLogEntry('Merge mishap • delayed 1 turn', 'warning');
-                                                else client.addLogEntry(reason || 'Wildcat entry failed', 'error');
-                                            } else {
-                                                client.addLogEntry(`Wildcat merge started • merge turns: ${resp.mergeTurns} • risk ${(Math.round((resp.mishapChance||0)*100))}%`, 'info');
-                                            }
+                                    if (action === 'confirm') {
+                                        const legs = Array.isArray(r.legs) ? r.legs : [{ edgeId: r.edgeId, entry: r.entry, sStart: r.sStart, sEnd: r.sEnd, tapId: r.nearestTapId, mergeTurns: r.mergeTurns }];
+                                        SFApi.Socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId: client.selectedUnit?.id, legs }, (resp)=>{
+                                            if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
+                                            client.addLogEntry(`Itinerary stored (${resp.legs||legs.length} leg${(resp.legs||legs.length)!==1?'s':''})`, 'success');
+                                            // Highlight legs on map for a few seconds
+                                            try { client.__laneHighlight = { until: Date.now()+6000, legs }; initializeFullMap(); setTimeout(()=>initializeFullMap(), 100); setTimeout(()=>initializeFullMap(), 2000); } catch {}
                                         });
                                     }
                                 };
@@ -454,6 +595,27 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     } catch {}
                 };
                 // Draw lanes
+                const highlight = client.__laneHighlight && client.__laneHighlight.until > Date.now() ? (client.__laneHighlight.legs||[]) : [];
+                const highlightEdges = new Set(highlight.map(L=>Number(L.edgeId)));
+                // Fetch active transits (cached) once per render
+                let activeTransitsByEdge = new Map();
+                try {
+                    if (!client.__laneTransitsCache || client.__laneTransitsCache.until < Date.now()) {
+                        const resp = await new Promise((resolve)=>{
+                            SFApi.Socket.emit('lanes:active', { sectorId: client.gameState.sector.id }, (r)=>resolve(r));
+                        });
+                        if (resp?.success) client.__laneTransitsCache = { until: Date.now()+1500, rows: resp.transits||[] };
+                    }
+                    const rows = client.__laneTransitsCache?.rows || [];
+                    const m = new Map();
+                    rows.forEach(tr => {
+                        const k = Number(tr.edgeId);
+                        const arr = m.get(k) || [];
+                        arr.push(tr);
+                        m.set(k, arr);
+                    });
+                    activeTransitsByEdge = m;
+                } catch {}
                 lanes.forEach(l => {
                     const pts = Array.isArray(l.polyline) ? l.polyline : [];
                     if (pts.length < 2) return;
@@ -479,26 +641,104 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
                     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
                     ctx.stroke();
+                    // Highlight segments for confirmed legs
+                    try {
+                        if (highlightEdges.has(Number(l.id))) {
+                            const legs = highlight.filter(L=>Number(L.edgeId)===Number(l.id));
+                            // Compute cumulative distances
+                            const acc=[0]; for (let i=1;i<pts.length;i++){ acc[i]=acc[i-1]+Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); }
+                            const total = acc[acc.length-1]||1;
+                            legs.forEach(L => {
+                                const s0 = Math.max(0, Math.min(total, Number(L.sStart||0)));
+                                const s1 = Math.max(0, Math.min(total, Number(L.sEnd||total)));
+                                const drawSegment = (sA, sB) => {
+                                    let aIdx=0; while (aIdx<acc.length-1 && acc[aIdx+1] < sA) aIdx++;
+                                    let bIdx=aIdx; while (bIdx<acc.length-1 && acc[bIdx+1] < sB) bIdx++;
+                                    const lerpPoint = (idx, s) => {
+                                        const t = (s-acc[idx]) / Math.max(1e-6, (acc[idx+1]-acc[idx]));
+                                        return { x: pts[idx].x + (pts[idx+1].x-pts[idx].x)*t, y: pts[idx].y + (pts[idx+1].y-pts[idx].y)*t };
+                                    };
+                                    const start = lerpPoint(aIdx, sA), end = lerpPoint(bIdx, sB);
+                                    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+                                    ctx.lineWidth = Math.max(2.5, (l.width_core || 180) * 0.45 * ((scaleX+scaleY)/2));
+                                    ctx.beginPath();
+                                    ctx.moveTo(start.x*scaleX, start.y*scaleY);
+                                    for (let i=aIdx+1;i<=bIdx;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
+                                    ctx.lineTo(end.x*scaleX, end.y*scaleY);
+                                    ctx.stroke();
+                                };
+                                drawSegment(Math.min(s0,s1), Math.max(s0,s1));
+                            });
+                        }
+                    } catch {}
+                    // Hover badges for lane stats
+                    if (mouse && typeof mouse.x==='number' && typeof mouse.y==='number') {
+                        const projectToSegment = (p,a,b)=>{ const apx=p.x-a.x, apy=p.y-a.y; const abx=b.x-a.x, aby=b.y-a.y; const ab2=Math.max(1e-6,abx*abx+aby*aby); const t=Math.max(0, Math.min(1, (apx*abx+apy*aby)/ab2)); return { x:a.x+abx*t, y:a.y+aby*t, t }; };
+                        let best={d:Infinity, i:0, point:pts[0]};
+                        for (let i=1;i<pts.length;i++){ const pr=projectToSegment(mouse, pts[i-1], pts[i]); const d=Math.hypot(mouse.x-pr.x, mouse.y-pr.y); if (d<best.d){ best={d, i:i-1, point:{x:pr.x,y:pr.y}}; } }
+                        if (best.d * ((scaleX+scaleY)/2) < 12) {
+                            const tip = `ρ ${rho.toFixed(2)}  • cap ${cap}  • headway ${l.headway}`;
+                            const tx = best.point.x*scaleX + 10, ty = best.point.y*scaleY - 8;
+                            ctx.save(); ctx.font='13px Arial';
+                            const tw = ctx.measureText(tip).width + 10; const th = 18;
+                            ctx.fillStyle='rgba(15,25,45,0.92)'; ctx.fillRect(tx, ty, tw, th);
+                            ctx.strokeStyle='rgba(158,203,255,0.6)'; ctx.strokeRect(tx, ty, tw, th);
+                            ctx.fillStyle='#cfe8ff'; ctx.textAlign='left'; ctx.textBaseline='top';
+                            ctx.fillText(tip, tx+5, ty+2); ctx.restore();
+                        }
+                    }
                     // Taps (diamonds)
                     const taps = tapsByEdge[l.id] || [];
-                    ctx.fillStyle = 'rgba(200,230,255,0.95)';
+                    ctx.fillStyle = 'rgba(185, 8, 177, 0.95)';
                     taps.forEach(t => {
                         const x = t.x*scaleX, y = t.y*scaleY;
                         ctx.beginPath();
-                        ctx.moveTo(x, y-4);
-                        ctx.lineTo(x+4, y);
-                        ctx.lineTo(x, y+4);
-                        ctx.lineTo(x-4, y);
+                        ctx.moveTo(x, y-6);
+                        ctx.lineTo(x+6, y);
+                        ctx.lineTo(x, y+6);
+                        ctx.lineTo(x-6, y);
                         ctx.closePath();
                         ctx.fill();
                         // queued CU label
                         const q = Number(t.queued_cu || 0);
                         if (q > 0) {
-                            ctx.fillStyle = '#cfe8ff'; ctx.font='10px Arial'; ctx.textAlign='left'; ctx.textBaseline='middle';
+                            ctx.fillStyle = '#cfe8ff'; ctx.font='12px Arial'; ctx.textAlign='left'; ctx.textBaseline='middle';
                             ctx.fillText(String(q), x+6, y);
-                            ctx.fillStyle = 'rgba(200,230,255,0.95)';
+                            ctx.fillStyle = 'rgba(185, 8, 177, 0.95)';
+                        }
+                        // hover tooltip for tap queue
+                        if (mouse && Math.hypot(mouse.x - t.x, mouse.y - t.y) * ((scaleX+scaleY)/2) < 10) {
+                            ctx.save(); ctx.font='12px Arial'; const tip = `Tap queue: ${q} CU`;
+                            const tw = ctx.measureText(tip).width + 8; const th = 16;
+                            const tx = x + 10; const ty = y - 6;
+                            ctx.fillStyle = 'rgba(15,25,45,0.9)'; ctx.fillRect(tx, ty, tw, th);
+                            ctx.strokeStyle = 'rgba(158,203,255,0.6)'; ctx.strokeRect(tx, ty, tw, th);
+                            ctx.fillStyle = '#cfe8ff'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                            ctx.fillText(tip, tx + 4, ty + 2); ctx.restore();
                         }
                     });
+
+                    // Active transits overlays
+                    try {
+                        const active = activeTransitsByEdge.get(Number(l.id)) || [];
+                        if (active.length) {
+                            const pts = Array.isArray(l.polyline) ? l.polyline : [];
+                            const acc=[0]; for (let i=1;i<pts.length;i++){ acc[i]=acc[i-1]+Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); }
+                            const total = acc[acc.length-1]||1;
+                            const lerpAt = (p)=>{
+                                const s = Math.max(0, Math.min(total, p*total));
+                                let idx=0; while (idx<acc.length-1 && acc[idx+1] < s) idx++;
+                                const t = (s-acc[idx]) / Math.max(1e-6, (acc[idx+1]-acc[idx]));
+                                return { x: pts[idx].x + (pts[idx+1].x-pts[idx].x)*t, y: pts[idx].y + (pts[idx+1].y-pts[idx].y)*t };
+                            };
+                            active.forEach(tr => {
+                                const p = Math.max(0, Math.min(1, Number(tr.progress||0)));
+                                const pt = lerpAt(p);
+                                ctx.fillStyle = tr.mode==='shoulder' ? '#ffca28' : '#66bb6a';
+                                ctx.beginPath(); ctx.arc(pt.x*scaleX, pt.y*scaleY, 3, 0, Math.PI*2); ctx.fill();
+                            });
+                        }
+                    } catch {}
                 });
             } catch {}
         }
