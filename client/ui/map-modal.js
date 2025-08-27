@@ -314,7 +314,7 @@ function showPlannerRoutes(routes) {
                 const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
                 const action = btn.getAttribute('data-action');
                 if (action === 'confirm') {
-                    confirmRoute(client, r);
+                    confirmRoute(client, r, ()=>initializeFullMap());
                 }
             };
         } catch {}
@@ -334,73 +334,9 @@ function planToDestination(dest) {
 
 function safeName(n){ try { if (!n) return null; return String(n); } catch { return null; } }
 
-// Normalize leg objects from various server payload shapes (camelCase or snake_case)
-function normalizeLeg(L) {
-        try {
-            const edgeId = Number(L?.edgeId ?? L?.edge_id);
-            const entryRaw = (L?.entry ?? L?.entry_type ?? 'wildcat');
-            const sStart = Number(L?.sStart ?? L?.s_start ?? 0);
-            const sEnd = Number(L?.sEnd ?? L?.s_end ?? sStart);
-            const mergeTurns = (L?.mergeTurns ?? L?.merge_turns);
-            const tapId = (L?.tapId ?? L?.tap_id ?? L?.nearestTapId ?? L?.nearest_tap_id);
-            return {
-                edgeId,
-                entry: (String(entryRaw) === 'tap') ? 'tap' : 'wildcat',
-                sStart: Number.isFinite(sStart) ? sStart : 0,
-                sEnd: Number.isFinite(sEnd) ? sEnd : (Number.isFinite(sStart)?sStart:0),
-                mergeTurns: (mergeTurns != null ? Number(mergeTurns) : undefined),
-                tapId: (tapId != null ? Number(tapId) : undefined)
-            };
-        } catch { return { edgeId: NaN, entry: 'wildcat', sStart: 0, sEnd: 0 }; }
-}
+// normalizeLeg now provided by features/travel-planner.js
 
-// Shared confirm with strict validation, normalization and logging
-function confirmRoute(client, route) {
-        try {
-            if (!client?.selectedUnit?.id) { client.addLogEntry('Select a ship first to confirm a route', 'warning'); return; }
-            // Extract raw legs
-            let rawLegs = [];
-            if (Array.isArray(route?.legs) && route.legs.length > 0) rawLegs = route.legs;
-            else if (route && (route.edgeId != null)) {
-                if (window.__DEV_WARP_FALLBACK) {
-                    console.warn('[client] DEV fallback: route missing legs; synthesizing one from route keys');
-                    rawLegs = [{ edgeId: route.edgeId ?? route.edge_id, entry: route.entry, sStart: route.sStart ?? route.s_start ?? 0, sEnd: route.sEnd ?? route.s_end ?? route.sStart ?? route.s_start ?? 0, tapId: route.tapId ?? route.tap_id ?? route.nearestTapId ?? route.nearest_tap_id, mergeTurns: route.mergeTurns ?? route.merge_turns }];
-                } else {
-                    console.error('[client] Route missing legs array; aborting confirm. Route keys:', Object.keys(route||{}));
-                    client.addLogEntry('Route data missing legs; cannot confirm', 'error');
-                    return;
-                }
-            } else {
-                console.error('[client] Route has no legs/edgeId; aborting.', route);
-                client.addLogEntry('Route data corrupted; cannot confirm', 'error');
-                return;
-            }
-
-            const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
-            const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-            if (!nonZero.length) {
-                console.error('[client] All legs are zero-length after normalization; aborting.', legs);
-                client.addLogEntry('Route is empty; cannot confirm', 'error');
-                return;
-            }
-            console.log(`[client] Confirming route with ${legs.length} legs`, legs);
-            // Pre-confirm highlight
-            try { client.__laneHighlight = { until: Date.now()+6000, legs }; debug('[client] set highlight legs (pre-confirm)', legs); initializeFullMap(); } catch {}
-            // Send
-            client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId: client.selectedUnit.id, freshnessTurns: 3, legs }, (resp)=>{
-                try { debug('[client] confirm resp', resp); } catch {}
-                if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                const serverLegs = Array.isArray(resp?.itinerary) ? resp.itinerary : (Array.isArray(resp?.legs) ? resp.legs : null);
-                const confirmedLegs = serverLegs ? serverLegs.map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId)) : legs;
-                const confirmedNonZero = confirmedLegs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-                if (!confirmedNonZero.length) {
-                    console.warn('[client] Server returned zero-length-only itinerary; keeping pre-confirm legs for highlight.', confirmedLegs);
-                }
-                client.addLogEntry(`Itinerary stored (${confirmedLegs.length} leg${confirmedLegs.length!==1?'s':''})`, 'success');
-                try { client.__laneHighlight = { until: Date.now()+6000, legs: confirmedNonZero.length ? confirmedLegs : legs }; debug('[client] set highlight legs', confirmedLegs); initializeFullMap(); setTimeout(()=>initializeFullMap(), 100); setTimeout(()=>initializeFullMap(), 2000); } catch {}
-            });
-        } catch (e) { console.error('confirmRoute error', e); }
-}
+// confirmRoute now provided by features/travel-planner.js
 
 function buildLaneCache(canvas, facts) {
 	try {
