@@ -60,7 +60,11 @@
     },
     sectorTrails: (sectorId, currentTurn, maxAge=10) => getJson(`/game/sector/${sectorId}/trails?sinceTurn=${currentTurn}&maxAge=${maxAge}`),
     combatLogs: (gameId, turnNumber) => getJson(`/combat/logs/${gameId}/${turnNumber}`),
-    switchSector: (gameId, userId, sectorId) => postJson('/game/switch-sector', { gameId, userId, sectorId })
+    switchSector: (gameId, userId, sectorId) => postJson('/game/switch-sector', { gameId, userId, sectorId }),
+    itineraries: (gameId, userId, sectorId) => {
+      const qs = sectorId ? `?sectorId=${sectorId}` : '';
+      return getJson(`/game/${gameId}/itineraries/${userId}${qs}`);
+    }
   };
 
   window.SFApi = { getJson, postJson, Cargo, Resources, Abilities, Players, Build, State };

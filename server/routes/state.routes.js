@@ -75,4 +75,39 @@ router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
 
 module.exports = router;
 
+// Itineraries listing for a player's ships in a game (optional sector filter)
+// GET /game/:gameId/itineraries/:userId?sectorId=123
+router.get('/:gameId/itineraries/:userId', async (req, res) => {
+    const { gameId, userId } = req.params;
+    const sectorId = req.query?.sectorId ? Number(req.query.sectorId) : null;
+    try {
+        const membership = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM game_players WHERE game_id = ? AND user_id = ?', [gameId, userId], (err, result) => err ? reject(err) : resolve(result));
+        });
+        if (!membership) return res.status(403).json({ error: 'Not authorized to view this game' });
+        const rows = await new Promise((resolve, reject) => {
+            const params = [gameId, userId];
+            let sql = `
+                SELECT li.id, li.ship_id as shipId, li.sector_id as sectorId, li.created_turn as createdTurn,
+                       li.freshness_turns as freshnessTurns, li.status as status, li.itinerary_json as itineraryJson
+                FROM lane_itineraries li
+                JOIN sectors s ON s.id = li.sector_id
+                JOIN sector_objects so ON so.id = li.ship_id
+                WHERE s.game_id = ? AND so.owner_id = ?
+            `;
+            if (sectorId) { sql += ' AND li.sector_id = ?'; params.push(sectorId); }
+            sql += ' ORDER BY li.id DESC';
+            db.all(sql, params, (e, r) => e ? reject(e) : resolve(r || []));
+        });
+        const itineraries = rows.map(r => {
+            let legs = []; try { legs = JSON.parse(r.itineraryJson || '[]'); } catch {}
+            return { id: r.id, shipId: r.shipId, sectorId: r.sectorId, createdTurn: r.createdTurn, freshnessTurns: r.freshnessTurns, status: r.status, legs };
+        });
+        res.json({ success: true, itineraries });
+    } catch (error) {
+        console.error('❌ Get itineraries error:', error);
+        res.status(500).json({ error: 'Failed to get itineraries' });
+    }
+});
+
 

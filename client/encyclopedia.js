@@ -499,8 +499,16 @@
         title: 'Movement & Travel',
         icon: '🌟',
         tags: ['mechanics', 'movement'],
-        summary: 'Impulse, warp, and interstellar gate mechanics',
+        summary: 'Impulse movement, lane travel, and interstellar gate mechanics',
         content: formatMovementTravelContent()
+      },
+      {
+        id: 'advanced-lane-tactics',
+        title: 'Advanced Lane Tactics',
+        icon: '🧠',
+        tags: ['mechanics', 'lanes', 'strategy', 'tactics', 'congestion'],
+        summary: 'Complex strategies for convoy management, route optimization, and interdiction avoidance',
+        content: formatAdvancedLaneTacticsContent()
       },
       {
         id: 'warp-lanes',
@@ -1225,19 +1233,165 @@
   function formatMovementTravelContent() {
     return `
       <div class="movement-travel">
-        <h3>Movement Types</h3>
+        <h3>Movement Types & Strategic Comparison</h3>
+        <p>Your ships have three primary methods of movement, each with distinct advantages, costs, and strategic implications. Understanding when to use each method is crucial for operational efficiency.</p>
+
+        <div class="movement-comparison">
+          <table class="comparison-table">
+            <thead>
+              <tr>
+                <th>Movement Type</th>
+                <th>Speed</th>
+                <th>Energy Cost</th>
+                <th>Turn Delay</th>
+                <th>Risk Level</th>
+                <th>Best For</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Impulse Movement</strong></td>
+                <td>1-3 tiles/turn<br><small>(ship-dependent)</small></td>
+                <td>Low (passive)</td>
+                <td>Immediate</td>
+                <td>Low</td>
+                <td>Precision positioning, low-energy operations</td>
+              </tr>
+
+              <tr>
+                <td><strong>Lane Travel</strong></td>
+                <td>3-5x impulse<br><small>(in healthy cores)</small></td>
+                <td>Low (passive)</td>
+                <td>1 turn (entry)<br><small>+ travel time</small></td>
+                <td>Variable</td>
+                <td>High-volume logistics, predictable transit</td>
+              </tr>
+              <tr>
+                <td><strong>Interstellar Gates</strong></td>
+                <td>Instant</td>
+                <td>0 energy</td>
+                <td>1 turn</td>
+                <td>Low</td>
+                <td>Sector-to-sector expansion, secure transit</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <h4>Impulse Movement</h4>
-        <p>Standard tile-by-tile movement using your ship's speed. Reliable but slow for long distances.</p>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Core Mechanics</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Tile-by-Tile:</strong> Move exactly one tile per turn in any direction</li>
+              <li><strong>Speed Multiplier:</strong> Ships have individual movement speeds (1x, 1.5x, 2x, etc.)</li>
+              <li><strong>No Energy Cost:</strong> Passive movement doesn't consume ship energy</li>
+              <li><strong>Interdiction Risk:</strong> Vulnerable to interdiction when not in lane cores</li>
+              <li><strong>Precision Control:</strong> Exact positioning for mining, scanning, or combat setup</li>
+            </ul>
+          </div>
+        </div>
 
-        <h4>Warp Travel</h4>
-        <p>Instant movement to visible destinations within range. Requires energy and has strategic limitations.</p>
+        <h4>Lane Travel (Primary Warp Method)</h4>
+        <div class="warning-box">
+          <strong>🌟 Primary Warp System:</strong> Lane travel is now the only form of warp travel in Starfront Dominion.
+        </div>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Entry Methods</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Tap Entry:</strong> Use designated tap points (1-turn merge, queued)</li>
+              <li><strong>Wildcat Merge:</strong> Direct entry from anywhere (variable time, riskier)</li>
+              <li><strong>Transfer Points:</strong> Junctions between different lane segments</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">Lane Benefits</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Speed Boost:</strong> 3-5x faster than impulse movement</li>
+              <li><strong>Interdiction Protection:</strong> Reduced risk in healthy cores</li>
+              <li><strong>Predictable Transit:</strong> Reliable travel times when uncongested</li>
+              <li><strong>Capacity Management:</strong> Convoy unit system for large operations</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Tap vs Wildcat: Entry Method Decision</h4>
+        <div class="warning-box">
+          <strong>🎯 Critical Strategic Choice:</strong> Your entry method determines convoy efficiency and risk profile.
+        </div>
+
+        <table class="tap-wildcat-matrix">
+          <thead>
+            <tr>
+              <th>Entry Method</th>
+              <th>Entry Time</th>
+              <th>Positioning</th>
+              <th>Availability</th>
+              <th>Risk Level</th>
+              <th>Best When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Tap Entry</strong></td>
+              <td>1 turn + queue</td>
+              <td>Fixed locations</td>
+              <td>Always available</td>
+              <td>Predictable</td>
+              <td>Planned operations, risk-averse</td>
+            </tr>
+            <tr>
+              <td><strong>Wildcat Merge</strong></td>
+              <td>1-3 turns (variable)</td>
+              <td>Anywhere on lane</td>
+              <td>ρ < 1.2 required</td>
+              <td>5-40% mishap</td>
+              <td>Urgent missions, flexibility needed</td>
+            </tr>
+          </tbody>
+        </table>
 
         <h4>Interstellar Gates</h4>
-        <p>Permanent structures that allow travel between sectors. Expensive to deploy but enable expansion.</p>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Gate Mechanics</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Construction:</strong> Expensive to build (minerals + deployment cost)</li>
+              <li><strong>Permanent Link:</strong> Connects specific sectors bidirectionally</li>
+              <li><strong>Instant Transit:</strong> No travel time between connected sectors</li>
+              <li><strong>Adjacent Requirement:</strong> Ship must be next to gate to travel</li>
+              <li><strong>Vulnerability:</strong> Gates can be interdicted or destroyed</li>
+            </ul>
+          </div>
+        </div>
 
-        <h4>Strategic Considerations</h4>
-        <p>Each movement type has different costs, limitations, and strategic implications.</p>
+        <h4>Turn Resolution & Simultaneous Movement</h4>
+        <div class="warning-box">
+          <strong>⚠️ Critical:</strong> All movement resolves simultaneously at turn end. Plan carefully around this mechanic.
+        </div>
+        <ul>
+          <li><strong>Commitment:</strong> Movement orders lock in before turn resolution</li>
+          <li><strong>Interdiction Timing:</strong> Ships can be interdicted during movement</li>
+          <li><strong>Position Prediction:</strong> Account for how other ships will move</li>
+          <li><strong>Queue Management:</strong> Lane taps process ships in order</li>
+        </ul>
+
+        <h4>Strategic Decision Framework</h4>
+        <div class="decision-tree">
+          <h5>Choose Movement Type By:</h5>
+          <ol>
+            <li><strong>Distance:</strong> Impulse for short, lanes for long distances</li>
+            <li><strong>Time Pressure:</strong> Use lanes for predictable scheduling</li>
+            <li><strong>Risk Tolerance:</strong> Balance speed vs interdiction vulnerability</li>
+            <li><strong>Position Precision:</strong> Impulse for exact positioning needs</li>
+            <li><strong>Volume:</strong> Lanes excel at moving large convoys efficiently</li>
+            <li><strong>Urgency:</strong> Wildcat merges for immediate deployment needs</li>
+          </ol>
+        </div>
       </div>
     `;
   }
@@ -1381,63 +1535,468 @@
     `;
   }
 
+  function formatAdvancedLaneTacticsContent() {
+    return `
+      <div class="advanced-lane-tactics">
+        <h3>Advanced Lane Tactics: Convoy Management & Route Optimization</h3>
+        <p>Mastering warp lane tactics requires understanding convoy dynamics, congestion management, and interdiction avoidance. These advanced strategies separate skilled commanders from novices.</p>
+
+        <h4>The Tap vs Wildcat Decision Matrix</h4>
+        <div class="decision-matrix">
+          <div class="warning-box">
+            <strong>🎯 Critical Strategic Choice:</strong> The tap vs wildcat decision determines your convoy's efficiency and risk profile.
+          </div>
+
+          <table class="tap-wildcat-comparison">
+            <thead>
+              <tr>
+                <th>Factor</th>
+                <th>Tap Entry</th>
+                <th>Wildcat Merge</th>
+                <th>Decision Criteria</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Entry Time</strong></td>
+                <td>1 turn + queue time</td>
+                <td>1-3 turns (variable)</td>
+                <td>Use taps when queuing is acceptable</td>
+              </tr>
+              <tr>
+                <td><strong>Positioning</strong></td>
+                <td>Fixed tap locations</td>
+                <td>Anywhere on lane</td>
+                <td>Use wildcat for flexibility</td>
+              </tr>
+              <tr>
+                <td><strong>Load Requirement</strong></td>
+                <td>Always available</td>
+                <td>ρ < 1.2 required</td>
+                <td>Check lane congestion first</td>
+              </tr>
+              <tr>
+                <td><strong>Risk Level</strong></td>
+                <td>Predictable, low risk</td>
+                <td>5-40% mishap chance</td>
+                <td>Taps for risk-averse operations</td>
+              </tr>
+              <tr>
+                <td><strong>Queue Impact</strong></td>
+                <td>Affected by ahead ships</td>
+                <td>No queue delays</td>
+                <td>Wildcat for urgent missions</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Convoy Management Strategies</h4>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Convoy Unit Optimization</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Unit Calculation:</strong> Each ship contributes to lane capacity (0.5-3.0 CU)</li>
+              <li><strong>Load Thresholds:</strong>
+                <ul>
+                  <li><strong>≤100%:</strong> Optimal speed, no penalties</li>
+                  <li><strong>100-150%:</strong> 20% speed reduction</li>
+                  <li><strong>150-200%:</strong> 40% speed reduction</li>
+                  <li><strong>>200%:</strong> 60% reduction, +10% interdiction risk</li>
+                </ul>
+              </li>
+              <li><strong>Capacity Planning:</strong> Monitor lane load before committing large convoys</li>
+              <li><strong>Staggering:</strong> Split large convoys across multiple turns</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">Convoy Composition Optimization</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Lead Elements:</strong> Fast ships to scout and secure lanes</li>
+              <li><strong>Escort Integration:</strong> Interdiction-capable ships for protection</li>
+              <li><strong>Medical Support:</strong> Ships with repair capabilities for emergencies</li>
+              <li><strong>Energy Reserves:</strong> Maintain 30% energy buffer for emergency maneuvers</li>
+              <li><strong>Mixed Priorities:</strong> Balance speed vs protection vs capacity</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Congestion Management</h4>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Peak Hour Avoidance</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Timing Intelligence:</strong> Monitor opponent movement patterns</li>
+              <li><strong>Alternative Routes:</strong> Always identify backup lane options</li>
+              <li><strong>Off-Peak Scheduling:</strong> Plan convoys during low-activity periods</li>
+              <li><strong>Capacity Reservation:</strong> Use tap queues to reserve lane slots</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">Dynamic Re-routing</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Real-time Monitoring:</strong> Track lane congestion during transit</li>
+              <li><strong>Transfer Points:</strong> Use lane junctions for route changes</li>
+              <li><strong>Emergency Exits:</strong> Plan soft off-ramps for congestion avoidance</li>
+              <li><strong>Weather Windows:</strong> Time movements around system-specific effects</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Interdiction Avoidance in Lanes</h4>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Core vs Shoulder Positioning</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Core Benefits:</strong> 80-90% reduction in interdiction effectiveness</li>
+              <li><strong>Shoulder Risks:</strong> 30% interdiction reduction, but vulnerable to drag beams</li>
+              <li><strong>Position Maintenance:</strong> Use phase slip to return to core positioning</li>
+              <li><strong>Convoy Discipline:</strong> Keep formation tight to minimize shoulder exposure</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">Interdiction Counter-Tactics</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Decoy Deployment:</strong> Launch false targets to confuse interdiction systems</li>
+              <li><strong>Electronic Warfare:</strong> Use jamming to reduce interdiction accuracy</li>
+              <li><strong>Escort Tactics:</strong> Position interdiction-capable ships strategically</li>
+              <li><strong>Phase Slip Timing:</strong> Use emergency phase slips during interdiction attempts</li>
+              <li><strong>Convoy Spacing:</strong> Spread out to reduce area-of-effect interdiction effectiveness</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Archetype-Specific Tactics</h4>
+        <div class="archetype-tactics-grid">
+          <div class="archetype-tactic-card">
+            <h5>🏛️ Diplomatic Expanse</h5>
+            <ul>
+              <li><strong>C-Spine Priority:</strong> Use arbitration corridors for safe transit</li>
+              <li><strong>Permit Gaming:</strong> Time movements around permit cycles</li>
+              <li><strong>Customs Optimization:</strong> Avoid shoulder freelancing penalties</li>
+            </ul>
+          </div>
+
+          <div class="archetype-tactic-card">
+            <h5>🕳️ Wormhole Cluster</h5>
+            <ul>
+              <li><strong>Ringway Timing:</strong> Align convoys with stability windows</li>
+              <li><strong>Customs Evasion:</strong> Use decoys to avoid customs pylons</li>
+              <li><strong>Multi-route Planning:</strong> Leverage hub-and-spoke network</li>
+            </ul>
+          </div>
+
+          <div class="archetype-tactic-card">
+            <h5>🌪️ Graviton Sink</h5>
+            <ul>
+              <li><strong>Slingshot Exploitation:</strong> Time launches during A≥80 windows</li>
+              <li><strong>Convoy Windows:</strong> Plan around shear dynamics</li>
+              <li><strong>Scatter Mitigation:</strong> Prepare emergency response teams</li>
+            </ul>
+          </div>
+
+          <div class="archetype-tactic-card">
+            <h5>☄️ Asteroid-Heavy Belt</h5>
+            <ul>
+              <li><strong>Debris Forecasting:</strong> Monitor tug sweep schedules</li>
+              <li><strong>Capacity Planning:</strong> Account for natural bottlenecks</li>
+              <li><strong>Alternative Routes:</strong> Use belt trails for overflow traffic</li>
+            </ul>
+          </div>
+
+          <div class="archetype-tactic-card">
+            <h5>☀️ Solar Flare Engine</h5>
+            <ul>
+              <li><strong>Flare Synchronization:</strong> Time speed surges with convoy movement</li>
+              <li><strong>Window Exploitation:</strong> Use edge snare opportunities</li>
+              <li><strong>Protection Monitoring:</strong> Track core protection dips</li>
+            </ul>
+          </div>
+
+          <div class="archetype-tactic-card">
+            <h5>🌌 Dark Nebula Nursery</h5>
+            <ul>
+              <li><strong>Shadow Alley Usage:</strong> Stealth buff corridors for covert operations</li>
+              <li><strong>Bright Bypass Avoidance:</strong> Route around high-risk areas</li>
+              <li><strong>Stealth Integration:</strong> Use nebula effects for interdiction reduction</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Advanced Route Planning</h4>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Multi-Leg Journey Optimization</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Transfer Efficiency:</strong> Minimize time at lane junctions</li>
+              <li><strong>Load Balancing:</strong> Distribute convoy across multiple lanes</li>
+              <li><strong>Time Compression:</strong> Optimize transfer timing to reduce total journey time</li>
+              <li><strong>Risk Distribution:</strong> Spread interdiction risk across multiple segments</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">Predictive Analytics</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Congestion Forecasting:</strong> Predict lane usage patterns</li>
+              <li><strong>Interdiction Intelligence:</strong> Monitor opponent interdiction capabilities</li>
+              <li><strong>Weather Prediction:</strong> Track system-specific effect cycles</li>
+              <li><strong>Competitor Analysis:</strong> Study opponent movement tendencies</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Emergency Procedures</h4>
+        <div class="emergency-protocols">
+          <div class="collapsible">
+            <h4 class="collapsible-header">Interdiction Response</h4>
+            <div class="collapsible-content">
+              <ul>
+                <li><strong>Immediate Actions:</strong> Phase slip to core, deploy decoys</li>
+                <li><strong>Formation Response:</strong> Tighten formation, activate electronic warfare</li>
+                <li><strong>Escalation Levels:</strong> Have predetermined response protocols</li>
+                <li><strong>Recovery Operations:</strong> Prepare escort teams for interdiction recovery</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="collapsible">
+            <h4 class="collapsible-header">Congestion Emergencies</h4>
+            <div class="collapsible-content">
+              <ul>
+                <li><strong>Route Diversion:</strong> Pre-planned alternative routes</li>
+                <li><strong>Convoy Splitting:</strong> Divide and redirect portions</li>
+                <li><strong>Off-Ramp Usage:</strong> Emergency exits to deep space</li>
+                <li><strong>Priority Reassessment:</strong> Adjust convoy composition on the fly</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function formatWarpLanesContent() {
     return `
       <div class="warp-lanes">
-        <h3>Warp Lane System</h3>
-        <p>Warp lanes are high-speed corridors that connect key locations within each star system. Unlike traditional warp travel, lanes provide predictable, fast transit with strategic trade-offs.</p>
+        <h3>Warp Lane System: Fast Transit with Strategic Complexity</h3>
+        <p>Warp lanes are high-speed corridors that connect key locations within each star system. Unlike traditional warp travel, lanes provide predictable, fast transit with strategic trade-offs. Understanding the tap vs wildcat dilemma is crucial for effective lane utilization.</p>
 
         <h4>Lane Structure</h4>
         <ul>
-          <li><strong>Core:</strong> Bright center providing maximum speed and protection</li>
+          <li><strong>Core:</strong> Bright center providing maximum speed and interdiction protection</li>
           <li><strong>Shoulder:</strong> Fainter halo with moderate speed and reduced protection</li>
-          <li><strong>Taps:</strong> Diamonds marking on-ramps/off-ramps for entering lanes</li>
+          <li><strong>Taps:</strong> Designated diamonds marking on-ramps/off-ramps for entering lanes</li>
           <li><strong>Deep Space:</strong> Area outside lanes with traditional interdiction risks</li>
+          <li><strong>Transfer Points:</strong> Lane junctions allowing route changes during transit</li>
         </ul>
 
-        <h4>Using Lanes</h4>
+        <h4>The Critical Tap vs Wildcat Decision</h4>
+        <div class="warning-box">
+          <strong>🎯 Strategic Choice:</strong> Your entry method determines convoy efficiency, risk profile, and tactical flexibility.
+        </div>
+
+        <table class="tap-wildcat-matrix">
+          <thead>
+            <tr>
+              <th>Entry Method</th>
+              <th>Entry Time</th>
+              <th>Positioning</th>
+              <th>Availability</th>
+              <th>Risk Level</th>
+              <th>Best When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Tap Entry</strong></td>
+              <td>1 turn + queue</td>
+              <td>Fixed locations</td>
+              <td>Always available</td>
+              <td>Predictable</td>
+              <td>Planned operations, risk-averse</td>
+            </tr>
+            <tr>
+              <td><strong>Wildcat Merge</strong></td>
+              <td>1-3 turns (variable)</td>
+              <td>Anywhere on lane</td>
+              <td>ρ < 1.2 required</td>
+              <td>5-40% mishap</td>
+              <td>Urgent missions, flexibility needed</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4>Tap Entry Mechanics</h4>
         <div class="collapsible">
-          <h4 class="collapsible-header">1. Entering Lanes</h4>
+          <h4 class="collapsible-header">Tap Selection and Queueing</h4>
           <div class="collapsible-content">
             <ul>
-              <li><strong>Taps:</strong> Use designated tap points for fast, safe entry (1-turn merge)</li>
-              <li><strong>Wildcat Merges:</strong> Enter from deep space anywhere along the lane (slower, riskier)</li>
-              <li><strong>Route Planning:</strong> The map shows multiple route options with ETA and risk estimates</li>
+              <li><strong>Automatic Selection:</strong> System chooses nearest tap to your target destination</li>
+              <li><strong>Queue System:</strong> Ships wait in FIFO order at each tap (first-in, first-out)</li>
+              <li><strong>Queue Estimation:</strong> Map shows estimated wait time based on ships ahead</li>
+              <li><strong>Capacity Limits:</strong> Each tap processes ships based on lane speed and headway</li>
+              <li><strong>Strategic Timing:</strong> Queue at off-peak hours to reduce wait times</li>
             </ul>
           </div>
         </div>
 
         <div class="collapsible">
-          <h4 class="collapsible-header">2. Lane Travel</h4>
+          <h4 class="collapsible-header">Tap Advantages</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Predictable Timing:</strong> Known entry time with queue estimation</li>
+              <li><strong>No Mishap Risk:</strong> Guaranteed entry once queue is reached</li>
+              <li><strong>Priority Access:</strong> Some systems grant tap priority to certain ship types</li>
+              <li><strong>Formation Integrity:</strong> Easier to maintain convoy formation</li>
+              <li><strong>Planning Reliability:</strong> Perfect for scheduled operations</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Wildcat Merge Mechanics</h4>
+        <div class="collapsible">
+          <h4 class="collapsible-header">Direct Lane Entry</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Anywhere Entry:</strong> Merge from any point along the lane (no tap required)</li>
+              <li><strong>Congestion Requirement:</strong> Only available when lane load ρ < 1.2 (under 120% capacity)</li>
+              <li><strong>Variable Merge Time:</strong> 1-3 turns based on distance, lane health, and current load</li>
+              <li><strong>Immediate Access:</strong> No queue delays once merge is initiated</li>
+              <li><strong>Flexible Positioning:</strong> Enter exactly where needed along the lane</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">Wildcat Risks and Costs</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Mishap Chance:</strong> 5-40% chance of complications (higher with distance/load)</li>
+              <li><strong>Scatter Effects:</strong> Failed merges cause position randomization</li>
+              <li><strong>Energy Penalty:</strong> Failed attempts waste energy and time</li>
+              <li><strong>Interdiction Window:</strong> Vulnerable during merge attempt</li>
+              <li><strong>Congestion Dependency:</strong> Blocked when lanes are heavily loaded</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Making the Tap vs Wildcat Decision</h4>
+        <div class="decision-framework">
+          <h5>Use Taps When:</h5>
+          <ul>
+            <li><strong>Time is Flexible:</strong> You can afford queue delays</li>
+            <li><strong>Risk Aversion:</strong> Mishap chance is unacceptable</li>
+            <li><strong>Large Convoys:</strong> Need predictable timing for coordination</li>
+            <li><strong>Heavy Congestion:</strong> ρ ≥ 1.2 blocks wildcat entry</li>
+            <li><strong>Scheduled Operations:</strong> Need guaranteed departure times</li>
+          </ul>
+
+          <h5>Use Wildcat When:</h5>
+          <ul>
+            <li><strong>Urgent Missions:</strong> Cannot wait for tap queues</li>
+            <li><strong>Flexible Positioning:</strong> Need to enter at specific lane points</li>
+            <li><strong>Low Congestion:</strong> ρ < 1.2 allows wildcat entry</li>
+            <li><strong>Risk Tolerance:</strong> Mishap chance is acceptable</li>
+            <li><strong>Emergency Response:</strong> Immediate deployment required</li>
+          </ul>
+        </div>
+
+        <h4>Using Lanes: Complete Workflow</h4>
+        <div class="collapsible">
+          <h4 class="collapsible-header">1. Route Planning</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Destination Analysis:</strong> Identify target location and available lane routes</li>
+              <li><strong>Congestion Assessment:</strong> Check lane load (ρ) for wildcat feasibility</li>
+              <li><strong>Queue Estimation:</strong> Calculate tap wait times for alternative routes</li>
+              <li><strong>Risk Evaluation:</strong> Compare mishap chances vs queue delays</li>
+              <li><strong>Backup Routes:</strong> Always identify alternative paths</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">2. Entry Execution</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Tap Approach:</strong> Move adjacent to chosen tap location</li>
+              <li><strong>Wildcat Positioning:</strong> Get near desired entry point on lane</li>
+              <li><strong>Timing Optimization:</strong> Enter during low-activity periods</li>
+              <li><strong>Convoy Coordination:</strong> Ensure all ships enter simultaneously</li>
+              <li><strong>Interdiction Awareness:</strong> Monitor for enemy interdiction capabilities</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">3. Transit Management</h4>
           <div class="collapsible-content">
             <p>Once in a lane, ships benefit from:</p>
             <ul>
-              <li>Significantly boosted speed (3-5x impulse)</li>
-              <li>Reduced interdiction risk in healthy cores</li>
-              <li>Predictable travel times</li>
-              <li>Capacity-based congestion effects</li>
+              <li><strong>Speed Boost:</strong> 3-5x faster than impulse movement</li>
+              <li><strong>Interdiction Protection:</strong> 80-90% reduction in healthy cores</li>
+              <li><strong>Predictable Timing:</strong> Reliable travel times when uncongested</li>
+              <li><strong>Capacity Effects:</strong> Speed penalties above 100% load</li>
+              <li><strong>Formation Options:</strong> Tight formations reduce interdiction effectiveness</li>
             </ul>
           </div>
         </div>
 
         <div class="collapsible">
-          <h4 class="collapsible-header">3. Exiting Lanes</h4>
+          <h4 class="collapsible-header">4. Exit Planning</h4>
           <div class="collapsible-content">
             <ul>
-              <li><strong>Soft Off-ramps:</strong> 1-turn merge to shoulder/deep space</li>
-              <li><strong>Hard Off-ramps:</strong> Forced exits from interdiction or emergencies</li>
-              <li><strong>Scatter Effects:</strong> Hard exits cause brief stun and position randomization</li>
+              <li><strong>Soft Off-ramps:</strong> Planned 1-turn merges to shoulder/deep space</li>
+              <li><strong>Hard Exits:</strong> Emergency ejections from interdiction or system failures</li>
+              <li><strong>Scatter Effects:</strong> Hard exits cause position randomization and brief stun</li>
+              <li><strong>Transfer Options:</strong> Use junctions to switch lanes without exiting</li>
+              <li><strong>Position Scouting:</strong> Pre-identify safe exit locations</li>
+            </ul>
+          </div>
+        </div>
+
+        <h4>Current Balance Considerations</h4>
+        <div class="warning-box">
+          <strong>⚖️ Known Issues:</strong> The current tap system has accessibility problems that affect strategic decision-making.
+        </div>
+
+        <div class="collapsible">
+          <h4 class="collapsible-header">Tap Accessibility Problems</h4>
+          <div class="collapsible-content">
+            <ul>
+              <li><strong>Location Tax:</strong> Ships must detour to reach tap locations</li>
+              <li><strong>Turn Delays:</strong> Either queue at tap OR spend turns positioning for wildcat</li>
+              <li><strong>Predictability vs Flexibility:</strong> Taps offer predictability but require specific positioning</li>
+              <li><strong>Wildcat Advantage:</strong> Direct entry from anywhere when lanes aren't congested</li>
+              <li><strong>Strategic Imbalance:</strong> Wildcat often provides better flexibility for urgent operations</li>
             </ul>
           </div>
         </div>
 
         <h4>Strategic Considerations</h4>
         <ul>
-          <li><strong>Route Selection:</strong> Choose lanes based on capacity, region health, and security</li>
-          <li><strong>Timing:</strong> Monitor congestion and plan heavy convoys around peak times</li>
-          <li><strong>Security:</strong> Healthy regions provide better protection in lane cores</li>
-          <li><strong>Alternatives:</strong> Always identify backup routes through different lanes or deep space</li>
+          <li><strong>Route Selection:</strong> Balance capacity, region health, security, and tap accessibility</li>
+          <li><strong>Timing Intelligence:</strong> Monitor opponent patterns to avoid peak congestion</li>
+          <li><strong>System Archetype:</strong> Each system type affects lane behavior differently</li>
+          <li><strong>Convoy Composition:</strong> Mix ship types to optimize for different entry methods</li>
+          <li><strong>Alternative Routes:</strong> Always have backup paths through different lanes or deep space</li>
+          <li><strong>Interdiction Planning:</strong> Consider enemy interdiction capabilities in route selection</li>
         </ul>
+
+        <h4>Advanced Lane Tactics Preview</h4>
+        <p>For complex convoy management, congestion avoidance, and interdiction countermeasures, see the <strong>Advanced Lane Tactics</strong> entry in this encyclopedia.</p>
       </div>
     `;
   }

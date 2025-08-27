@@ -213,6 +213,52 @@ export function openMapModal() {
         } catch {}
         // Ensure planner availability based on selection
         try { updatePlannerState(modalContent); } catch {}
+        // Load any active itineraries to show Start/Abort CTA on reopen
+        try {
+            (async () => {
+                const client = window.gameClient;
+                if (client?.gameId && client?.userId) {
+                    const resp = await SFApi.State.itineraries(client.gameId, client.userId, client.gameState?.sector?.id);
+                    const items = Array.isArray(resp?.itineraries) ? resp.itineraries.filter(it => it.status === 'active') : [];
+                    if (items.length) {
+                        const container = modalContent.querySelector('#plannerRoutes');
+                        if (container) {
+                            const rows = items.slice(0, 3).map((it, idx) => {
+                                const legs = (it.legs||[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
+                                const legsText = legs.map(L=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
+                                return `<div style=\"display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; border:1px solid rgba(100,181,246,0.25); padding:6px; border-radius:6px;\">\n                                    <div><div style=\\\"font-size:12px; color:#9ecbff\\\">Active itinerary • Ship ${it.shipId}</div>\n                                    <div style=\\\"font-size:11px; color:#9ecbff;\\\">${legsText}</div></div>\n                                    <div style=\\\"display:flex; gap:6px;\\\">\n                                        <button class=\\\"sf-btn sf-btn-secondary\\\" data-itin-index=\\\"${idx}\\\" data-action=\\\"startItin\\\">Start</button>\n                                    </div>\n                                </div>`;
+                            }).join('');
+                            container.innerHTML = `<div style=\"color:#9ecbff; font-size:12px;\">Confirmed routes</div>${rows}`;
+                            container.onclick = (e) => {
+                                const btn = e.target.closest('button'); if (!btn) return;
+                                const action = btn.getAttribute('data-action');
+                                if (action === 'startItin') {
+                                    const idx = Number(btn.getAttribute('data-itin-index')||0);
+                                    const it = items[idx];
+                                    const shipId = Number(it?.shipId);
+                                    if (!shipId) return;
+                                    client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState?.sector?.id, shipId }, (resp)=>{
+                                        if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Start failed', 'error'); return; }
+                                        client.addLogEntry('Travel started', 'success');
+                                    });
+                                }
+                            };
+                            // Highlight the selected unit's itinerary on the map for persistence
+                            try {
+                                if (client.selectedUnit) {
+                                    const sel = items.find(it => Number(it.shipId) === Number(client.selectedUnit.id));
+                                    if (sel) {
+                                        const legs = (sel.legs||[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
+                                        client.__laneHighlight = { until: Date.now()+120000, legs };
+                                        initializeFullMap();
+                                    }
+                                }
+                            } catch {}
+                        }
+                    }
+                }
+            })();
+        } catch {}
         try {
             const interval = setInterval(()=>{
                 if (!document.body.contains(modalContent)) { clearInterval(interval); return; }
@@ -306,6 +352,7 @@ function showPlannerRoutes(routes) {
                 row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● ρ ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
                     <div style=\"display:flex; gap:6px;\">
                         <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"confirm\">Confirm</button>
+                        <button class=\"sf-btn sf-btn-secondary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button>
                     </div>`;
                 container.appendChild(row);
             });
@@ -315,6 +362,14 @@ function showPlannerRoutes(routes) {
                 const action = btn.getAttribute('data-action');
                 if (action === 'confirm') {
                     confirmRoute(client, r, ()=>initializeFullMap());
+                } else if (action === 'start') {
+                    const shipId = client.selectedUnit?.id;
+                    if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
+                    client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp)=>{
+                        if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Start failed', 'error'); return; }
+                        client.addLogEntry('Travel started', 'success');
+                        initializeFullMap();
+                    });
                 }
             };
         } catch {}

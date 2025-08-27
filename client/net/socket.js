@@ -94,6 +94,40 @@ function buildHandlers(game) {
                 game.render && game.render();
             } catch {}
         },
+        'travel:entered': (data) => {
+            try {
+                const obj = game.objects.find(o => o.id === data.shipId);
+                if (obj) {
+                    obj.meta = obj.meta || {}; obj.meta.travelMode = String(data.mode || 'core');
+                }
+                game.render && game.render();
+            } catch {}
+        },
+        'travel:progress': (data) => {
+            try {
+                const obj = game.objects.find(o => o.id === data.shipId);
+                if (obj) { obj.x = Number(data.x||obj.x); obj.y = Number(data.y||obj.y); }
+                if (game.selectedUnit && game.selectedUnit.id === data.shipId) {
+                    game.selectedUnit.x = Number(data.x||game.selectedUnit.x);
+                    game.selectedUnit.y = Number(data.y||game.selectedUnit.y);
+                }
+                game.render && game.render();
+            } catch {}
+        },
+        'travel:arrived': (data) => {
+            try {
+                const obj = game.objects.find(o => o.id === data.shipId);
+                if (obj) {
+                    obj.x = Number(data.x || obj.x); obj.y = Number(data.y || obj.y);
+                    if (obj.meta) delete obj.meta.travelMode;
+                }
+                if (game.selectedUnit && game.selectedUnit.id === data.shipId) {
+                    game.selectedUnit.x = Number(data.x || game.selectedUnit.x);
+                    game.selectedUnit.y = Number(data.y || game.selectedUnit.y);
+                }
+                game.render && game.render();
+            } catch {}
+        },
         'chat:game': (msg) => { if (window.appendChat) window.appendChat(msg); },
         'chat:channel': (msg) => { if (window.appendChat) window.appendChat(msg); },
         'chat:dm': (msg) => { if (window.appendChat) window.appendChat(msg); },

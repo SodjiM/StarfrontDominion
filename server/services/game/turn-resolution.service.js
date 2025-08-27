@@ -131,6 +131,30 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
     }
     async function tickLanes(gameId, turnNumber) {
         const sectors = await new Promise((resolve)=>db.all('SELECT id FROM sectors WHERE game_id = ?', [gameId], (e,r)=>resolve(r||[])));
+        // Cache edge geometry for interpolation
+        const geomCache = new Map();
+        async function getEdgeGeom(edgeId) {
+            const key = Number(edgeId);
+            if (geomCache.has(key)) return geomCache.get(key);
+            const row = await new Promise((resolve)=>db.get('SELECT polyline_json FROM lane_edges WHERE id = ?', [key], (er, r)=>resolve(r||null)));
+            const pts = (()=>{ try { return JSON.parse(row?.polyline_json||'[]'); } catch { return []; } })();
+            let total = 0; const acc = [0];
+            if (pts.length > 1) {
+                for (let i=1;i<pts.length;i++){ total += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); acc.push(total); }
+            }
+            const geom = { pts, acc, total: Math.max(1, total) };
+            geomCache.set(key, geom);
+            return geom;
+        }
+        function pointAtProgress(geom, p) {
+            const clamped = Math.max(0, Math.min(1, Number(p||0)));
+            const s = clamped * geom.total; const acc = geom.acc; const pts = geom.pts;
+            if (pts.length < 2) return { x: pts[0]?.x || 0, y: pts[0]?.y || 0 };
+            let idx = 0; while (idx<acc.length-1 && acc[idx+1] < s) idx++;
+            const segLen = Math.max(1e-6, acc[idx+1]-acc[idx]);
+            const t = (s - acc[idx]) / segLen;
+            return { x: Math.round(pts[idx].x + (pts[idx+1].x-pts[idx].x)*t), y: Math.round(pts[idx].y + (pts[idx+1].y-pts[idx].y)*t) };
+        }
         for (const s of sectors) {
             const sectorId = s.id;
             const edges = await new Promise((resolve)=>db.all(
@@ -187,6 +211,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                         await new Promise((resolve)=>db.run(
                             `UPDATE lane_edges_runtime SET load_cu = load_cu + ?, updated_at = CURRENT_TIMESTAMP WHERE edge_id = ?`,
                             [q.cu, e.id], ()=>resolve()));
+                        try { io.to(`game-${gameId}`).emit('travel:entered', { shipId: q.ship_id, edgeId: e.id, mode: 'tap' }); } catch {}
                         budgetCU -= q.cu;
                     }
                 }
@@ -209,6 +234,13 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                     if (targetStartP != null && curP < targetStartP) curP = targetStartP;
                     const targetP = (targetEndP != null) ? targetEndP : 1;
                     const newProgress = Math.min(targetP, curP + deltaP);
+                    // Update in-flight position for visualization and emit progress
+                    try {
+                        const geom = await getEdgeGeom(e.id);
+                        const pos = pointAtProgress(geom, newProgress);
+                        await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos.x, pos.y, new Date().toISOString(), tr.ship_id], ()=>resolve()));
+                        try { io.to(`game-${gameId}`).emit('travel:progress', { shipId: tr.ship_id, edgeId: e.id, progress: newProgress, x: pos.x, y: pos.y }); } catch {}
+                    } catch {}
                     if (newProgress >= targetP) {
                         // Off-ramp and attempt itinerary handoff
                         await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [tr.id], ()=>resolve()));
@@ -227,6 +259,17 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                             if (!nextLeg) {
                                 // Completed itinerary
                                 await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = ? WHERE id = ?', ['consumed', itinRow.id], ()=>resolve()));
+                                // Reposition ship to exit point along edge at leg.sEnd and notify
+                                try {
+                                    const completeLeg = itinerary[curIdx];
+                                    if (completeLeg && typeof completeLeg.sEnd === 'number') {
+                                        const geom = await getEdgeGeom(e.id);
+                                        const sTarget = Math.max(0, Math.min(geom.total, Number(completeLeg.sEnd)));
+                                        const pos = pointAtProgress(geom, sTarget / Math.max(1, geom.total));
+                                        await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos.x, pos.y, new Date().toISOString(), tr.ship_id], ()=>resolve()));
+                                        try { io.to(`game-${gameId}`).emit('travel:arrived', { shipId: tr.ship_id, edgeId: e.id, x: pos.x, y: pos.y }); } catch {}
+                                    }
+                                } catch {}
                             } else if (isFresh) {
                                 // Start next leg: enqueue at tap or shoulder merge
                                 if (nextLeg.entry === 'tap' && nextLeg.tapId) {
@@ -240,11 +283,16 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                                     try { io.to(`game-${gameId}`).emit('lane:queued-next-leg', { shipId: tr.ship_id, nextEdgeId: nextLeg.edgeId, tapId: nextLeg.tapId }); } catch {}
                                     await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(itinerary), itinRow.id], ()=>resolve()));
                                 } else if (nextLeg.entry === 'wildcat') {
-                                    // Shoulder merge transit for next edge
+                                    // Shoulder merge transit for next edge with target window
+                                    const edgeRow2 = await new Promise((resolve)=>db.get('SELECT polyline_json FROM lane_edges WHERE id = ?', [nextLeg.edgeId], (er, r)=>resolve(r||null)));
+                                    const pts2 = (()=>{ try { return JSON.parse(edgeRow2?.polyline_json||'[]'); } catch { return []; } })();
+                                    let total2 = 1; if (pts2.length>1) { let d2=0; for(let i=1;i<pts2.length;i++){ d2+=Math.hypot(pts2[i].x-pts2[i-1].x, pts2[i].y-pts2[i-1].y); } total2 = Math.max(1, d2); }
+                                    const targetStartP2 = Math.max(0, Math.min(1, Number(nextLeg.sStart||0) / total2));
+                                    const targetEndP2 = Math.max(0, Math.min(1, Number(nextLeg.sEnd||total2) / total2));
                                     await new Promise((resolve)=>db.run(
                                         `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, merge_turns, entered_turn, meta)
-                                         VALUES (?, ?, 1, 0.0, ?, 'shoulder', ?, ?, NULL)`,
-                                        [nextLeg.edgeId, tr.ship_id, tr.cu, Math.max(1, Number(nextLeg.mergeTurns || 1)), Number(turnNumber)], ()=>resolve()));
+                                         VALUES (?, ?, 1, ?, ?, 'shoulder', ?, ?, ?)`,
+                                        [nextLeg.edgeId, tr.ship_id, targetStartP2, tr.cu, Math.max(1, Number(nextLeg.mergeTurns || 1)), Number(turnNumber), JSON.stringify({ targetStartP: targetStartP2, targetEndP: targetEndP2 })], ()=>resolve()));
                                     await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + ? WHERE edge_id = ?`, [tr.cu, nextLeg.edgeId], ()=>resolve()));
                                     try { io.to(`game-${gameId}`).emit('lane:next-leg-started', { shipId: tr.ship_id, nextEdgeId: nextLeg.edgeId, mode: 'wildcat' }); } catch {}
                                     await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(itinerary), itinRow.id], ()=>resolve()));
