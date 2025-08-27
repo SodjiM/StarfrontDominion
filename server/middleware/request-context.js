@@ -10,13 +10,20 @@ module.exports = function requestContext() {
         const start = Date.now();
         res.on('finish', () => {
             const durationMs = Date.now() - start;
-            logger.info('http_request', {
-                reqId,
-                method: req.method,
-                path: req.originalUrl || req.url,
-                status: res.statusCode,
-                durationMs
-            });
+            const path = req.originalUrl || req.url;
+            const mode = process.env.LOG_HTTP;
+            if (mode !== '0') {
+                const isNoisy = (/\/game\/(ability-cooldowns|cargo)/.test(String(path||'')) || /\/game\/sector\/.+\/trails/.test(String(path||'')));
+                if (!(mode === 'quiet' && isNoisy)) {
+                    logger.info('http_request', {
+                        reqId,
+                        method: req.method,
+                        path,
+                        status: res.statusCode,
+                        durationMs
+                    });
+                }
+            }
         });
         next();
     };

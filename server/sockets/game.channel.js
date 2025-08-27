@@ -47,8 +47,12 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 const planner = new LaneGraphService(db);
                 const single = await planner.planSingleLegRoutes(sectorId, from, to);
                 const multi = await planner.planDijkstraRoutes(sectorId, from, to);
-                // Merge, prefer best ETAs overall; include top 3
-                const routes = [...single, ...multi].sort((a,b)=>a.eta-b.eta).slice(0,3);
+                // Merge and filter out degenerate routes (missing legs or all zero-length)
+                const merged = [...single, ...multi];
+                const isNonZero = (legs)=>Array.isArray(legs) && legs.some(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-6);
+                const filtered = merged.filter(r => isNonZero(r.legs));
+                // Prefer best ETAs overall; include top 3
+                const routes = filtered.sort((a,b)=>a.eta-b.eta).slice(0,3);
                 cb && cb({ success:true, routes, currentTurn });
             } catch (e) {
                 cb && cb({ success:false, error:'server_error' });

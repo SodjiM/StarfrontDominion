@@ -164,6 +164,7 @@ class LaneGraphService {
 				const key = `E${e.id}:T${nearest.t.id}`;
 				const approach = nearest.d / impulseSpeed;
 				const queue = tapQueueTurns(e, nearest.t.id);
+				console.log('[planner] origin->tap', { edgeId:e.id, tapId:nearest.t.id, approach: Number(approach.toFixed(2)), queue });
 				addEdge(SRC, key, approach + queue, { type: 'origin_to_tap', edgeId: e.id, tapId: nearest.t.id });
 			}
 		}
@@ -175,12 +176,13 @@ class LaneGraphService {
 				const a = taps[i], b = taps[i+1];
 				const { turns: tAB, rho: rhoAB } = laneTimeTurns(e, a.s, b.s);
 				const { turns: tBA, rho: rhoBA } = laneTimeTurns(e, b.s, a.s);
+				console.log('[planner] lane', { edgeId:e.id, fromTap:a.id, toTap:b.id, turnsAB:Number(tAB.toFixed(2)), turnsBA:Number(tBA.toFixed(2)) });
 				addEdge(`E${e.id}:T${a.id}`, `E${e.id}:T${b.id}`, tAB, { type:'lane', edgeId:e.id, sStart:a.s, sEnd:b.s, rho: rhoAB });
 				addEdge(`E${e.id}:T${b.id}`, `E${e.id}:T${a.id}`, tBA, { type:'lane', edgeId:e.id, sStart:b.s, sEnd:a.s, rho: rhoBA });
 			}
 		}
 		// Transfers between different edges if taps are near
-		const transferThreshold = 20;
+		const transferThreshold = 80;
 		for (const e1 of edges) {
 			const geom1 = edgeGeom.get(e1.id); if (!geom1) continue;
 			for (const t1 of (geom1.taps||[])) {
@@ -190,20 +192,45 @@ class LaneGraphService {
 					for (const t2 of (geom2.taps||[])) {
 						const d = Math.hypot(t1.x - t2.x, t1.y - t2.y);
 						if (d <= transferThreshold) {
-							const transCost = 1 + tapQueueTurns(e2, t2.id); // off-ramp + queue at target tap
+							const transCost = 3 + (d/120) + tapQueueTurns(e2, t2.id); // off-ramp/on-ramp + short travel + queue
+							console.log('[planner] transfer', { fromEdge:e1.id, toEdge:e2.id, fromTap:t1.id, toTap:t2.id, dist:Number(d.toFixed(2)), cost:Number(transCost.toFixed(2)) });
 							addEdge(`E${e1.id}:T${t1.id}`, `E${e2.id}:T${t2.id}`, transCost, { type:'transfer', fromEdgeId:e1.id, toEdgeId:e2.id, fromTapId:t1.id, toTapId:t2.id });
 						}
 					}
 				}
 			}
 		}
-		// Taps -> DST via their edge's sDest
-		for (const e of edges) {
-			const geom = edgeGeom.get(e.id); if (!geom) continue;
-			const taps = geom.taps || [];
-			for (const t of taps) {
-				const { turns, rho } = laneTimeTurns(e, t.s, geom.sDest);
-				addEdge(`E${e.id}:T${t.id}`, DST, Math.ceil(turns + 1), { type:'to_dest', edgeId: e.id, sStart: t.s, sEnd: geom.sDest, rho });
+		// Taps -> DST: only from edge that has nearest tap to the destination
+		{
+			let nearestDest = null;
+			for (const [edgeId, geom] of edgeGeom.entries()) {
+				const taps = geom.taps || [];
+				for (const t of taps) {
+					const d = Math.hypot(t.x - toP.x, t.y - toP.y);
+					if (!nearestDest || d < nearestDest.d) nearestDest = { edgeId: Number(edgeId), tap: t, d };
+				}
+			}
+			if (nearestDest) {
+				const e = edges.find(ed => Number(ed.id) === Number(nearestDest.edgeId));
+				const geom = edgeGeom.get(nearestDest.edgeId);
+				const taps = (geom && geom.taps) ? geom.taps : [];
+				const sTarget = nearestDest.tap.s;
+				console.log('[planner] dest-target', { edgeId: nearestDest.edgeId, tapId: nearestDest.tap.id, sTarget: Number(sTarget.toFixed(2)), dist: Number(nearestDest.d.toFixed(2)) });
+				for (const t of taps) {
+					const { turns, rho } = laneTimeTurns(e, t.s, sTarget);
+					console.log('[planner] to-dest', { edgeId: nearestDest.edgeId, fromTap: t.id, sStart: Number(t.s.toFixed(2)), sEnd: Number(sTarget.toFixed(2)), turns: Number(turns.toFixed(2)) });
+					addEdge(`E${e.id}:T${t.id}`, DST, Math.ceil(turns + 1), { type:'to_dest', edgeId: e.id, sStart: t.s, sEnd: sTarget, rho });
+				}
+			} else {
+				// Fallback to previous projection-based behavior if no taps were found
+				for (const e of edges) {
+					const geom = edgeGeom.get(e.id); if (!geom) continue;
+					const taps = geom.taps || [];
+					for (const t of taps) {
+						const { turns, rho } = laneTimeTurns(e, t.s, geom.sDest);
+						addEdge(`E${e.id}:T${t.id}`, DST, Math.ceil(turns + 1), { type:'to_dest', edgeId: e.id, sStart: t.s, sEnd: geom.sDest, rho });
+					}
+				}
 			}
 		}
 		// Dijkstra
@@ -238,18 +265,12 @@ class LaneGraphService {
 			}
 			// transfers and origin_to_tap are accounted in cost but do not produce separate legs
 		}
-		// Merge contiguous legs on same edge consecutively
-		const merged = [];
-		for (const L of legs) {
-			const last = merged[merged.length-1];
-			if (last && Number(last.edgeId)===Number(L.edgeId) && String(last.entry)===String(L.entry) && (last.tapId || L.tapId)) {
-				last.sEnd = L.sEnd;
-			} else {
-				merged.push({ ...L });
-			}
-		}
+		// Drop any zero-length terminal legs to avoid invisible highlights
+		const filtered = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-6);
+		console.log('[planner] legs', filtered.map(L=>({ edgeId:L.edgeId, sStart:Number(L.sStart.toFixed?.(2) ?? L.sStart), sEnd:Number(L.sEnd.toFixed?.(2) ?? L.sEnd), tapId:L.tapId })));
+		// Keep individual tap-to-tap segments as separate legs for clearer visualization
 		const eta = Math.ceil(dist.get(DST));
-		return [{ eta, rho: rhoMax, risk: (rhoMax>1.5?3:(rhoMax>1?2:1)), legs: merged }];
+		return [{ eta, rho: rhoMax, risk: (rhoMax>1.5?3:(rhoMax>1?2:1)), legs: filtered }];
 	}
 	// Simple 2-leg planning via tap junctions (taps within threshold are considered connected)
 	async planTwoLegRoutes(sectorId, from, to) {

@@ -1,4 +1,6 @@
 // Map modal helpers
+import { filterAndNormalizeRoutes, confirmRoute, normalizeLeg } from '../features/travel-planner.js';
+const debug = (...args) => { try { if (window.__DEV_WARP_DEBUG) console.log(...args); } catch {} };
 
 export async function populateSystemFacts(game) {
     try {
@@ -209,6 +211,14 @@ export function openMapModal() {
             modalContent.querySelectorAll('[data-poi-tab]').forEach(btn => btn.addEventListener('click', ()=>populatePoiList(modalContent, btn.dataset.poiTab)));
             setTimeout(()=>populatePoiList(modalContent, 'planets'), 150);
         } catch {}
+        // Ensure planner availability based on selection
+        try { updatePlannerState(modalContent); } catch {}
+        try {
+            const interval = setInterval(()=>{
+                if (!document.body.contains(modalContent)) { clearInterval(interval); return; }
+                updatePlannerState(modalContent);
+            }, 800);
+        } catch {}
         setTimeout(() => { try { initializeFullMap(); loadGalaxyDataInternal(); populateSystemFactsInternal(); } catch (e) { console.error('map init error', e); } }, 100);
 }
 
@@ -217,6 +227,25 @@ function bindTabEvents(root) {
         tabs.forEach(btn => {
             btn.addEventListener('click', () => switchMapTab(root, btn.dataset.tab, btn));
         });
+}
+
+function updatePlannerState(root) {
+        try {
+            const client = window.gameClient; const panel = root.querySelector('#plannerPanel'); const routes = root.querySelector('#plannerRoutes'); const help = root.querySelector('#plannerHelp');
+            const controls = root.querySelector('#poiSelector'); const inputsX = root.querySelector('#coordX'); const inputsY = root.querySelector('#coordY');
+            const selected = client?.selectedUnit;
+            if (!panel) return;
+            if (!selected) {
+                if (help) help.textContent = 'Warp planning requires a warpable unit be selected';
+                if (routes) routes.innerHTML = '';
+                if (controls) controls.style.opacity = '0.4';
+                if (inputsX) inputsX.disabled = true; if (inputsY) inputsY.disabled = true;
+            } else {
+                if (help) help.textContent = 'Click on the map or pick a POI to plan a route.';
+                if (controls) controls.style.opacity = '1';
+                if (inputsX) inputsX.disabled = false; if (inputsY) inputsY.disabled = false;
+            }
+        } catch {}
 }
 
 function switchMapTab(root, tabName, clickedEl) {
@@ -252,7 +281,126 @@ async function populatePoiList(root, tab) {
         wrap.onclick = (e)=>{ const row = e.target.closest('.poi-item'); if (!row) return; const it = items[Number(row.dataset.idx||0)]; const xEl = root.querySelector('#coordX'); const yEl = root.querySelector('#coordY'); if (xEl && yEl) { xEl.value = it.x; yEl.value = it.y; } planToDestination({ x: it.x, y: it.y }); };
 }
 
+function showPlannerRoutes(routes) {
+        try {
+            const client = window.gameClient; const container = document.getElementById('plannerRoutes'); if (!container) return;
+            const rawList = Array.isArray(routes) ? routes.slice(0,3) : [];
+            // Normalize and drop degenerate (all zero-length) routes
+            const list = rawList.filter(r => {
+                const legs = Array.isArray(r.legs) ? r.legs.map(normalizeLeg) : [];
+                const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
+                if (!legs.length || !nonZero.length) { debug('[client] Skipping degenerate route', { route:r, legs }); return false; }
+                // replace with normalized legs for downstream use
+                r.legs = legs;
+                return true;
+            });
+            window.__lastPlannedRoutes = list;
+            debug('[client] showPlannerRoutes received routes:', list.map(r => ({ legsCount: Array.isArray(r.legs)?r.legs.length:'not-array', hasEdgeId: !!r.edgeId, keys:Object.keys(r||{}) })));
+            container.innerHTML = '';
+            list.forEach((r, idx) => {
+                const rho = Number(r.rho || 0); const color = rho<=1?'#66bb6a':(rho<=1.5?'#ffca28':'#ef5350');
+                const row = document.createElement('div'); row.style.display='grid'; row.style.gridTemplateColumns='1fr auto'; row.style.gap='6px'; row.style.alignItems='center'; row.style.border='1px solid rgba(100,181,246,0.25)'; row.style.padding='6px'; row.style.borderRadius='6px';
+                const legs = Array.isArray(r.legs) ? r.legs : null;
+                if (!legs) { console.error(`[client] Route ${idx} missing legs array`, r); return; }
+                const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
+                row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● ρ ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
+                    <div style=\"display:flex; gap:6px;\">
+                        <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"confirm\">Confirm</button>
+                    </div>`;
+                container.appendChild(row);
+            });
+            container.onclick = (e) => {
+                const btn = e.target.closest('button'); if (!btn) return;
+                const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
+                const action = btn.getAttribute('data-action');
+                if (action === 'confirm') {
+                    confirmRoute(client, r);
+                }
+            };
+        } catch {}
+}
+
+function planToDestination(dest) {
+        try {
+            const client = window.gameClient; if (!client || !client.gameState?.sector?.id) return;
+            const x = Number(dest?.x), y = Number(dest?.y); if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+            const panel = document.getElementById('plannerRoutes'); if (panel) panel.innerHTML = '<div style="color:#9ecbff;">Planning route...</div>';
+            client.socket && client.socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: { x, y } }, (resp)=>{
+                if (resp?.success && Array.isArray(resp.routes)) showPlannerRoutes(resp.routes);
+                else { const panel = document.getElementById('plannerRoutes'); if (panel) panel.innerHTML = '<div style="color:#ff8a80;">No route found</div>'; }
+            });
+        } catch (e) { try { console.error('planToDestination error', e); } catch {} }
+}
+
 function safeName(n){ try { if (!n) return null; return String(n); } catch { return null; } }
+
+// Normalize leg objects from various server payload shapes (camelCase or snake_case)
+function normalizeLeg(L) {
+        try {
+            const edgeId = Number(L?.edgeId ?? L?.edge_id);
+            const entryRaw = (L?.entry ?? L?.entry_type ?? 'wildcat');
+            const sStart = Number(L?.sStart ?? L?.s_start ?? 0);
+            const sEnd = Number(L?.sEnd ?? L?.s_end ?? sStart);
+            const mergeTurns = (L?.mergeTurns ?? L?.merge_turns);
+            const tapId = (L?.tapId ?? L?.tap_id ?? L?.nearestTapId ?? L?.nearest_tap_id);
+            return {
+                edgeId,
+                entry: (String(entryRaw) === 'tap') ? 'tap' : 'wildcat',
+                sStart: Number.isFinite(sStart) ? sStart : 0,
+                sEnd: Number.isFinite(sEnd) ? sEnd : (Number.isFinite(sStart)?sStart:0),
+                mergeTurns: (mergeTurns != null ? Number(mergeTurns) : undefined),
+                tapId: (tapId != null ? Number(tapId) : undefined)
+            };
+        } catch { return { edgeId: NaN, entry: 'wildcat', sStart: 0, sEnd: 0 }; }
+}
+
+// Shared confirm with strict validation, normalization and logging
+function confirmRoute(client, route) {
+        try {
+            if (!client?.selectedUnit?.id) { client.addLogEntry('Select a ship first to confirm a route', 'warning'); return; }
+            // Extract raw legs
+            let rawLegs = [];
+            if (Array.isArray(route?.legs) && route.legs.length > 0) rawLegs = route.legs;
+            else if (route && (route.edgeId != null)) {
+                if (window.__DEV_WARP_FALLBACK) {
+                    console.warn('[client] DEV fallback: route missing legs; synthesizing one from route keys');
+                    rawLegs = [{ edgeId: route.edgeId ?? route.edge_id, entry: route.entry, sStart: route.sStart ?? route.s_start ?? 0, sEnd: route.sEnd ?? route.s_end ?? route.sStart ?? route.s_start ?? 0, tapId: route.tapId ?? route.tap_id ?? route.nearestTapId ?? route.nearest_tap_id, mergeTurns: route.mergeTurns ?? route.merge_turns }];
+                } else {
+                    console.error('[client] Route missing legs array; aborting confirm. Route keys:', Object.keys(route||{}));
+                    client.addLogEntry('Route data missing legs; cannot confirm', 'error');
+                    return;
+                }
+            } else {
+                console.error('[client] Route has no legs/edgeId; aborting.', route);
+                client.addLogEntry('Route data corrupted; cannot confirm', 'error');
+                return;
+            }
+
+            const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
+            const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
+            if (!nonZero.length) {
+                console.error('[client] All legs are zero-length after normalization; aborting.', legs);
+                client.addLogEntry('Route is empty; cannot confirm', 'error');
+                return;
+            }
+            console.log(`[client] Confirming route with ${legs.length} legs`, legs);
+            // Pre-confirm highlight
+            try { client.__laneHighlight = { until: Date.now()+6000, legs }; debug('[client] set highlight legs (pre-confirm)', legs); initializeFullMap(); } catch {}
+            // Send
+            client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId: client.selectedUnit.id, freshnessTurns: 3, legs }, (resp)=>{
+                try { debug('[client] confirm resp', resp); } catch {}
+                if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
+                const serverLegs = Array.isArray(resp?.itinerary) ? resp.itinerary : (Array.isArray(resp?.legs) ? resp.legs : null);
+                const confirmedLegs = serverLegs ? serverLegs.map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId)) : legs;
+                const confirmedNonZero = confirmedLegs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
+                if (!confirmedNonZero.length) {
+                    console.warn('[client] Server returned zero-length-only itinerary; keeping pre-confirm legs for highlight.', confirmedLegs);
+                }
+                client.addLogEntry(`Itinerary stored (${confirmedLegs.length} leg${confirmedLegs.length!==1?'s':''})`, 'success');
+                try { client.__laneHighlight = { until: Date.now()+6000, legs: confirmedNonZero.length ? confirmedLegs : legs }; debug('[client] set highlight legs', confirmedLegs); initializeFullMap(); setTimeout(()=>initializeFullMap(), 100); setTimeout(()=>initializeFullMap(), 2000); } catch {}
+            });
+        } catch (e) { console.error('confirmRoute error', e); }
+}
 
 function buildLaneCache(canvas, facts) {
 	try {
@@ -581,12 +729,17 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                     const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
                                     const action = btn.getAttribute('data-action');
                                     if (action === 'confirm') {
-                                        const legs = Array.isArray(r.legs) ? r.legs : [{ edgeId: r.edgeId, entry: r.entry, sStart: r.sStart, sEnd: r.sEnd, tapId: r.nearestTapId, mergeTurns: r.mergeTurns }];
-                                        SFApi.Socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId: client.selectedUnit?.id, legs }, (resp)=>{
+                                        const rawLegs = Array.isArray(r.legs)
+                                            ? r.legs
+                                            : [{ edgeId: r.edgeId ?? r.edge_id, entry: r.entry, sStart: r.sStart ?? r.s_start, sEnd: r.sEnd ?? r.s_end, tapId: r.tapId ?? r.tap_id ?? r.nearestTapId ?? r.nearest_tap_id, mergeTurns: r.mergeTurns ?? r.merge_turns }];
+                                        const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
+                                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId: client.selectedUnit?.id, legs }, (resp)=>{
                                             if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                                            client.addLogEntry(`Itinerary stored (${resp.legs||legs.length} leg${(resp.legs||legs.length)!==1?'s':''})`, 'success');
+                                            const serverLegs = Array.isArray(resp?.itinerary) ? resp.itinerary : (Array.isArray(resp?.legs) ? resp.legs : null);
+                                            const confirmedLegs = serverLegs ? serverLegs.map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId)) : legs;
+                                            client.addLogEntry(`Itinerary stored (${confirmedLegs.length} leg${(confirmedLegs.length!==1)?'s':''})`, 'success');
                                             // Highlight legs on map for a few seconds
-                                            try { client.__laneHighlight = { until: Date.now()+6000, legs }; initializeFullMap(); setTimeout(()=>initializeFullMap(), 100); setTimeout(()=>initializeFullMap(), 2000); } catch {}
+                                            try { client.__laneHighlight = { until: Date.now()+6000, legs: confirmedLegs }; console.log('[client] set highlight legs', confirmedLegs); initializeFullMap(); setTimeout(()=>initializeFullMap(), 100); setTimeout(()=>initializeFullMap(), 2000); } catch {}
                                         });
                                     }
                                 };
@@ -641,36 +794,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
                     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
                     ctx.stroke();
-                    // Highlight segments for confirmed legs
-                    try {
-                        if (highlightEdges.has(Number(l.id))) {
-                            const legs = highlight.filter(L=>Number(L.edgeId)===Number(l.id));
-                            // Compute cumulative distances
-                            const acc=[0]; for (let i=1;i<pts.length;i++){ acc[i]=acc[i-1]+Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); }
-                            const total = acc[acc.length-1]||1;
-                            legs.forEach(L => {
-                                const s0 = Math.max(0, Math.min(total, Number(L.sStart||0)));
-                                const s1 = Math.max(0, Math.min(total, Number(L.sEnd||total)));
-                                const drawSegment = (sA, sB) => {
-                                    let aIdx=0; while (aIdx<acc.length-1 && acc[aIdx+1] < sA) aIdx++;
-                                    let bIdx=aIdx; while (bIdx<acc.length-1 && acc[bIdx+1] < sB) bIdx++;
-                                    const lerpPoint = (idx, s) => {
-                                        const t = (s-acc[idx]) / Math.max(1e-6, (acc[idx+1]-acc[idx]));
-                                        return { x: pts[idx].x + (pts[idx+1].x-pts[idx].x)*t, y: pts[idx].y + (pts[idx+1].y-pts[idx].y)*t };
-                                    };
-                                    const start = lerpPoint(aIdx, sA), end = lerpPoint(bIdx, sB);
-                                    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-                                    ctx.lineWidth = Math.max(2.5, (l.width_core || 180) * 0.45 * ((scaleX+scaleY)/2));
-                                    ctx.beginPath();
-                                    ctx.moveTo(start.x*scaleX, start.y*scaleY);
-                                    for (let i=aIdx+1;i<=bIdx;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
-                                    ctx.lineTo(end.x*scaleX, end.y*scaleY);
-                                    ctx.stroke();
-                                };
-                                drawSegment(Math.min(s0,s1), Math.max(s0,s1));
-                            });
-                        }
-                    } catch {}
+                    // Per-edge highlight removed; a global pass draws all confirmed legs across edges
                     // Hover badges for lane stats
                     if (mouse && typeof mouse.x==='number' && typeof mouse.y==='number') {
                         const projectToSegment = (p,a,b)=>{ const apx=p.x-a.x, apy=p.y-a.y; const abx=b.x-a.x, aby=b.y-a.y; const ab2=Math.max(1e-6,abx*abx+aby*aby); const t=Math.max(0, Math.min(1, (apx*abx+apy*aby)/ab2)); return { x:a.x+abx*t, y:a.y+aby*t, t }; };
@@ -742,6 +866,73 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 });
             } catch {}
         }
+        // Global highlight pass so multi-edge routes are fully visible
+        try {
+            // Ensure facts are available for highlighting
+            let highlightFacts = facts;
+            if (!highlightFacts && client.gameState?.sector?.id) {
+                const cache = client.__factsCache;
+                if (cache && cache.until > Date.now()) highlightFacts = cache.facts;
+                else highlightFacts = cache?.facts || null;
+            }
+            const rawLegs = (client.__laneHighlight && client.__laneHighlight.until > Date.now()) ? (client.__laneHighlight.legs||[]) : [];
+            const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
+            if (legs.length && highlightFacts) {
+                try { console.log('[client] highlight legs', legs.map(L=>({ edgeId:L.edgeId, sStart:Math.round(L.sStart), sEnd:Math.round(L.sEnd) }))); } catch {}
+                const laneById = new Map(); (highlightFacts.lanes||[]).forEach(L => laneById.set(Number(L.id ?? L.edgeId ?? L.edge_id), L));
+                const tapsByEdge = new Map(Object.entries(highlightFacts.laneTapsByEdge || {}).map(([k,v])=>[Number(k), v||[]]));
+                legs.forEach(L => {
+                    const lane = laneById.get(Number(L.edgeId));
+                    const pts = Array.isArray(lane?.polyline) ? lane.polyline : [];
+                    if (pts.length < 2) return;
+                    const acc=[0]; for (let i=1;i<pts.length;i++){ acc[i]=acc[i-1]+Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); }
+                    const total = acc[acc.length-1]||1;
+                    const sA = Math.max(0, Math.min(total, Number(L.sStart||0)));
+                    const sB = Math.max(0, Math.min(total, Number(L.sEnd||total)));
+                    const a = Math.min(sA, sB), b = Math.max(sA, sB);
+                    if (Math.abs(b - a) < 1e-3) return; // skip zero-length
+                    let aIdx=0; while (aIdx<acc.length-1 && acc[aIdx+1] < a) aIdx++;
+                    let bIdx=aIdx; while (bIdx<acc.length-1 && acc[bIdx+1] < b) bIdx++;
+                    const lerpPoint = (idx, s) => { const t = (s-acc[idx]) / Math.max(1e-6, (acc[idx+1]-acc[idx])); return { x: pts[idx].x + (pts[idx+1].x-pts[idx].x)*t, y: pts[idx].y + (pts[idx+1].y-pts[idx].y)*t }; };
+                    const start = lerpPoint(aIdx, a), end = lerpPoint(bIdx, b);
+                    const laneWidth = Number(lane?.width_core || 180);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+                    ctx.lineWidth = Math.max(2.5, laneWidth * 0.45 * ((scaleX+scaleY)/2));
+                    ctx.beginPath();
+                    ctx.moveTo(start.x*scaleX, start.y*scaleY);
+                    for (let i=aIdx+1;i<=bIdx;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
+                    ctx.lineTo(end.x*scaleX, end.y*scaleY);
+                    ctx.stroke();
+                    // endpoints markers for debugging visualization
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath(); ctx.arc(start.x*scaleX, start.y*scaleY, 2.5, 0, Math.PI*2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(end.x*scaleX, end.y*scaleY, 2.5, 0, Math.PI*2); ctx.fill();
+                });
+                // Draw approach to first entry tap (dashed), so zero-length lane legs still visualize
+                try {
+                    const first = legs[0];
+                    const entryTapId = Number(first?.tapId);
+                    if (Number.isFinite(entryTapId)) {
+                        const tapEdge = Number(first.edgeId);
+                        const tapsArr = tapsByEdge.get(tapEdge) || [];
+                        const tap = tapsArr.find(t=>Number(t.id)===entryTapId);
+                        const ship = client.selectedUnit;
+                        if (tap && ship) {
+                            ctx.save();
+                            ctx.setLineDash([6,4]);
+                            ctx.strokeStyle = 'rgba(158,203,255,0.85)';
+                            ctx.lineWidth = 1.75;
+                            ctx.beginPath();
+                            ctx.moveTo(ship.x*scaleX, ship.y*scaleY);
+                            ctx.lineTo(tap.x*scaleX, tap.y*scaleY);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                            ctx.restore();
+                        }
+                    }
+                } catch {}
+            }
+        } catch {}
         // Base objects with labels
         client.objects.forEach(obj => {
             const x = obj.x * scaleX, y = obj.y * scaleY; ctx.fillStyle = '#64b5f6';
