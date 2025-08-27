@@ -249,7 +249,7 @@ export function openMapModal() {
                                     const sel = items.find(it => Number(it.shipId) === Number(client.selectedUnit.id));
                                     if (sel) {
                                         const legs = (sel.legs||[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
-                                        client.__laneHighlight = { until: Date.now()+120000, legs };
+                                        client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
                                         initializeFullMap();
                                     }
                                 }
@@ -351,8 +351,7 @@ function showPlannerRoutes(routes) {
                 const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
                 row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● ρ ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
                     <div style=\"display:flex; gap:6px;\">
-                        <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"confirm\">Confirm</button>
-                        <button class=\"sf-btn sf-btn-secondary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button>
+                        <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button>
                     </div>`;
                 container.appendChild(row);
             });
@@ -360,15 +359,42 @@ function showPlannerRoutes(routes) {
                 const btn = e.target.closest('button'); if (!btn) return;
                 const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
                 const action = btn.getAttribute('data-action');
-                if (action === 'confirm') {
-                    confirmRoute(client, r, ()=>initializeFullMap());
-                } else if (action === 'start') {
+                if (action === 'start') {
                     const shipId = client.selectedUnit?.id;
                     if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
-                    client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp)=>{
-                        if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Start failed', 'error'); return; }
-                        client.addLogEntry('Travel started', 'success');
-                        initializeFullMap();
+                    const legs = (Array.isArray(r.legs)?r.legs:[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
+                    client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs }, (resp)=>{
+                        if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
+                        try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
+                        client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp2)=>{
+                            if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
+                            if (resp2.approachRequired && resp2.approachTarget && typeof resp2.approachTarget.x==='number' && typeof resp2.approachTarget.y==='number') {
+                                try {
+                                    const toX = Number(resp2.approachTarget.x), toY = Number(resp2.approachTarget.y);
+                                    // Use the same movement flow the UI uses so the dashed path renders immediately
+                                    if (typeof client.handleMoveCommand === 'function') {
+                                        const wasQueue = client.queueMode === true;
+                                        if (wasQueue) try { client.queueMode = false; } catch {}
+                                        try { client.handleMoveCommand(toX, toY); } finally { if (wasQueue) try { client.queueMode = true; } catch {} }
+                                    }
+                                    else {
+                                        // Fallback: optimistic state update
+                                        const fromX = client.selectedUnit?.x, fromY = client.selectedUnit?.y;
+                                        const path = (typeof client.calculateMovementPath === 'function') ? client.calculateMovementPath(fromX, fromY, toX, toY) : [{x:fromX,y:fromY},{x:toX,y:toY}];
+                                        client.selectedUnit.movementPath = path; client.selectedUnit.plannedDestination = { x: toX, y: toY }; client.selectedUnit.movementActive = true; client.render && client.render();
+                                        client.socket.emit('move-ship', { gameId: client.gameId, shipId, destinationX: toX, destinationY: toY, movementPath: path });
+                                    }
+                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{
+                                        if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error');
+                                        else client.addLogEntry('Approach plotted; lane start queued', 'info');
+                                    });
+                                } catch {}
+                                initializeFullMap();
+                                return;
+                            }
+                            client.addLogEntry('Travel started', 'success');
+                            initializeFullMap();
+                        });
                     });
                 }
             };
@@ -379,6 +405,7 @@ function planToDestination(dest) {
         try {
             const client = window.gameClient; if (!client || !client.gameState?.sector?.id) return;
             const x = Number(dest?.x), y = Number(dest?.y); if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+            try { client.__plannerTarget = { x, y }; } catch {}
             const panel = document.getElementById('plannerRoutes'); if (panel) panel.innerHTML = '<div style="color:#9ecbff;">Planning route...</div>';
             client.socket && client.socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: { x, y } }, (resp)=>{
                 if (resp?.success && Array.isArray(resp.routes)) showPlannerRoutes(resp.routes);
@@ -694,6 +721,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     const rect = canvas.getBoundingClientRect();
                     const click = { x: (ev.clientX-rect.left)/scaleX, y: (ev.clientY-rect.top)/scaleY };
                     try {
+                        client.__plannerTarget = click;
                         const routes = await new Promise((resolve)=>{
                             SFApi.Socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: click }, (resp)=>resolve(resp));
                         });
@@ -709,7 +737,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                     const legsText = legs.map((L,i)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
                                     row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● ρ ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
                                         <div style=\"display:flex; gap:6px;\">
-                                            <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"confirm\">Confirm</button>
+                                            <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button>
                                         </div>`;
                                     container.appendChild(row);
                                 });
@@ -719,18 +747,45 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                     const btn = e.target.closest('button'); if (!btn) return;
                                     const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
                                     const action = btn.getAttribute('data-action');
-                                    if (action === 'confirm') {
+                                    if (action === 'start') {
                                         const rawLegs = Array.isArray(r.legs)
                                             ? r.legs
                                             : [{ edgeId: r.edgeId ?? r.edge_id, entry: r.entry, sStart: r.sStart ?? r.s_start, sEnd: r.sEnd ?? r.s_end, tapId: r.tapId ?? r.tap_id ?? r.nearestTapId ?? r.nearest_tap_id, mergeTurns: r.mergeTurns ?? r.merge_turns }];
                                         const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
-                                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId: client.selectedUnit?.id, legs }, (resp)=>{
+                                        const shipId = client.selectedUnit?.id;
+                                        if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
+                                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs }, (resp)=>{
                                             if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                                            const serverLegs = Array.isArray(resp?.itinerary) ? resp.itinerary : (Array.isArray(resp?.legs) ? resp.legs : null);
-                                            const confirmedLegs = serverLegs ? serverLegs.map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId)) : legs;
-                                            client.addLogEntry(`Itinerary stored (${confirmedLegs.length} leg${(confirmedLegs.length!==1)?'s':''})`, 'success');
-                                            // Highlight legs on map for a few seconds
-                                            try { client.__laneHighlight = { until: Date.now()+6000, legs: confirmedLegs }; console.log('[client] set highlight legs', confirmedLegs); initializeFullMap(); setTimeout(()=>initializeFullMap(), 100); setTimeout(()=>initializeFullMap(), 2000); } catch {}
+                                            try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
+                                            client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp2)=>{
+                                                if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
+                                                if (resp2.approachRequired && resp2.approachTarget && typeof resp2.approachTarget.x==='number' && typeof resp2.approachTarget.y==='number') {
+                                                    try {
+                                                        const toX = Number(resp2.approachTarget.x), toY = Number(resp2.approachTarget.y);
+                                                        // Use the same movement flow the UI uses so the dashed path renders immediately
+                                                        if (typeof client.handleMoveCommand === 'function') {
+                                                            const wasQueue = client.queueMode === true;
+                                                            if (wasQueue) try { client.queueMode = false; } catch {}
+                                                            try { client.handleMoveCommand(toX, toY); } finally { if (wasQueue) try { client.queueMode = true; } catch {} }
+                                                        }
+                                                        else {
+                                                            // Fallback: optimistic state update
+                                                            const fromX = client.selectedUnit?.x, fromY = client.selectedUnit?.y;
+                                                            const path = (typeof client.calculateMovementPath === 'function') ? client.calculateMovementPath(fromX, fromY, toX, toY) : [{x:fromX,y:fromY},{x:toX,y:toY}];
+                                                            client.selectedUnit.movementPath = path; client.selectedUnit.plannedDestination = { x: toX, y: toY }; client.selectedUnit.movementActive = true; client.render && client.render();
+                                                            client.socket.emit('move-ship', { gameId: client.gameId, shipId, destinationX: toX, destinationY: toY, movementPath: path });
+                                                        }
+                                                        client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{
+                                                            if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error');
+                                                            else client.addLogEntry('Approach plotted; lane start queued', 'info');
+                                                        });
+                                                    } catch {}
+                                                    initializeFullMap();
+                                                    return;
+                                                }
+                                                client.addLogEntry('Travel started', 'success');
+                                                initializeFullMap();
+                                            });
                                         });
                                     }
                                 };
@@ -899,6 +954,36 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     ctx.beginPath(); ctx.arc(start.x*scaleX, start.y*scaleY, 2.5, 0, Math.PI*2); ctx.fill();
                     ctx.beginPath(); ctx.arc(end.x*scaleX, end.y*scaleY, 2.5, 0, Math.PI*2); ctx.fill();
                 });
+                // Post-impulse preview: draw dashed path from lane exit to planner target
+                try {
+                    const lastLeg = legs[legs.length - 1];
+                    if (lastLeg && client.__plannerTarget) {
+                        const lane = laneById.get(Number(lastLeg.edgeId));
+                        const pts = Array.isArray(lane?.polyline) ? lane.polyline : [];
+                        if (pts.length >= 2) {
+                            const acc=[0]; for (let i=1;i<pts.length;i++){ acc[i]=acc[i-1]+Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); }
+                            const total = acc[acc.length-1]||1;
+                            const sExit = Math.max(0, Math.min(total, Number(lastLeg.sEnd||total)));
+                            let j=0; while (j<acc.length-1 && acc[j+1] < sExit) j++;
+                            const t=(sExit-acc[j])/Math.max(1e-6,(acc[j+1]-acc[j]));
+                            const exitPt = { x: pts[j].x + (pts[j+1].x-pts[j].x)*t, y: pts[j].y + (pts[j+1].y-pts[j].y)*t };
+                            const to = client.__plannerTarget;
+                            // Only draw if post-impulse has real distance
+                            if (Math.hypot((to.x-exitPt.x),(to.y-exitPt.y)) >= 1) {
+                            ctx.save();
+                            ctx.setLineDash([6,4]);
+                            ctx.strokeStyle = 'rgba(158,203,255,0.75)';
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.moveTo(exitPt.x*scaleX, exitPt.y*scaleY);
+                            ctx.lineTo(to.x*scaleX, to.y*scaleY);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                            ctx.restore();
+                            }
+                        }
+                    }
+                } catch {}
                 // Draw approach to first entry tap (dashed), so zero-length lane legs still visualize
                 try {
                     const first = legs[0];

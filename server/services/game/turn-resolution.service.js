@@ -268,6 +268,31 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                                         const pos = pointAtProgress(geom, sTarget / Math.max(1, geom.total));
                                         await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos.x, pos.y, new Date().toISOString(), tr.ship_id], ()=>resolve()));
                                         try { io.to(`game-${gameId}`).emit('travel:arrived', { shipId: tr.ship_id, edgeId: e.id, x: pos.x, y: pos.y }); } catch {}
+                                        // Post-impulse: if itinerary meta has a dest XY different from current, materialize a movement order
+                                        try {
+                                            const metaRow = await new Promise((resolve)=>db.get('SELECT meta FROM lane_itineraries WHERE id = ?', [itinRow.id], (er, r)=>resolve(r||null)));
+                                            if (metaRow && metaRow.meta) {
+                                                const meta = (()=>{ try { return JSON.parse(metaRow.meta||'{}'); } catch { return {}; } })();
+                                                if (meta?.dest && typeof meta.dest.x==='number' && typeof meta.dest.y==='number') {
+                                                    const dx = Number(meta.dest.x) - Number(pos.x);
+                                                    const dy = Number(meta.dest.y) - Number(pos.y);
+                                                    if (Math.hypot(dx, dy) >= 1) {
+                                                        const shipRow = await new Promise((resolve)=>db.get('SELECT meta FROM sector_objects WHERE id = ?', [tr.ship_id], (er, r)=>resolve(r||null)));
+                                                        let speed = 1; try { const m = shipRow?.meta?JSON.parse(shipRow.meta):{}; speed = Math.max(1, Number(m.movementSpeed||1)); } catch {}
+                                                        const { computePathBresenham } = require('../../utils/path');
+                                                        const path = computePathBresenham(Number(pos.x), Number(pos.y), Number(meta.dest.x), Number(meta.dest.y));
+                                                        const eta = Math.ceil(Math.max(0, path.length - 1) / Math.max(1, speed));
+                                                        await new Promise((resolve)=>db.run('DELETE FROM movement_orders WHERE object_id = ? AND status IN ("active","blocked")', [tr.ship_id], ()=>resolve()));
+                                                        await new Promise((resolve, reject)=>db.run(
+                                                            `INSERT INTO movement_orders (object_id, destination_x, destination_y, movement_speed, eta_turns, movement_path, current_step, status, created_at)
+                                                             VALUES (?, ?, ?, ?, ?, ?, 0, 'active', ?)`,
+                                                            [tr.ship_id, Number(meta.dest.x), Number(meta.dest.y), speed, eta, JSON.stringify(path), new Date().toISOString()],
+                                                            (err)=> err ? reject(err) : resolve()
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                        } catch {}
                                     }
                                 } catch {}
                             } else if (isFresh) {
@@ -572,6 +597,44 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                 } else if (q.order_type === 'harvest_stop') {
                     await HarvestingManager.stopHarvesting(ship.ship_id).catch(() => {});
                     await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], () => resolve()));
+                } else if (q.order_type === 'travel_start') {
+                    // Attempt to start the next itinerary leg now (auto-approach was completed in prior order)
+                    try {
+                        const itinRow = await new Promise((resolve)=>db.get(
+                            `SELECT id, created_turn, freshness_turns, itinerary_json, status FROM lane_itineraries 
+                             WHERE ship_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
+                            [ship.ship_id], (er, row)=>resolve(row||null)));
+                        if (!itinRow) {
+                            await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
+                            continue;
+                        }
+                        let itinerary = []; try { itinerary = JSON.parse(itinRow.itinerary_json||'[]'); } catch {}
+                        const nextLeg = itinerary.find(L => !L.done);
+                        if (!nextLeg) { await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve())); continue; }
+                        if (nextLeg.entry === 'tap' && nextLeg.tapId) {
+                            await new Promise((resolve)=>db.run(
+                                `INSERT INTO lane_tap_queue (tap_id, ship_id, cu, enqueued_turn, status) VALUES (?, ?, ?, ?, 'queued')`,
+                                [nextLeg.tapId, ship.ship_id, 1, upcomingTurn], ()=>resolve()));
+                            await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], ()=>resolve()));
+                        } else if (nextLeg.entry === 'wildcat') {
+                            // Shoulder merge transit for next edge using target window
+                            const edgeRow2 = await new Promise((resolve)=>db.get('SELECT polyline_json FROM lane_edges WHERE id = ?', [nextLeg.edgeId], (er, r)=>resolve(r||null)));
+                            const pts2 = (()=>{ try { return JSON.parse(edgeRow2?.polyline_json||'[]'); } catch { return []; } })();
+                            let total2 = 1; if (pts2.length>1) { let d2=0; for(let i=1;i<pts2.length;i++){ d2+=Math.hypot(pts2[i].x-pts2[i-1].x, pts2[i].y-pts2[i-1].y); } total2 = Math.max(1, d2); }
+                            const targetStartP2 = Math.max(0, Math.min(1, Number(nextLeg.sStart||0) / total2));
+                            const targetEndP2 = Math.max(0, Math.min(1, Number(nextLeg.sEnd||total2) / total2));
+                            await new Promise((resolve)=>db.run(
+                                `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, merge_turns, entered_turn, meta)
+                                 VALUES (?, ?, 1, ?, ?, 'shoulder', ?, ?, ?)`,
+                                [nextLeg.edgeId, ship.ship_id, targetStartP2, 1, Math.max(1, Number(nextLeg.mergeTurns || 1)), Number(upcomingTurn), JSON.stringify({ targetStartP: targetStartP2, targetEndP: targetEndP2 })], ()=>resolve()));
+                            await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + ? WHERE edge_id = ?`, [1, nextLeg.edgeId], ()=>resolve()));
+                            await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], ()=>resolve()));
+                        } else {
+                            await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
+                        }
+                    } catch {
+                        await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
+                    }
                 }
             } catch (e) {
                 console.warn('materializeQueuedOrders error for ship', ship.ship_id, e?.message || e);
