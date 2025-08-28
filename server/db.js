@@ -143,24 +143,57 @@ const initializeDatabase = async () => {
                                                         return reject(bErr);
                                                     }
                                                     console.log('✅ Belts/Wormholes/Lanes schema applied');
-                                                    // Apply resource system then combat schema (protect against FK issues on upsert)
-                                                    db.exec(resourceSchema, (err) => {
-                                                        if (err) {
-                                                            console.error('Error applying resource system schema:', err);
-                                                            reject(err);
-                                                        } else {
-                                                            console.log('✅ Resource system schema applied');
-                                                            db.exec(combatSchema, (cerr) => {
-                                                                if (cerr) {
-                                                                    console.error('Error applying combat system schema:', cerr);
-                                                                    reject(cerr);
-                                                                } else {
-                                                                    console.log('✅ Combat system schema applied');
-                                                                    resolve();
-                                                                }
+                                                    // Post-schema safety migrations for lanes (older DBs may lack columns)
+                                                    const proceedToResource = () => {
+                                                        // Apply resource system then combat schema (protect against FK issues on upsert)
+                                                        db.exec(resourceSchema, (err) => {
+                                                            if (err) {
+                                                                console.error('Error applying resource system schema:', err);
+                                                                reject(err);
+                                                            } else {
+                                                                console.log('✅ Resource system schema applied');
+                                                                db.exec(combatSchema, (cerr) => {
+                                                                    if (cerr) {
+                                                                        console.error('Error applying combat system schema:', cerr);
+                                                                        reject(cerr);
+                                                                    } else {
+                                                                        console.log('✅ Combat system schema applied');
+                                                                        resolve();
+                                                                    }
+                                                                });
+                                                            }
+                                                        });
+                                                    };
+                                                    const migrateLaneItineraries = () => {
+                                                        try {
+                                                            db.all(`PRAGMA table_info(lane_itineraries)`, (e2, rows2) => {
+                                                                try {
+                                                                    const hasMeta = (rows2||[]).some(c => String(c.name) === 'meta');
+                                                                    if (!hasMeta) {
+                                                                        db.run(`ALTER TABLE lane_itineraries ADD COLUMN meta TEXT`, () => proceedToResource());
+                                                                    } else {
+                                                                        proceedToResource();
+                                                                    }
+                                                                } catch (m2Err) { console.warn('Lane itineraries migration note:', m2Err?.message || m2Err); proceedToResource(); }
                                                             });
-                                                        }
-                                                    });
+                                                        } catch (m2Outer) { console.warn('Lane itineraries migration note:', m2Outer?.message || m2Outer); proceedToResource(); }
+                                                    };
+                                                    try {
+                                                        db.all(`PRAGMA table_info(lane_transits)`, (eLT, rowsLT) => {
+                                                            try {
+                                                                const cols = new Set((rowsLT||[]).map(r => String(r.name)));
+                                                                const ops = [];
+                                                                if (!cols.has('meta')) ops.push(`ALTER TABLE lane_transits ADD COLUMN meta TEXT`);
+                                                                if (!cols.has('merge_turns')) ops.push(`ALTER TABLE lane_transits ADD COLUMN merge_turns INTEGER`);
+                                                                if (!cols.has('entered_turn')) ops.push(`ALTER TABLE lane_transits ADD COLUMN entered_turn INTEGER`);
+                                                                const runOp = (i) => {
+                                                                    if (i >= ops.length) return migrateLaneItineraries();
+                                                                    db.run(ops[i], () => runOp(i+1));
+                                                                };
+                                                                runOp(0);
+                                                            } catch (mErr) { console.warn('Lane transits migration note:', mErr?.message || mErr); migrateLaneItineraries(); }
+                                                        });
+                                                    } catch (mOuter) { console.warn('Lane transits migration note:', mOuter?.message || mOuter); migrateLaneItineraries(); }
                                                 });
                                             });
                                         }

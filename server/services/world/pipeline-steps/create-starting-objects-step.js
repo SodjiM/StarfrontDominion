@@ -2,7 +2,7 @@ const db = require('../../../db');
 const { BaseStep } = require('./base-step');
 const { SHIP_BLUEPRINTS } = require('../../registry/blueprints');
 const { Abilities } = require('../../registry/abilities');
-const { CargoManager } = require('../../../cargo-manager');
+const { CargoManager } = require('../../game/cargo-manager');
 
 class CreateStartingObjectsStep extends BaseStep {
     constructor() { super('createStartingObjects'); }

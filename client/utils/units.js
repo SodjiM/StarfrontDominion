@@ -8,6 +8,8 @@ export function getCargoFill(unit) {
 }
 
 export function getEta(unit) {
+    // Prefer live lane ETA if present
+    if (unit.movementETA != null) return unit.movementETA;
     if (unit.eta_turns != null) return unit.eta_turns;
     if (unit.movement_path) {
         try {

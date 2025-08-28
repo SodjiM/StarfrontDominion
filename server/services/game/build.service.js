@@ -1,7 +1,7 @@
 const db = require('../../db');
 const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../registry/blueprints');
 const { Abilities } = require('../registry/abilities');
-const { CargoManager } = require('../../cargo-manager');
+const { CargoManager } = require('./cargo-manager');
 const { STRUCTURE_TYPES } = require('../../domain/structures');
 
 class BuildService {

@@ -233,7 +233,8 @@ async function processSingleMovement(order, turnNumber, gameId) {
     return new Promise(async (resolve, reject) => {
         // Handle warp orders separately
         if (order.status === 'warp_preparing') {
-            return processWarpOrder(order, turnNumber, gameId, resolve, reject);
+            // Legacy warp removed: drop lingering orders
+            return db.run('DELETE FROM movement_orders WHERE id = ?', [order.id], () => resolve({ objectId: order.object_id, status: 'skipped_legacy_warp' }));
         }
         
         const movementPath = JSON.parse(order.movement_path || '[]');
@@ -391,110 +392,7 @@ async function processSingleMovement(order, turnNumber, gameId) {
     });
 }
 
-// Process warp order (preparation and execution)
-function processWarpOrder(order, turnNumber, gameId, resolve, reject) {
-    const preparationTurns = order.warp_preparation_turns || 0;
-    const warpPhase = order.warp_phase || 'preparing';
-    const meta = JSON.parse(order.meta || '{}');
-    const requiredPrep = (typeof meta.warpPreparationTurns === 'number' && meta.warpPreparationTurns >= 0) ? Math.max(0, Math.floor(meta.warpPreparationTurns)) : 2;
-    
-    console.log(`🌌 Processing warp order for ship ${order.object_id}: phase=${warpPhase}, prep=${preparationTurns}/${requiredPrep}`);
-    
-    if (warpPhase === 'preparing') {
-        const newPreparationTurns = preparationTurns + 1;
-        
-        if (newPreparationTurns >= requiredPrep) {
-            // Preparation complete - execute warp jump
-            console.log(`🚀 Warp preparation complete for ship ${order.object_id}, executing jump!`);
-            
-            // Move ship to destination instantly
-            db.run(
-                'UPDATE sector_objects SET x = ?, y = ? WHERE id = ?',
-                [order.warp_destination_x, order.warp_destination_y, order.object_id],
-                function(err) {
-                    if (err) {
-                        console.error('Error executing warp jump:', err);
-                        return reject(err);
-                    }
-                    
-                    console.log(`✨ Ship ${order.object_id} warped to (${order.warp_destination_x}, ${order.warp_destination_y})`);
-                    
-                    // Record warp as a movement_history segment for trails
-                    db.run(
-                        `INSERT INTO movement_history 
-                         (object_id, game_id, turn_number, from_x, from_y, to_x, to_y, movement_speed) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [
-                            order.object_id,
-                            gameId,
-                            turnNumber,
-                            order.current_x || order.warp_destination_x, // best-effort from state; may be null
-                            order.current_y || order.warp_destination_y,
-                            order.warp_destination_x,
-                            order.warp_destination_y,
-                            0
-                        ],
-                        (historyErr) => {
-                            if (historyErr) {
-                                console.error(`❌ Failed to record warp history for ship ${order.object_id}:`, historyErr);
-                            } else {
-                                console.log(`📜 Recorded warp history: Ship ${order.object_id} to (${order.warp_destination_x},${order.warp_destination_y}) on turn ${turnNumber}`);
-                            }
-                        }
-                    );
-
-                    // Delete the warp order (completed)
-                    db.run(
-                        'DELETE FROM movement_orders WHERE id = ?',
-                        [order.id],
-                        (err) => {
-                            if (err) {
-                                console.error('Error cleaning up warp order:', err);
-                            }
-                            
-                            resolve({
-                                objectId: order.object_id,
-                                status: 'warp_completed',
-                                newX: order.warp_destination_x,
-                                newY: order.warp_destination_y,
-                                message: `Warp jump completed to (${order.warp_destination_x}, ${order.warp_destination_y})`
-                            });
-                        }
-                    );
-                }
-            );
-        } else {
-            // Continue preparation - increment turn counter
-            db.run(
-                'UPDATE movement_orders SET warp_preparation_turns = ? WHERE id = ?',
-                [newPreparationTurns, order.id],
-                (err) => {
-                    if (err) {
-                        console.error('Error updating warp preparation:', err);
-                        return reject(err);
-                    }
-                    
-                    console.log(`⚡ Ship ${order.object_id} warp preparation: ${newPreparationTurns}/${requiredPrep} turns`);
-                    
-                    resolve({
-                        objectId: order.object_id,
-                        status: 'warp_preparing',
-                        preparationTurns: newPreparationTurns,
-                        message: `Warp drive charging: ${newPreparationTurns}/${requiredPrep} turns`
-                    });
-                }
-            );
-        }
-    } else {
-        // Shouldn't happen, but handle gracefully
-        console.warn(`⚠️ Unknown warp phase: ${warpPhase} for ship ${order.object_id}`);
-        resolve({
-            objectId: order.object_id,
-            status: 'warp_error',
-            message: 'Unknown warp phase'
-        });
-    }
-}
+// Legacy warp removed
 
 // Materialize one queued order per idle ship for the upcoming turn
 async function materializeQueuedOrders(gameId, upcomingTurn) {

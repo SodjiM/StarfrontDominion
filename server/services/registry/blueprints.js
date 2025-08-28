@@ -19,6 +19,7 @@
  * // Core stats (overrides class baselines)
  * @property {number} [maxHp]
  * @property {number} [movementSpeed]
+ * @property {number} [warpSpeed]
  * @property {number} [scanRange]
  * @property {number} [cargoCapacity]
  * @property {number} [harvestRate]
@@ -50,6 +51,7 @@ const SHIP_BLUEPRINTS = [
         prereqs: [],
         maxHp: 40,
         movementSpeed: 4,
+        warpSpeed: 1.5,
         scanRange: 50,
         cargoCapacity: 10,
         harvestRate: 1.0,
@@ -76,6 +78,7 @@ const SHIP_BLUEPRINTS = [
         prereqs: [],
         maxHp: 55,
         movementSpeed: 3,
+        warpSpeed: 1.5,
         scanRange: 40,
         cargoCapacity: 6,
         harvestRate: 0,
@@ -102,6 +105,7 @@ const SHIP_BLUEPRINTS = [
         prereqs: [],
         maxHp: 50,
         movementSpeed: 3,
+        warpSpeed: 1.5,
         scanRange: 35,
         cargoCapacity: 20,
         harvestRate: 2.0,
@@ -128,6 +132,7 @@ const SHIP_BLUEPRINTS = [
         prereqs: [],
         maxHp: 35,
         movementSpeed: 6,
+        warpSpeed: 2.0,
         scanRange: 45,
         cargoCapacity: 8,
         harvestRate: 0,

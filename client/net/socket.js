@@ -94,22 +94,38 @@ function buildHandlers(game) {
                 game.render && game.render();
             } catch {}
         },
+        'travel:cancelled': (data) => {
+            try {
+                // Clear planned lane highlight when a transit is cancelled mid-edge
+                if (game.__laneHighlight) game.__laneHighlight.until = 0;
+                game.render && game.render();
+            } catch {}
+        },
         'travel:entered': (data) => {
             try {
                 const obj = game.objects.find(o => o.id === data.shipId);
                 if (obj) {
                     obj.meta = obj.meta || {}; obj.meta.travelMode = String(data.mode || 'core');
                 }
+                try { game.addLogEntry('🌌 Lane travel started', 'info'); } catch {}
+                try { if (game.selectedUnit && game.selectedUnit.id === data.shipId) game.updateUnitDetails && game.updateUnitDetails(); } catch {}
                 game.render && game.render();
             } catch {}
         },
         'travel:progress': (data) => {
             try {
                 const obj = game.objects.find(o => o.id === data.shipId);
-                if (obj) { obj.x = Number(data.x||obj.x); obj.y = Number(data.y||obj.y); }
+                if (obj) {
+                    obj.x = Number(data.x||obj.x); obj.y = Number(data.y||obj.y);
+                    if (typeof data.eta === 'number') obj.movementETA = Math.max(0, Math.ceil(data.eta));
+                    if (!obj.meta) obj.meta = {}; if (typeof data.tpt === 'number') obj.meta.warpTPT = Number(data.tpt);
+                }
                 if (game.selectedUnit && game.selectedUnit.id === data.shipId) {
                     game.selectedUnit.x = Number(data.x||game.selectedUnit.x);
                     game.selectedUnit.y = Number(data.y||game.selectedUnit.y);
+                    if (typeof data.eta === 'number') game.selectedUnit.movementETA = Math.max(0, Math.ceil(data.eta));
+                    try { if (!game.selectedUnit.meta) game.selectedUnit.meta = {}; if (typeof data.tpt === 'number') game.selectedUnit.meta.warpTPT = Number(data.tpt); } catch {}
+                    try { game.updateUnitDetails && game.updateUnitDetails(); } catch {}
                 }
                 game.render && game.render();
             } catch {}
@@ -119,12 +135,17 @@ function buildHandlers(game) {
                 const obj = game.objects.find(o => o.id === data.shipId);
                 if (obj) {
                     obj.x = Number(data.x || obj.x); obj.y = Number(data.y || obj.y);
-                    if (obj.meta) delete obj.meta.travelMode;
+                    if (obj.meta) { delete obj.meta.travelMode; delete obj.meta.warpTPT; }
                 }
                 if (game.selectedUnit && game.selectedUnit.id === data.shipId) {
                     game.selectedUnit.x = Number(data.x || game.selectedUnit.x);
                     game.selectedUnit.y = Number(data.y || game.selectedUnit.y);
+                    try { if (game.selectedUnit.meta) { delete game.selectedUnit.meta.travelMode; delete game.selectedUnit.meta.warpTPT; } } catch {}
+                    try { game.updateUnitDetails && game.updateUnitDetails(); } catch {}
                 }
+                // Clear planned lane highlight when transit completes
+                try { if (game.__laneHighlight) game.__laneHighlight.until = 0; } catch {}
+                try { game.addLogEntry('🚀 Exited lane', 'info'); } catch {}
                 game.render && game.render();
             } catch {}
         },

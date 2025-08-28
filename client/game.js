@@ -265,6 +265,71 @@ export class GameClient {
         // Objects, paths, selection, fog
         renderMapObjects(this, ctx, canvas);
         SFRenderers.movement.drawMovementPaths.call(this, ctx, canvas, this.objects, this.userId, this.camera, this.tileSize, this.selectedUnit, this.gameState, this.trailBuffer);
+        // Lane route overlays on main canvas (purple lanes + yellow dest)
+        try {
+            const client = this;
+            const highlight = (client.__laneHighlight && client.__laneHighlight.until > Date.now()) ? (client.__laneHighlight.legs||[]) : [];
+            if (highlight.length && client.gameState?.sector?.id) {
+                const facts = client.__factsCache?.facts || null;
+                if (facts && Array.isArray(facts.lanes)) {
+                    const laneById = new Map(); (facts.lanes||[]).forEach(L => laneById.set(Number(L.id ?? L.edgeId ?? L.edge_id), L));
+                    const legs = highlight.map(L => ({ edgeId:Number(L.edgeId), sStart:Number(L.sStart||0), sEnd:Number(L.sEnd||0) })).filter(L=>Number.isFinite(L.edgeId));
+                    legs.forEach(L => {
+                        const lane = laneById.get(Number(L.edgeId));
+                        const pts = Array.isArray(lane?.polyline) ? lane.polyline : [];
+                        if (pts.length < 2) return;
+                        // Accumulated lengths
+                        const acc=[0]; for (let i=1;i<pts.length;i++){ acc[i]=acc[i-1]+Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); }
+                        const total = acc[acc.length-1]||1;
+                        const sA = Math.max(0, Math.min(total, Number(L.sStart||0)));
+                        const sB = Math.max(0, Math.min(total, Number(L.sEnd||total)));
+                        const a = Math.min(sA, sB), b = Math.max(sA, sB);
+                        if (Math.abs(b - a) < 1e-3) return;
+                        let aIdx=0; while (aIdx<acc.length-1 && acc[aIdx+1] < a) aIdx++;
+                        let bIdx=aIdx; while (bIdx<acc.length-1 && acc[bIdx+1] < b) bIdx++;
+                        const centerX = canvas.width/2, centerY = canvas.height/2;
+                        const lerpPoint = (idx, s) => { const t = (s-acc[idx]) / Math.max(1e-6, (acc[idx+1]-acc[idx])); return { x: pts[idx].x + (pts[idx+1].x-pts[idx].x)*t, y: pts[idx].y + (pts[idx+1].y-pts[idx].y)*t }; };
+                        const start = lerpPoint(aIdx, a), end = lerpPoint(bIdx, b);
+                        ctx.save();
+                        ctx.setLineDash([8,6]);
+                        ctx.strokeStyle = 'rgba(138,43,226,0.95)';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(centerX + (start.x - this.camera.x) * this.tileSize, centerY + (start.y - this.camera.y) * this.tileSize);
+                        for (let i=aIdx+1;i<=bIdx;i++) ctx.lineTo(centerX + (pts[i].x - this.camera.x) * this.tileSize, centerY + (pts[i].y - this.camera.y) * this.tileSize);
+                        ctx.lineTo(centerX + (end.x - this.camera.x) * this.tileSize, centerY + (end.y - this.camera.y) * this.tileSize);
+                        ctx.stroke();
+                        ctx.restore();
+                    });
+                    // Yellow dotted line from last exit to planner target if set
+                    try {
+                        const last = highlight[highlight.length-1];
+                        const lane = laneById.get(Number(last?.edgeId));
+                        const pts = Array.isArray(lane?.polyline) ? lane.polyline : [];
+                        const target = client.__plannerTarget;
+                        if (pts.length>=2 && target && typeof target.x==='number' && typeof target.y==='number') {
+                            const acc=[0]; for (let i=1;i<pts.length;i++){ acc[i]=acc[i-1]+Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); }
+                            const total = acc[acc.length-1]||1; const sExit = Math.max(0, Math.min(total, Number(last.sEnd||total)));
+                            let j=0; while (j<acc.length-1 && acc[j+1] < sExit) j++;
+                            const t=(sExit-acc[j])/Math.max(1e-6,(acc[j+1]-acc[j]));
+                            const exitPt = { x: pts[j].x + (pts[j+1].x-pts[j].x)*t, y: pts[j].y + (pts[j+1].y-pts[j].y)*t };
+                            const centerX = canvas.width/2, centerY = canvas.height/2;
+                            if (Math.hypot((target.x-exitPt.x),(target.y-exitPt.y)) >= 1) {
+                                ctx.save();
+                                ctx.setLineDash([6,4]);
+                                ctx.strokeStyle = 'rgba(255,255,0,0.85)';
+                                ctx.lineWidth = 1.5;
+                                ctx.beginPath();
+                                ctx.moveTo(centerX + (exitPt.x - this.camera.x) * this.tileSize, centerY + (exitPt.y - this.camera.y) * this.tileSize);
+                                ctx.lineTo(centerX + (target.x - this.camera.x) * this.tileSize, centerY + (target.y - this.camera.y) * this.tileSize);
+                                ctx.stroke();
+                                ctx.restore();
+                            }
+                        }
+                    } catch {}
+                }
+            }
+        } catch {}
         renderSelectionOverlay(this, ctx, canvas.width/2, canvas.height/2);
         if (this.fogEnabled) this.fogOffscreen = SFRenderers.fog.drawFogOfWar(ctx, canvas, this.objects, this.userId, this.camera, this.tileSize, this.fogOffscreen);
         // Minimap

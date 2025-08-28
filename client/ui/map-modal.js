@@ -363,7 +363,8 @@ function showPlannerRoutes(routes) {
                     const shipId = client.selectedUnit?.id;
                     if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
                     const legs = (Array.isArray(r.legs)?r.legs:[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
-                    client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs }, (resp)=>{
+                    const dest = client.__plannerTarget || null;
+                    client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: (dest&&typeof dest.x==='number')?dest.x:undefined, destY: (dest&&typeof dest.y==='number')?dest.y:undefined }, (resp)=>{
                         if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
                         try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
                         client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp2)=>{
@@ -384,6 +385,10 @@ function showPlannerRoutes(routes) {
                                         client.selectedUnit.movementPath = path; client.selectedUnit.plannedDestination = { x: toX, y: toY }; client.selectedUnit.movementActive = true; client.render && client.render();
                                         client.socket.emit('move-ship', { gameId: client.gameId, shipId, destinationX: toX, destinationY: toY, movementPath: path });
                                     }
+                                    // Queue entries so the user sees upcoming phases
+                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'move', payload: { destination: { x: toX, y: toY } } }, (q1)=>{
+                                        if (!q1 || !q1.success) client.addLogEntry('Failed to queue approach move (visual only)', 'warning');
+                                    });
                                     client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{
                                         if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error');
                                         else client.addLogEntry('Approach plotted; lane start queued', 'info');
@@ -754,7 +759,8 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                         const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
                                         const shipId = client.selectedUnit?.id;
                                         if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
-                                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs }, (resp)=>{
+                                        const dest = client.__plannerTarget || null;
+                                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: (dest&&typeof dest.x==='number')?dest.x:undefined, destY: (dest&&typeof dest.y==='number')?dest.y:undefined }, (resp)=>{
                                             if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
                                             try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
                                             client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp2)=>{
@@ -942,19 +948,24 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     const lerpPoint = (idx, s) => { const t = (s-acc[idx]) / Math.max(1e-6, (acc[idx+1]-acc[idx])); return { x: pts[idx].x + (pts[idx+1].x-pts[idx].x)*t, y: pts[idx].y + (pts[idx+1].y-pts[idx].y)*t }; };
                     const start = lerpPoint(aIdx, a), end = lerpPoint(bIdx, b);
                     const laneWidth = Number(lane?.width_core || 180);
-                    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-                    ctx.lineWidth = Math.max(2.5, laneWidth * 0.45 * ((scaleX+scaleY)/2));
+                    // Planned lane leg highlight: solid dark purple overlay (easier to see)
+                    ctx.save();
+                    ctx.setLineDash([]);
+                    ctx.strokeStyle = 'rgba(90, 0, 160, 0.95)';
+                    ctx.lineWidth = Math.max(2.5, laneWidth * 0.35 * ((scaleX+scaleY)/2));
                     ctx.beginPath();
                     ctx.moveTo(start.x*scaleX, start.y*scaleY);
                     for (let i=aIdx+1;i<=bIdx;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
                     ctx.lineTo(end.x*scaleX, end.y*scaleY);
                     ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.restore();
                     // endpoints markers for debugging visualization
                     ctx.fillStyle = '#ffffff';
                     ctx.beginPath(); ctx.arc(start.x*scaleX, start.y*scaleY, 2.5, 0, Math.PI*2); ctx.fill();
                     ctx.beginPath(); ctx.arc(end.x*scaleX, end.y*scaleY, 2.5, 0, Math.PI*2); ctx.fill();
                 });
-                // Post-impulse preview: draw dashed path from lane exit to planner target
+                // Post-impulse preview: draw dashed path from lane exit to planner target (yellow)
                 try {
                     const lastLeg = legs[legs.length - 1];
                     if (lastLeg && client.__plannerTarget) {
@@ -972,7 +983,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                             if (Math.hypot((to.x-exitPt.x),(to.y-exitPt.y)) >= 1) {
                             ctx.save();
                             ctx.setLineDash([6,4]);
-                            ctx.strokeStyle = 'rgba(158,203,255,0.75)';
+                            ctx.strokeStyle = 'rgba(255,255,0,0.85)';
                             ctx.lineWidth = 1.5;
                             ctx.beginPath();
                             ctx.moveTo(exitPt.x*scaleX, exitPt.y*scaleY);

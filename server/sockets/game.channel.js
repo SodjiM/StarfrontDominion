@@ -42,12 +42,23 @@ function registerGameChannel({ io, db, resolveTurn }) {
             try {
                 if (!allow(socket, 'travel')) return cb && cb({ success:false, error:'rate_limited' });
                 const { gameId, sectorId, from, to } = payload || {};
+                const shipId = Number(payload?.shipId || 0);
                 if (!gameId || !sectorId || !from || !to) return cb && cb({ success:false, error:'bad_request' });
                 const currentTurn = await new Promise((resolve)=>db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (e,r)=>resolve(r?.turn_number || 1)));
                 const { LaneGraphService } = require('../services/world/lane-graph.service');
                 const planner = new LaneGraphService(db);
-                const single = await planner.planSingleLegRoutes(sectorId, from, to);
-                const multi = await planner.planDijkstraRoutes(sectorId, from, to);
+                // Ship-specific warp speed multiplier (default 1)
+                let warpMult = 1;
+                if (shipId) {
+                    try {
+                        const shipRow = await new Promise((resolve)=>db.get('SELECT meta FROM sector_objects WHERE id = ?', [shipId], (e,r)=>resolve(r||null)));
+                        const meta = shipRow?.meta ? JSON.parse(shipRow.meta) : {};
+                        warpMult = Number(meta.warpSpeedMultiplier || meta.warpSpeed || 1) || 1;
+                    } catch {}
+                }
+                const opts = { warpMult };
+                const single = await planner.planSingleLegRoutes(sectorId, from, to, opts);
+                const multi = await planner.planDijkstraRoutes(sectorId, from, to, opts);
                 // Merge and filter out degenerate routes (missing legs or all zero-length)
                 const merged = [...single, ...multi];
                 const isNonZero = (legs)=>Array.isArray(legs) && legs.some(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-6);
@@ -111,7 +122,8 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 if (entryXY) {
                     const dx = Number(ship.x) - Number(entryXY.x);
                     const dy = Number(ship.y) - Number(entryXY.y);
-                    const far = Math.hypot(dx, dy) > 2;
+                    const far = Math.hypot(dx, dy) > 4;
+                    try { console.log(`🧭 travel:start ship=${shipId} edge=${nextLeg.edgeId} entry=${nextLeg.entry} tapId=${nextLeg.tapId||'n/a'} shipPos=(${ship.x},${ship.y}) entry=(${entryXY.x},${entryXY.y}) far=${far}`); } catch {}
                     if (far) {
                         // Ask scheduler pathing to move first; client will see queued approach
                         return cb && cb({ success:true, approachRequired:true, approachTarget: entryXY });
@@ -189,7 +201,7 @@ function registerGameChannel({ io, db, resolveTurn }) {
                     const gameId = Number(sector?.game_id || 0);
                     const currentTurn = gameId ? await new Promise((resolve)=>db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [gameId], (e,r)=>resolve(r?.turn_number || 1))) : 1;
                     const edge = await new Promise((resolve)=>db.get('SELECT lane_speed, headway FROM lane_edges WHERE id = ?', [edgeId], (e,r)=>resolve(r||null)));
-                    const slotsPerTurn = Math.max(0, Math.floor(Number(edge?.lane_speed || 0) / Math.max(1, Number(edge?.headway || 40))));
+                    const slotsPerTurn = Math.max(1, Math.floor(Number(edge?.lane_speed || 0) / Math.max(1, Number(edge?.headway || 40))));
                     const slotCapacityCU = 2; // design constant
                     const ahead = await new Promise((resolve)=>db.get(`SELECT COALESCE(SUM(cu), 0) as cu FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued'`, [targetTap.id], (e,r)=>resolve(Number(r?.cu || 0))));
                     const queueEtaTurns = slotsPerTurn > 0 ? Math.ceil((ahead + cu) / (slotsPerTurn * slotCapacityCU)) : 1;
@@ -377,6 +389,7 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 if (!tr) return cb && cb({ success:false, error:'not_in_lane' });
                 await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [tr.id], ()=>resolve()));
                 await new Promise((resolve)=>db.run('UPDATE lane_edges_runtime SET load_cu = MAX(0, load_cu - ?) WHERE edge_id = ?', [tr.cu, tr.edge_id], ()=>resolve()));
+                try { io.to(`game-${socket.gameId || ''}`).emit('travel:cancelled', { shipId }); } catch {}
                 cb && cb({ success:true, exited:true });
             } catch (e) {
                 cb && cb({ success:false, error:'server_error' });

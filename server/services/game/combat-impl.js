@@ -1,7 +1,7 @@
 const db = require('../../db');
 const CombatConfig = require('./combat-config');
 const { Abilities } = require('../registry/abilities');
-const { CargoManager } = require('../../cargo-manager');
+const { CargoManager } = require('./cargo-manager');
 const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../registry/blueprints');
 const { CombatRepository } = require('../../repositories/combat.repo');
 const { computePathBresenham } = require('../../utils/path');

@@ -105,8 +105,9 @@ export async function updateFleetList(game) {
                 const isSelected = game.selectedUnit && game.selectedUnit.id === unit.id;
                 const inCurrentSector = isCurrentSector;
                 const status = game.getUnitStatus(meta, unit);
-                const cargoFill = game.getCargoFill(unit);
-                const eta = game.getEta(unit);
+                // Prefer live, socket-updated object for dynamic fields like ETA while in warp
+                const liveObj = Array.isArray(game.objects) ? (game.objects.find(o => o.id === unit.id) || unit) : unit;
+                const eta = game.getEta(liveObj);
                 const iconHtml = game.getUnitIcon({ type: unit.type, meta });
                 html += `
                     <div class="unit-item ${isSelected ? 'selected' : ''} ${!inCurrentSector ? 'remote-unit' : ''}"
@@ -119,7 +120,6 @@ export async function updateFleetList(game) {
                         <div class="unit-meta">
                             <span class="chip">${sectorName}</span>
                             <span class="chip ${getStatusClass(status)}">${getStatusLabel(status)}</span>
-                            ${unit.type==='ship' && cargoFill!=null ? `<span class="chip">📦 ${cargoFill}</span>` : ''}
                             ${eta ? `<span class="chip">⏱️ ETA ${eta}</span>` : ''}
                             <span class="favorite ${game.isFavoriteUnit(unit.id)?'active':''}" data-action="toggle-favorite" data-unit-id="${unit.id}">⭐</span>
                         </div>

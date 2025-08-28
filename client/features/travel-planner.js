@@ -39,12 +39,15 @@ export function confirmRoute(client, route, onRedraw) {
     if (!nonZero.length) { client.addLogEntry('Route is empty; cannot confirm', 'error'); return; }
     const redraw = (typeof onRedraw === 'function') ? onRedraw : (client?.render ? client.render.bind(client) : null);
     try { client.__laneHighlight = { until: Date.now()+6000, legs }; redraw && redraw(); } catch {}
+    const dest = (client && client.__laneHighlight && client.__plannerTarget) ? client.__plannerTarget : (client && client.__plannerTarget) ? client.__plannerTarget : null;
     client.socket && client.socket.emit('travel:confirm', {
         gameId: client.gameId,
         sectorId: client.gameState.sector.id,
         shipId: client.selectedUnit.id,
-        freshnessTurns: 3,
-        legs
+        freshnessTurns: 6,
+        legs,
+        destX: (dest && typeof dest.x === 'number') ? dest.x : undefined,
+        destY: (dest && typeof dest.y === 'number') ? dest.y : undefined
     }, (resp)=>{
         if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
         const serverLegs = Array.isArray(resp?.itinerary) ? resp.itinerary : (Array.isArray(resp?.legs) ? resp.legs : null);

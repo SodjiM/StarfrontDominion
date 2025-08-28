@@ -46,7 +46,9 @@ class LaneGraphService {
 		const { cap } = this.computeCapacity(edge, regionHealth);
 		const rho = Number(loadCU || 0) / Math.max(1, cap);
 		const speedMult = rho<=1?1:rho<=1.5?0.8:rho<=2?0.6:0.4;
-		const v = Math.max(0.001, Number(edge.lane_speed) * speedMult);
+		// Planner uses the same flat warp speed model as runtime for ETA parity
+		const WARP_BASE_TILES_PER_TURN = 100; // keep in sync with runtime
+		const v = Math.max(0.001, (WARP_BASE_TILES_PER_TURN * speedMult));
 		return { rho, speedMult, v };
 	}
 
@@ -72,7 +74,7 @@ class LaneGraphService {
 					const tapProj = LaneGraphService.projectToPolyline({x:nearest.t.x,y:nearest.t.y}, pts);
 					const sTap = LaneGraphService.sAt(tapProj, acc);
 					const laneDist = Math.abs(sDest - sTap);
-					const laneTime = laneDist / Math.max(1, v*200);
+					const laneTime = laneDist / Math.max(1, v);
 					const approachTime = nearest.d / 120;
 					const slotsPerTurn = Math.max(0, Math.floor(Number(e.lane_speed) / Math.max(1, Number(e.headway||40))));
 					const aheadRow = await new Promise((resolve)=>this.db.get(`SELECT COALESCE(SUM(cu), 0) as cu FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued'`, [nearest.t.id], (er, row)=>resolve(row||{cu:0})));
@@ -86,7 +88,7 @@ class LaneGraphService {
 				const fromProj = LaneGraphService.projectToPolyline(fromP, pts);
 				const sFrom = LaneGraphService.sAt(fromProj, acc);
 				const laneDist = Math.abs(sDest - sFrom);
-				const laneTime = laneDist / Math.max(1, v*200);
+				const laneTime = laneDist / Math.max(1, v);
 				const dMin = fromProj.d; const dMax = 300;
 				const base = 1; const k_d = 0.01;
 				let mergeTurns = base + k_d * Math.max(0, dMin - Number(e.width_core||0));
@@ -103,7 +105,7 @@ class LaneGraphService {
 	}
 
 	// Dijkstra over taps graph with transfers; returns up to 3 best routes
-	async planDijkstraRoutes(sectorId, from, to) {
+	async planDijkstraRoutes(sectorId, from, to, opts={}) {
 		const ctx = await this.loadSectorLaneContext(sectorId);
 		const { edges, runtimeByEdge, healthByRegion, tapsByEdge } = ctx;
 		if (!edges.length) return [];
@@ -139,9 +141,9 @@ class LaneGraphService {
 			return spt>0 ? Math.ceil((q + 1) / (spt * slotCapacityCU)) : 1;
 		};
 		const laneTimeTurns = (edge, s0, s1) => {
-			const { rho, v } = this.computeRhoAndSpeed(edge, runtimeByEdge.get(edge.id), healthByRegion.get(String(edge.region_id)) ?? 50);
+			const { rho, v } = this.computeRhoAndSpeed(edge, runtimeByEdge.get(edge.id), healthByRegion.get(String(edge.region_id)) ?? 50, opts);
 			const dist = Math.abs(Number(s1)-Number(s0));
-			const t = dist / Math.max(1, v*200);
+			const t = dist / Math.max(1, v);
 			return { turns: t, rho };
 		};
 		const edgesById = new Map(edges.map(e=>[e.id, e]));

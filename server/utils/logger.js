@@ -26,6 +26,15 @@ function baseLog(level, message, context) {
 }
 
 module.exports = {
+    debug(message, context) {
+        try {
+            const ts = new Date().toISOString();
+            const entry = { level: 'debug', time: ts, msg: String(message || ''), ...(context && typeof context === 'object' ? context : {}) };
+            console.debug(serialize(entry));
+        } catch {
+            console.debug(message, context);
+        }
+    },
     info(message, context) {
         baseLog('info', message, context);
     },

@@ -15,7 +15,8 @@ module.exports = function requestContext() {
             if (mode !== '0') {
                 const isNoisy = (/\/game\/(ability-cooldowns|cargo)/.test(String(path||'')) || /\/game\/sector\/.+\/trails/.test(String(path||'')));
                 if (!(mode === 'quiet' && isNoisy)) {
-                    logger.info('http_request', {
+                    // Route http_request logs to debug channel (console.debug) so they are hidden by default
+                    logger.debug('http_request', {
                         reqId,
                         method: req.method,
                         path,
