@@ -191,22 +191,23 @@ export function handleRightClick(game, e) {
         const target = clickedObject;
         const adj = game.getAdjacentTileNear(target.x, target.y, game.selectedUnit.x, game.selectedUnit.y);
         if (adj) {
-            if (game.queueMode) {
-                import('../features/queue-controller.js').then(mod => {
-                    mod.addMove(game, game.selectedUnit.id, adj.x, adj.y, () => {});
-                    mod.addHarvestStart(game, game.selectedUnit.id, target.id, () => {});
-                });
-                game.addLogEntry(`Queued: Move next to and mine ${target.meta?.resourceType || 'resource'}`, 'info');
-            } else {
-                MoveCtl.handleMoveCommand(game, adj.x, adj.y);
-            }
+            import('../features/queue-controller.js').then(mod => {
+                mod.addMove(game, game.selectedUnit.id, adj.x, adj.y, () => {});
+                mod.addHarvestStart(game, game.selectedUnit.id, target.id, () => {});
+            });
+            game.addLogEntry(`Queued: Move next to and mine ${target.meta?.resourceType || 'resource'}`, 'info');
         } else {
-            MoveCtl.handleMoveCommand(game, worldX, worldY);
+            import('../features/queue-controller.js').then(mod => mod.addMove(game, game.selectedUnit.id, worldX, worldY, () => {}));
+            game.addLogEntry(`Queued: Move to (${worldX}, ${worldY})`, 'info');
         }
         return;
     }
 
-    if (!clickedObject) { MoveCtl.handleMoveCommand(game, worldX, worldY); return; }
+    if (!clickedObject) {
+        import('../features/queue-controller.js').then(mod => mod.addMove(game, game.selectedUnit.id, worldX, worldY, () => {}));
+        game.addLogEntry(`Queued: Move to (${worldX}, ${worldY})`, 'info');
+        return;
+    }
     if (clickedObject.owner_id === game.userId) {
         game.selectUnit(clickedObject.id);
         game.addLogEntry(`Selected ${clickedObject.meta?.name || clickedObject.type}`, 'info');

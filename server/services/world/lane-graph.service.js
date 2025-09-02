@@ -42,17 +42,18 @@ class LaneGraphService {
 		return { cap, health, healthMult };
 	}
 
-	computeRhoAndSpeed(edge, loadCU, regionHealth) {
+	computeRhoAndSpeed(edge, loadCU, regionHealth, opts={}) {
 		const { cap } = this.computeCapacity(edge, regionHealth);
 		const rho = Number(loadCU || 0) / Math.max(1, cap);
 		const speedMult = rho<=1?1:rho<=1.5?0.8:rho<=2?0.6:0.4;
 		// Planner uses the same flat warp speed model as runtime for ETA parity
 		const WARP_BASE_TILES_PER_TURN = 100; // keep in sync with runtime
-		const v = Math.max(0.001, (WARP_BASE_TILES_PER_TURN * speedMult));
+		const warpMult = Math.max(0.001, Number(opts?.warpMult || 1));
+		const v = Math.max(0.001, (WARP_BASE_TILES_PER_TURN * speedMult * warpMult));
 		return { rho, speedMult, v };
 	}
 
-	async planSingleLegRoutes(sectorId, from, to) {
+	async planSingleLegRoutes(sectorId, from, to, opts={}) {
 		const { edges, runtimeByEdge, healthByRegion, tapsByEdge } = await this.loadSectorLaneContext(sectorId);
 		if (!edges.length) return [];
 		const fromP = { x:Number(from.x), y:Number(from.y) }, toP = { x:Number(to.x), y:Number(to.y) };
@@ -62,7 +63,7 @@ class LaneGraphService {
 			const pts = LaneGraphService.parseJsonArray(e.polyline_json);
 			if (pts.length < 2) continue;
 			const { acc } = LaneGraphService.cumulativeLengths(pts);
-			const { rho, speedMult, v } = this.computeRhoAndSpeed(e, runtimeByEdge.get(e.id), healthByRegion.get(String(e.region_id)) ?? 50);
+			const { rho, speedMult, v } = this.computeRhoAndSpeed(e, runtimeByEdge.get(e.id), healthByRegion.get(String(e.region_id)) ?? 50, opts);
 			// Destination projection along the lane
 			const destProj = LaneGraphService.projectToPolyline(toP, pts);
 			const sDest = LaneGraphService.sAt(destProj, acc);
@@ -152,23 +153,24 @@ class LaneGraphService {
 		const adj = new Map(); // node -> array of {to, cost, meta}
 		function addEdge(a,b,cost,meta){ nodes.add(a); nodes.add(b); const arr = adj.get(a)||[]; arr.push({ to: b, cost, meta }); adj.set(a, arr); }
 		const SRC = 'SRC', DST = 'DST';
-		// Origin -> taps
+		// Origin -> taps: consider top-K nearest taps globally (not just per-edge)
+		const allTapEntries = [];
 		for (const e of edges) {
 			const geom = edgeGeom.get(e.id); if (!geom) continue;
-			const taps = geom.taps || [];
-			if (!taps.length) continue;
-			let nearest = null;
-			for (const t of taps) {
+			for (const t of (geom.taps||[])) {
 				const d = Math.hypot(fromP.x - t.x, fromP.y - t.y);
-				if (!nearest || d < nearest.d) nearest = { t, d };
+				allTapEntries.push({ edge: e, tap: t, d });
 			}
-			if (nearest) {
-				const key = `E${e.id}:T${nearest.t.id}`;
-				const approach = nearest.d / impulseSpeed;
-				const queue = tapQueueTurns(e, nearest.t.id);
-				console.log('[planner] origin->tap', { edgeId:e.id, tapId:nearest.t.id, approach: Number(approach.toFixed(2)), queue });
-				addEdge(SRC, key, approach + queue, { type: 'origin_to_tap', edgeId: e.id, tapId: nearest.t.id });
-			}
+		}
+		allTapEntries.sort((a,b)=>a.d-b.d);
+		const K = Math.min(6, allTapEntries.length);
+		for (let i=0;i<K;i++) {
+			const { edge: e, tap: t, d } = allTapEntries[i];
+			const key = `E${e.id}:T${t.id}`;
+			const approach = d / impulseSpeed;
+			const queue = tapQueueTurns(e, t.id);
+			console.log('[planner] origin->tap', { edgeId:e.id, tapId:t.id, approach: Number(approach.toFixed(2)), queue });
+			addEdge(SRC, key, approach + queue, { type: 'origin_to_tap', edgeId: e.id, tapId: t.id });
 		}
 		// Intra-edge between adjacent taps both directions
 		for (const e of edges) {
@@ -202,37 +204,31 @@ class LaneGraphService {
 				}
 			}
 		}
-		// Taps -> DST: only from edge that has nearest tap to the destination
-		{
-			let nearestDest = null;
-			for (const [edgeId, geom] of edgeGeom.entries()) {
-				const taps = geom.taps || [];
-				for (const t of taps) {
-					const d = Math.hypot(t.x - toP.x, t.y - toP.y);
-					if (!nearestDest || d < nearestDest.d) nearestDest = { edgeId: Number(edgeId), tap: t, d };
-				}
-			}
-			if (nearestDest) {
-				const e = edges.find(ed => Number(ed.id) === Number(nearestDest.edgeId));
-				const geom = edgeGeom.get(nearestDest.edgeId);
-				const taps = (geom && geom.taps) ? geom.taps : [];
-				const sTarget = nearestDest.tap.s;
-				console.log('[planner] dest-target', { edgeId: nearestDest.edgeId, tapId: nearestDest.tap.id, sTarget: Number(sTarget.toFixed(2)), dist: Number(nearestDest.d.toFixed(2)) });
-				for (const t of taps) {
-					const { turns, rho } = laneTimeTurns(e, t.s, sTarget);
-					console.log('[planner] to-dest', { edgeId: nearestDest.edgeId, fromTap: t.id, sStart: Number(t.s.toFixed(2)), sEnd: Number(sTarget.toFixed(2)), turns: Number(turns.toFixed(2)) });
-					addEdge(`E${e.id}:T${t.id}`, DST, Math.ceil(turns + 1), { type:'to_dest', edgeId: e.id, sStart: t.s, sEnd: sTarget, rho });
-				}
-			} else {
-				// Fallback to previous projection-based behavior if no taps were found
-				for (const e of edges) {
-					const geom = edgeGeom.get(e.id); if (!geom) continue;
-					const taps = geom.taps || [];
-					for (const t of taps) {
-						const { turns, rho } = laneTimeTurns(e, t.s, geom.sDest);
-						addEdge(`E${e.id}:T${t.id}`, DST, Math.ceil(turns + 1), { type:'to_dest', edgeId: e.id, sStart: t.s, sEnd: geom.sDest, rho });
-					}
-				}
+		// Helper to interpolate world point at arclength s on polyline
+		function pointAtS(pts, acc, s){
+			if (!pts || pts.length<2) return { x: toP.x, y: toP.y };
+			s = Math.max(0, Math.min(acc[acc.length-1]||0, s));
+			let idx=0; while (idx<acc.length-1 && acc[idx+1] < s) idx++;
+			const denom = Math.max(1e-6, (acc[idx+1]-acc[idx]));
+			const t = (s-acc[idx]) / denom;
+			return { x: pts[idx].x + (pts[idx+1].x-pts[idx].x)*t, y: pts[idx].y + (pts[idx+1].y-pts[idx].y)*t };
+		}
+		// Taps -> DST: from every tap on every edge, evaluate lane-to-projection + impulse vs direct impulse
+		const offRampPenalty = 1; // 1 turn overhead to exit lane and settle
+		for (const e of edges) {
+			const geom = edgeGeom.get(e.id); if (!geom) continue;
+			const taps = geom.taps || [];
+			for (const t of taps) {
+				// Option A: stay on this edge toward the projection of destination on this edge, then impulse remainder
+				const sProj = geom.sDest;
+				const { turns: laneTurns, rho } = laneTimeTurns(e, t.s, sProj);
+				const projPt = pointAtS(geom.pts, geom.acc, sProj);
+				const impulseA = Math.hypot(projPt.x - toP.x, projPt.y - toP.y) / impulseSpeed;
+				const costA = laneTurns + offRampPenalty + impulseA;
+				// Option B: exit now and impulse directly from this tap to destination
+				const impulseB = Math.hypot(t.x - toP.x, t.y - toP.y) / impulseSpeed + offRampPenalty;
+				const cost = Math.ceil(Math.min(costA, impulseB));
+				addEdge(`E${e.id}:T${t.id}`, DST, cost, { type:'to_dest', edgeId: e.id, sStart: t.s, sEnd: (costA<=impulseB? sProj : t.s), rho });
 			}
 		}
 		// Dijkstra
@@ -308,9 +304,9 @@ class LaneGraphService {
 				const { rho: rho1, v: v1 } = this.computeRhoAndSpeed(e1, runtimeByEdge.get(e1.id), healthByRegion.get(String(e1.region_id)) || 50);
 				const { rho: rho2, v: v2 } = this.computeRhoAndSpeed(e2, runtimeByEdge.get(e2.id), healthByRegion.get(String(e2.region_id)) || 50);
 				const approachTime = nearest1.d / 120;
-				const laneTime1 = Math.abs(s1Start - s1Start) / Math.max(1, v1*200); // 0, starting at tap
+				const laneTime1 = 0; // starting at tap
 				const transferPenalty = 1; // turns to transfer between edges
-				const laneTime2 = Math.abs(s2End - s2Start) / Math.max(1, v2*200);
+				const laneTime2 = Math.abs(s2End - s2Start) / Math.max(1, v2);
 				const eta = Math.ceil(approachTime + laneTime1 + transferPenalty + laneTime2 + 1);
 				results.push({
 					eta,
@@ -328,5 +324,4 @@ class LaneGraphService {
 }
 
 module.exports = { LaneGraphService };
-
 

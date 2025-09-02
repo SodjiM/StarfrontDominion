@@ -28,11 +28,15 @@ function baseLog(level, message, context) {
 module.exports = {
     debug(message, context) {
         try {
+            const dbg = String(process.env.LOG_DEBUG || '').toLowerCase();
+            const http = String(process.env.LOG_HTTP || '').toLowerCase();
+            const enabled = (dbg === '1' || dbg === 'true' || dbg === 'on') || (http === '1' || http === 'true' || http === 'on' || http === 'debug' || http === 'quiet');
+            if (!enabled) return;
             const ts = new Date().toISOString();
             const entry = { level: 'debug', time: ts, msg: String(message || ''), ...(context && typeof context === 'object' ? context : {}) };
             console.debug(serialize(entry));
         } catch {
-            console.debug(message, context);
+            // Swallow if disabled
         }
     },
     info(message, context) {

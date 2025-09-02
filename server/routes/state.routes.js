@@ -95,6 +95,9 @@ router.get('/:gameId/itineraries/:userId', async (req, res) => {
                 JOIN sector_objects so ON so.id = li.ship_id
                 WHERE s.game_id = ? AND so.owner_id = ?
             `;
+            // Default: only show active itineraries unless client passes ?includeAll=1
+            const includeAll = String(req.query?.includeAll || '0') === '1';
+            if (!includeAll) { sql += " AND li.status = 'active'"; }
             if (sectorId) { sql += ' AND li.sector_id = ?'; params.push(sectorId); }
             sql += ' ORDER BY li.id DESC';
             db.all(sql, params, (e, r) => e ? reject(e) : resolve(r || []));

@@ -2,6 +2,10 @@
 
 (function(){
     function drawFogOfWar(ctx, canvas, objects, userId, camera, tileSize, fogOffscreenRef) {
+        // Guard against zero-sized canvases which cause drawImage to throw
+        if (!canvas || canvas.width === 0 || canvas.height === 0) {
+            return fogOffscreenRef;
+        }
         const ownedSensors = (objects || []).filter(obj => obj.owner_id === userId && (obj.type === 'ship' || obj.type === 'station' || obj.type === 'sensor-tower'));
         if (ownedSensors.length === 0) return fogOffscreenRef;
 
@@ -12,6 +16,9 @@
             fogOffscreen.height = canvas.height;
         }
         const fctx = fogOffscreen.getContext('2d');
+        if (!fogOffscreen.width || !fogOffscreen.height) {
+            return fogOffscreenRef;
+        }
         fctx.clearRect(0, 0, fogOffscreen.width, fogOffscreen.height);
         fctx.fillStyle = 'rgba(0,0,0,0.6)';
         fctx.fillRect(0, 0, fogOffscreen.width, fogOffscreen.height);

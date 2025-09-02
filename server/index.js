@@ -37,6 +37,8 @@ const io = new Server(server, {
     }
 });
 const CONFIG = loadConfig();
+// Verbose server turn/movement logs (enable with env LOG_TURNS=1)
+const TURN_LOGS = String(process.env.LOG_TURNS || '').toLowerCase() === '1';
 const PORT = CONFIG.port;
 
 // Middleware
@@ -500,6 +502,46 @@ async function materializeQueuedOrders(gameId, upcomingTurn) {
             } else if (q.order_type === 'harvest_stop') {
                 await HarvestingManager.stopHarvesting(ship.ship_id).catch(() => {});
                 await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], () => resolve()));
+            } else if (q.order_type === 'ability') {
+                // Ability queued into a future turn; materialize into ability_orders when preconditions are acceptable
+                const { abilityKey, targetObjectId, target, params } = payload || {};
+                if (!abilityKey) {
+                    await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], () => resolve()));
+                    continue;
+                }
+                // Optional object target check and range gate (soft): if target exists and is in same sector and (if ability has range) in range
+                const ability = Abilities[abilityKey];
+                let inRange = true;
+                let targetId = (typeof targetObjectId === 'number') ? Number(targetObjectId) : null;
+                if (targetId) {
+                    const t = await new Promise((resolve)=>db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [targetId], (e,r)=>resolve(r||null)));
+                    if (!t || Number(t.sector_id) !== Number(ship.sector_id)) {
+                        // Target missing or wrong sector → skip and cascade cancel future items that depend on this anchor
+                        await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
+                        // Cascade cancel: all later queued items for this ship
+                        await new Promise((resolve)=>db.run(`UPDATE queued_orders SET status = 'cancelled' WHERE game_id = ? AND ship_id = ? AND status = 'queued' AND sequence_index > ?`, [gameId, ship.ship_id, q.sequence_index], ()=>resolve()));
+                        continue;
+                    }
+                    if (ability && ability.range) {
+                        const dx = Number(t.x) - Number(ship.x);
+                        const dy = Number(t.y) - Number(ship.y);
+                        const dist = Math.hypot(dx, dy);
+                        inRange = dist <= Number(ability.range);
+                    }
+                }
+                // If not in range and no auto-move logic yet, defer: leave as queued for next turn
+                if (!inRange) {
+                    // Optionally we could enqueue a move precursor here in the future
+                    continue;
+                }
+                // Insert ability order for upcoming turn
+                await new Promise((resolve, reject) => db.run(
+                    `INSERT INTO ability_orders (game_id, turn_number, caster_id, ability_key, target_object_id, target_x, target_y, params, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [gameId, upcomingTurn, ship.ship_id, String(abilityKey), targetId || null, (target && typeof target.x==='number')?Number(target.x):null, (target && typeof target.y==='number')?Number(target.y):null, params?JSON.stringify(params):null, new Date().toISOString()],
+                    (err)=> err ? reject(err) : resolve()
+                ));
+                await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], ()=>resolve()));
             }
         } catch (e) {
             // Non-fatal per ship
@@ -1370,3 +1412,4 @@ db.ready.then(() => {
         logger.info('server_started', { port: PORT, env: CONFIG.nodeEnv });
     });
 });
+

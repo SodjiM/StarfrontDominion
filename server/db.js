@@ -330,6 +330,20 @@ const initializeDatabase = async () => {
             );
         });
 
+        // Migrate queued_orders with itinerary and condition metadata
+        await new Promise((resolve) => {
+            const addColumn = (def) => db.run(`ALTER TABLE queued_orders ADD COLUMN ${def}`, () => {});
+            try {
+                addColumn('conditions TEXT');
+                addColumn('itinerary_id INTEGER');
+                addColumn('cancel_cascade INTEGER DEFAULT 1');
+                addColumn('anchor_object_id INTEGER');
+                addColumn('anchor_type TEXT');
+                db.run('CREATE INDEX IF NOT EXISTS idx_qorders_anchor ON queued_orders(anchor_object_id)', () => {});
+            } catch {}
+            resolve();
+        });
+
         // Insert sample games
         await new Promise((resolve, reject) => {
             db.run(`INSERT OR IGNORE INTO games (id, name, mode, status) VALUES 

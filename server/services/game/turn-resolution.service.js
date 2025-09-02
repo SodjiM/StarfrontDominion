@@ -183,8 +183,10 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                 for (const t of taps) {
                     while (budgetCU > 0) {
                         const q = await new Promise((resolve)=>db.get(
-                            `SELECT * FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued' ORDER BY enqueued_turn ASC, id ASC LIMIT 1`,
-                            [t.id], (er, row)=>resolve(row)));
+                            `SELECT * FROM lane_tap_queue 
+                             WHERE tap_id = ? AND status = 'queued' AND enqueued_turn <= ?
+                             ORDER BY enqueued_turn ASC, id ASC LIMIT 1`,
+                            [t.id, Number(turnNumber)], (er, row)=>resolve(row)));
                         if (!q) break;
                         if (q.cu > budgetCU) break;
                         await new Promise((resolve)=>db.run('UPDATE lane_tap_queue SET status = ? WHERE id = ?', ['launched', q.id], ()=>resolve()));
@@ -192,8 +194,8 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                         let initialProgress = 0.0; let metaJson = null;
                         try {
                             const itin = await new Promise((resolve)=>db.get(
-                                `SELECT id, itinerary_json FROM lane_itineraries WHERE ship_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
-                                [q.ship_id], (er, row)=>resolve(row||null)));
+                                `SELECT id, itinerary_json FROM lane_itineraries WHERE ship_id = ? AND sector_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
+                                [q.ship_id, sectorId], (er, row)=>resolve(row||null)));
                             if (itin) {
                                 let legs = []; try { legs = JSON.parse(itin.itinerary_json||'[]'); } catch {}
                                 const leg = legs.find(L => !L.done && Number(L.edgeId) === Number(e.id) && String(L.entry) === 'tap');
@@ -240,7 +242,8 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                             const geom = await getEdgeGeom(e.id);
                             const pos0 = pointAtProgress(geom, Math.max(0, Math.min(1, initialProgress)));
                             await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos0.x, pos0.y, new Date().toISOString(), q.ship_id], ()=>resolve()));
-                            try { io.to(`game-${gameId}`).emit('travel:progress', { shipId: q.ship_id, edgeId: e.id, progress: Math.max(0, Math.min(1, initialProgress)), x: pos0.x, y: pos0.y }); } catch {}
+                            // Removed verbose real-time progress snapshot for turn-based UX; client will refresh via turn state
+                            // try { io.to(`game-${gameId}`).emit('travel:progress', { shipId: q.ship_id, edgeId: e.id, progress: Math.max(0, Math.min(1, initialProgress)), x: pos0.x, y: pos0.y }); } catch {}
                         } catch {}
                         try { io.to(`game-${gameId}`).emit('travel:entered', { shipId: q.ship_id, edgeId: e.id, mode: 'tap' }); } catch {}
                         budgetCU -= q.cu;
@@ -285,7 +288,8 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                         const remainingP = Math.max(0, targetP - newProgress);
                         const remainingTurns = Math.max(0, Math.ceil(remainingP / Math.max(1e-6, deltaP)));
                         try { console.log(`➡️ Transit: edge=${e.id} ship=${tr.ship_id} mode=${tr.mode} p=${newProgress.toFixed(4)} dp=${deltaP.toFixed(6)} targetP=${targetP} eta=${remainingTurns} mult=${shipWarpMult}`); } catch {}
-                        try { io.to(`game-${gameId}`).emit('travel:progress', { shipId: tr.ship_id, edgeId: e.id, progress: newProgress, x: pos.x, y: pos.y, eta: remainingTurns, tpt: effectiveTilesPerTurn }); } catch {}
+                        // Removed frequent progress emission to reduce network and UI churn in turn-based flow
+                        // try { io.to(`game-${gameId}`).emit('travel:progress', { shipId: tr.ship_id, edgeId: e.id, progress: newProgress, x: pos.x, y: pos.y, eta: remainingTurns, tpt: effectiveTilesPerTurn }); } catch {}
                     } catch {}
                     if (newProgress >= targetP) {
                         // Off-ramp and attempt itinerary handoff
@@ -295,8 +299,8 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                         // Check for active itinerary for this ship in this sector
                         const itinRow = await new Promise((resolve)=>db.get(
                             `SELECT id, created_turn, freshness_turns, itinerary_json, status FROM lane_itineraries 
-                             WHERE ship_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
-                            [tr.ship_id], (er, row)=>resolve(row||null)));
+                             WHERE ship_id = ? AND sector_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
+                            [tr.ship_id, sectorId], (er, row)=>resolve(row||null)));
                         if (itinRow) {
                             let itinerary = []; try { itinerary = JSON.parse(itinRow.itinerary_json||'[]'); } catch {}
                             const curIdx = itinerary.findIndex(L => !L.done && Number(L.edgeId) === Number(e.id));
@@ -306,6 +310,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                             if (!nextLeg) {
                                 // Completed itinerary
                                 await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = ? WHERE id = ?', ['consumed', itinRow.id], ()=>resolve()));
+                                // Clean up any leftover queued travel starts or tap queue entries for this ship in this sector
+                                try { await new Promise((resolve)=>db.run(`UPDATE queued_orders SET status = 'skipped' WHERE ship_id = ? AND order_type = 'travel_start' AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
+                                try { await new Promise((resolve)=>db.run(`UPDATE lane_tap_queue SET status = 'cancelled' WHERE ship_id = ? AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
                                 // Reposition ship to exit point along edge at leg.sEnd and notify
                                 try {
                                     const completeLeg = itinerary[curIdx];
@@ -370,8 +377,10 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                                     await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(itinerary), itinRow.id], ()=>resolve()));
                                 }
                             } else {
-                                // Itinerary expired
+                                // Itinerary expired: also clear any pending travel-start orders and queued tap entries
                                 await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = ? WHERE id = ?', ['expired', itinRow.id], ()=>resolve()));
+                                try { await new Promise((resolve)=>db.run(`UPDATE queued_orders SET status = 'skipped' WHERE ship_id = ? AND order_type = 'travel_start' AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
+                                try { await new Promise((resolve)=>db.run(`UPDATE lane_tap_queue SET status = 'cancelled' WHERE ship_id = ? AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
                             }
                         } else {
                             // No itinerary: simple off-ramp effect (retain existing behavior: occasional hard)
@@ -600,13 +609,51 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                 } else if (q.order_type === 'harvest_stop') {
                     await HarvestingManager.stopHarvesting(ship.ship_id).catch(() => {});
                     await new Promise((resolve) => db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], () => resolve()));
+                } else if (q.order_type === 'ability') {
+                    // Materialize queued ability into ability_orders for upcoming turn when preconditions are acceptable
+                    let payloadObj = payload || {};
+                    const abilityKey = payloadObj.abilityKey;
+                    if (!abilityKey) {
+                        await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
+                        continue;
+                    }
+                    let targetId = (typeof payloadObj.targetObjectId === 'number') ? Number(payloadObj.targetObjectId) : null;
+                    const target = payloadObj.target && typeof payloadObj.target.x==='number' && typeof payloadObj.target.y==='number' ? { x: Number(payloadObj.target.x), y: Number(payloadObj.target.y) } : null;
+                    const { Abilities } = require('../registry/abilities');
+                    const ability = Abilities[abilityKey];
+                    // If target object anchor is specified, validate presence/sector and simple range
+                    if (targetId) {
+                        const t = await new Promise((resolve)=>db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [targetId], (e,r)=>resolve(r||null)));
+                        if (!t || Number(t.sector_id) !== Number(ship.sector_id)) {
+                            await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
+                            // Cascade cancel remaining queued items
+                            await new Promise((resolve)=>db.run(`UPDATE queued_orders SET status = 'cancelled' WHERE game_id = ? AND ship_id = ? AND status = 'queued' AND sequence_index > ?`, [gameId, ship.ship_id, q.sequence_index], ()=>resolve()));
+                            continue;
+                        }
+                        if (ability && ability.range) {
+                            const dx = Number(t.x) - Number(ship.x);
+                            const dy = Number(t.y) - Number(ship.y);
+                            const dist = Math.hypot(dx, dy);
+                            if (dist > Number(ability.range)) {
+                                // Not in range yet; leave queued to try next turn (auto-approach can be added later)
+                                continue;
+                            }
+                        }
+                    }
+                    await new Promise((resolve, reject) => db.run(
+                        `INSERT INTO ability_orders (game_id, turn_number, caster_id, ability_key, target_object_id, target_x, target_y, params, created_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [gameId, upcomingTurn, ship.ship_id, String(abilityKey), targetId || null, target?target.x:null, target?target.y:null, payloadObj.params?JSON.stringify(payloadObj.params):null, new Date().toISOString()],
+                        (err)=> err ? reject(err) : resolve()
+                    ));
+                    await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['consumed', q.id], ()=>resolve()));
                 } else if (q.order_type === 'travel_start') {
                     // Attempt to start the next itinerary leg now (auto-approach was completed in prior order)
                     try {
                         const itinRow = await new Promise((resolve)=>db.get(
                             `SELECT id, created_turn, freshness_turns, itinerary_json, status FROM lane_itineraries 
-                             WHERE ship_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
-                            [ship.ship_id], (er, row)=>resolve(row||null)));
+                             WHERE ship_id = ? AND sector_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
+                            [ship.ship_id, ship.sector_id], (er, row)=>resolve(row||null)));
                         if (!itinRow) {
                             await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
                             continue;
@@ -788,3 +835,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
 }
 
 module.exports = { createTurnResolver };
+
+
+
+

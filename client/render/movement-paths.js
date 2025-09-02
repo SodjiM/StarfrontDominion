@@ -15,7 +15,7 @@
     }
 
     function drawSingleMovementPath(ctx, centerX, centerY, ship, isLingering, camera, tileSize, userId, selectedUnit, gameState) {
-        const hasOldPath = ship.movementPath && ship.movementPath.length > 1;
+        let hasOldPath = ship.movementPath && ship.movementPath.length > 1;
         const hasNewSegments = ship.movementSegments && ship.movementSegments.length > 0;
         if (!hasOldPath && !hasNewSegments) return;
 
@@ -47,6 +47,27 @@
             ctx.setLineDash([5, 5]);
         }
 
+        // If actively moving but path missing, synthesize a temporary path from current -> plannedDestination
+        let synthesizedPath = null;
+        if (!hasOldPath && ship.movementActive && ship.plannedDestination && typeof ship.plannedDestination.x === 'number') {
+            try { if (this && typeof this.calculateMovementPath === 'function') synthesizedPath = this.calculateMovementPath(ship.x, ship.y, ship.plannedDestination.x, ship.plannedDestination.y); } catch {}
+            if (Array.isArray(synthesizedPath) && synthesizedPath.length > 1) hasOldPath = true;
+        }
+
+        // Draw active path first if present (real or synthesized)
+        if (hasOldPath) {
+            const path = (synthesizedPath && synthesizedPath.length > 1) ? synthesizedPath : ship.movementPath;
+            ctx.beginPath();
+            for (let i = 0; i < path.length; i++) {
+                const tile = path[i];
+                const screenX = centerX + (tile.x - camera.x) * tileSize;
+                const screenY = centerY + (tile.y - camera.y) * tileSize;
+                if (i === 0) ctx.moveTo(screenX, screenY); else ctx.lineTo(screenX, screenY);
+            }
+            ctx.stroke();
+        }
+
+        // Then queued future segments (if any), ensuring continuous chain visualization
         if (hasNewSegments) {
             ship.movementSegments.forEach(segment => {
                 ctx.beginPath();
@@ -58,16 +79,6 @@
                 ctx.lineTo(toScreenX, toScreenY);
                 ctx.stroke();
             });
-        } else if (hasOldPath) {
-            const path = ship.movementPath;
-            ctx.beginPath();
-            for (let i = 0; i < path.length; i++) {
-                const tile = path[i];
-                const screenX = centerX + (tile.x - camera.x) * tileSize;
-                const screenY = centerY + (tile.y - camera.y) * tileSize;
-                if (i === 0) ctx.moveTo(screenX, screenY); else ctx.lineTo(screenX, screenY);
-            }
-            ctx.stroke();
         }
 
         const currentScreenX = centerX + (ship.x - camera.x) * tileSize;
@@ -82,7 +93,10 @@
 
         let destinationPoint = null;
         if (hasNewSegments && ship.movementSegments.length > 0) destinationPoint = ship.movementSegments[ship.movementSegments.length - 1].to;
-        else if (hasOldPath) destinationPoint = ship.movementPath[ship.movementPath.length - 1];
+        else if (hasOldPath) {
+            const path = (synthesizedPath && synthesizedPath.length > 1) ? synthesizedPath : ship.movementPath;
+            destinationPoint = path[path.length - 1];
+        }
 
         if (destinationPoint) {
             const destScreenX = centerX + (destinationPoint.x - camera.x) * tileSize;
@@ -175,6 +189,17 @@
 
         filteredLingeringShips.forEach(ship => drawSingleMovementPath.call(this, ctx, centerX, centerY, ship, true, camera, tileSize, userId, selectedUnit, gameState));
         activeShips.forEach(ship => drawSingleMovementPath.call(this, ctx, centerX, centerY, ship, false, camera, tileSize, userId, selectedUnit, gameState));
+
+        // Ensure selected unit shows queued preview even if not actively moving yet
+        try {
+            if (selectedUnit && selectedUnit.type === 'ship') {
+                const alreadyDrawn = activeShips.some(s => s.id === selectedUnit.id);
+                const hasPreview = (selectedUnit.movementSegments && selectedUnit.movementSegments.length > 0) || (selectedUnit.movementActive && (!selectedUnit.movementPath || selectedUnit.movementPath.length <= 1));
+                if (!alreadyDrawn && hasPreview) {
+                    drawSingleMovementPath.call(this, ctx, centerX, centerY, selectedUnit, false, camera, tileSize, userId, selectedUnit, gameState);
+                }
+            }
+        } catch {}
     }
 
     if (typeof window !== 'undefined') {

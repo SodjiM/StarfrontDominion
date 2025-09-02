@@ -3,24 +3,7 @@
 export function renderQueueList(game, shipId, orders) {
         const el = document.getElementById('queueLog');
         if (!el) return;
-        const headerItems = [];
-        // Active task indicator (movement only for now)
-        try {
-            const obj = game.objects && game.objects.find(o => o.id === shipId);
-            if (obj) {
-                let activeLabel = '';
-                if (obj.movementActive && (obj.plannedDestination || (obj.movementPath && obj.movementPath.length>1))) {
-                    const dest = obj.plannedDestination || (obj.movementPath && obj.movementPath[obj.movementPath.length-1]);
-                    if (dest && typeof dest.x === 'number' && typeof dest.y === 'number') activeLabel = `Active: Move to (${dest.x},${dest.y})`;
-                    else activeLabel = 'Active: Moving';
-                }
-                if (activeLabel) {
-                    headerItems.push(`<div class=\"log-entry\" style=\"background: rgba(76,175,80,0.15); border-left: 3px solid rgba(76,175,80,0.6);\">\n                        <span>${activeLabel}</span>\n                    </div>`);
-                }
-            }
-        } catch {}
         if (!orders || orders.length === 0) {
-            if (headerItems.length) { el.innerHTML = headerItems.join(''); return; }
             el.innerHTML = '<div class="log-entry">Queue is empty</div>';
             return;
         }
@@ -38,7 +21,7 @@ export function renderQueueList(game, shipId, orders) {
                 <button class="sf-btn sf-btn-xs" data-remove="${o.id}">✖</button>
             </div>`;
         }).join('');
-        el.innerHTML = headerItems.join('') + items;
+        el.innerHTML = items;
         el.querySelectorAll('button[data-remove]').forEach(btn => {
             btn.onclick = () => {
                 const id = Number(btn.getAttribute('data-remove'));
@@ -70,5 +53,6 @@ export function clearQueue(game, shipId) {
         Queue.clear(game, shipId);
         loadQueueLog(game, shipId, true);
 }
+
 
 

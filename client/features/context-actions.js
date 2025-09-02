@@ -14,20 +14,23 @@ export function onRightClick(game, worldX, worldY) {
         const target = clickedObject;
         const adj = game.getAdjacentTileNear(target.x, target.y, game.selectedUnit.x, game.selectedUnit.y);
         if (adj) {
-            if (game.queueMode) {
-                try { const mod = require('./queue-controller.js'); mod.addMove(game, game.selectedUnit.id, adj.x, adj.y, () => {}); mod.addHarvestStart(game, game.selectedUnit.id, target.id, () => {}); }
-                catch { import('./queue-controller.js').then(mod => { mod.addMove(game, game.selectedUnit.id, adj.x, adj.y, () => {}); mod.addHarvestStart(game, game.selectedUnit.id, target.id, () => {}); }); }
-                game.addLogEntry(`Queued: Move next to and mine ${target.meta?.resourceType || 'resource'}`, 'info');
-            } else {
-                game.handleMoveCommand(adj.x, adj.y);
-            }
+            try { const mod = require('./queue-controller.js'); mod.addMove(game, game.selectedUnit.id, adj.x, adj.y, () => {}); mod.addHarvestStart(game, game.selectedUnit.id, target.id, () => {}); }
+            catch { import('./queue-controller.js').then(mod => { mod.addMove(game, game.selectedUnit.id, adj.x, adj.y, () => {}); mod.addHarvestStart(game, game.selectedUnit.id, target.id, () => {}); }); }
+            game.addLogEntry(`Queued: Move next to and mine ${target.meta?.resourceType || 'resource'}`, 'info');
         } else {
-            game.handleMoveCommand(worldX, worldY);
+            try { const mod = require('./queue-controller.js'); mod.addMove(game, game.selectedUnit.id, worldX, worldY, () => {}); }
+            catch { import('./queue-controller.js').then(mod => mod.addMove(game, game.selectedUnit.id, worldX, worldY, () => {})); }
+            game.addLogEntry(`Queued: Move to (${worldX}, ${worldY})`, 'info');
         }
         return;
     }
 
-    if (!clickedObject) { game.handleMoveCommand(worldX, worldY); return; }
+    if (!clickedObject) {
+        try { const mod = require('./queue-controller.js'); mod.addMove(game, game.selectedUnit.id, worldX, worldY, () => {}); }
+        catch { import('./queue-controller.js').then(mod => mod.addMove(game, game.selectedUnit.id, worldX, worldY, () => {})); }
+        game.addLogEntry(`Queued: Move to (${worldX}, ${worldY})`, 'info');
+        return;
+    }
     if (clickedObject.owner_id === game.userId) { game.selectUnit(clickedObject.id); game.addLogEntry(`Selected ${clickedObject.meta?.name || clickedObject.type}`, 'info'); }
     else { game.addLogEntry('Use an ability to target enemies', 'info'); }
 }

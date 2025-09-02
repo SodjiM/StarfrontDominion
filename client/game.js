@@ -203,6 +203,28 @@ export class GameClient {
             console.log(`🚢 Found ${movingShips.length} ships with active movement paths:`, movingShips.map(s => ({ id: s.id, name: s.meta.name, pathLength: s.movementPath?.length, destination: s.plannedDestination, active: s.movementActive, status: s.movementStatus })));
         }
         SelectionSvc.applySelectionPersistence(this, playerObjects);
+        // Persist lane highlight across refresh: if selected has an active itinerary, restore highlight
+        try {
+            const sel = this.selectedUnit;
+            const sectorId = this.gameState?.sector?.id;
+            if (sel && sectorId && (!this.__laneHighlight || !(this.__laneHighlight.until > Date.now()))) {
+                const resp = await SFApi.State.itineraries(this.gameId, this.userId, sectorId);
+                const items = Array.isArray(resp?.itineraries) ? resp.itineraries.filter(it => it.status === 'active') : [];
+                const it = items.find(r => Number(r.shipId||r.ship_id) === Number(sel.id));
+                if (it) {
+                    const legs = (it.legs||[]).map(L => {
+                        try {
+                            const edgeId = Number(L?.edgeId ?? L?.edge_id);
+                            const entryRaw = (L?.entry ?? L?.entry_type ?? 'tap');
+                            const sStart = Number(L?.sStart ?? L?.s_start ?? 0);
+                            const sEnd = Number(L?.sEnd ?? L?.s_end ?? sStart);
+                            return { edgeId, entry: (String(entryRaw)==='tap'?'tap':'wildcat'), sStart, sEnd };
+                        } catch { return null; }
+                    }).filter(Boolean);
+                    if (legs.length) this.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
+                }
+            }
+        } catch {}
     });
     }
 
@@ -218,7 +240,58 @@ export class GameClient {
             this.camera.y = this.selectedUnit.y;
             this.restoreMovementPath(this.selectedUnit);
             this.updateUnitDetails();
+            // Refresh queue panel for this unit (debounced refresh is handled in socket handler too)
+            try { if (this.selectedUnit.type === 'ship' && this.loadQueueLog) this.loadQueueLog(this.selectedUnit.id, true); } catch {}
+            // Rebuild queued movement preview segments for this unit so all queued lines render
+            (async () => {
+                try {
+                    if (!this.selectedUnit || this.selectedUnit.type !== 'ship') return;
+                    const mod = await import('./features/queue-controller.js');
+                    const orders = await mod.list(this, this.selectedUnit.id);
+                    const obj = this.objects.find(o => o.id === this.selectedUnit.id);
+                    if (!obj) return;
+                    let start = null;
+                    if (obj.movementPath && obj.movementPath.length > 1 && obj.movementActive) {
+                        start = obj.movementPath[obj.movementPath.length - 1];
+                    } else if (obj.plannedDestination && typeof obj.plannedDestination.x === 'number') {
+                        start = { x: obj.plannedDestination.x, y: obj.plannedDestination.y };
+                    } else { start = { x: obj.x, y: obj.y }; }
+                    const segments = [];
+                    let cursor = { x: start.x, y: start.y };
+                    for (const q of orders) {
+                        if (String(q.order_type) !== 'move') continue;
+                        let dest = null; try { const p = q.payload ? JSON.parse(q.payload) : {}; dest = p?.destination || p; } catch { dest = null; }
+                        if (!dest || typeof dest.x !== 'number' || typeof dest.y !== 'number') continue;
+                        segments.push({ from: { x: cursor.x, y: cursor.y }, to: { x: Number(dest.x), y: Number(dest.y) } });
+                        cursor = { x: Number(dest.x), y: Number(dest.y) };
+                    }
+                    if (segments.length) { obj.movementSegments = segments; this.selectedUnit.movementSegments = segments; }
+                    else { try { delete obj.movementSegments; delete this.selectedUnit.movementSegments; } catch {} }
+                    this.render && this.render();
+                } catch {}
+            })();
             this.render();
+            // Try restoring lane highlight for this ship
+            (async () => { try {
+                const sectorId = this.gameState?.sector?.id;
+                if (sectorId && (!this.__laneHighlight || !(this.__laneHighlight.until > Date.now()))) {
+                    const resp = await SFApi.State.itineraries(this.gameId, this.userId, sectorId);
+                    const items = Array.isArray(resp?.itineraries) ? resp.itineraries.filter(it => it.status === 'active') : [];
+                    const it = items.find(r => Number(r.shipId||r.ship_id) === Number(this.selectedUnit.id));
+                    if (it) {
+                        const legs = (it.legs||[]).map(L => {
+                            try {
+                                const edgeId = Number(L?.edgeId ?? L?.edge_id);
+                                const entryRaw = (L?.entry ?? L?.entry_type ?? 'tap');
+                                const sStart = Number(L?.sStart ?? L?.s_start ?? 0);
+                                const sEnd = Number(L?.sEnd ?? L?.s_end ?? sStart);
+                                return { edgeId, entry: (String(entryRaw)==='tap'?'tap':'wildcat'), sStart, sEnd };
+                            } catch { return null; }
+                        }).filter(Boolean);
+                        if (legs.length) { this.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; this.render(); }
+                    }
+                }
+            } catch {} })();
         }
     }
 

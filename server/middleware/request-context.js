@@ -11,11 +11,13 @@ module.exports = function requestContext() {
         res.on('finish', () => {
             const durationMs = Date.now() - start;
             const path = req.originalUrl || req.url;
-            const mode = process.env.LOG_HTTP;
-            if (mode !== '0') {
+            const modeRaw = String(process.env.LOG_HTTP || '').toLowerCase();
+            // Only log if explicitly enabled: '1'|'on'|'true'|'debug'|'quiet'
+            const enabled = (modeRaw === '1' || modeRaw === 'on' || modeRaw === 'true' || modeRaw === 'debug' || modeRaw === 'quiet');
+            if (enabled) {
                 const isNoisy = (/\/game\/(ability-cooldowns|cargo)/.test(String(path||'')) || /\/game\/sector\/.+\/trails/.test(String(path||'')));
-                if (!(mode === 'quiet' && isNoisy)) {
-                    // Route http_request logs to debug channel (console.debug) so they are hidden by default
+                if (!(modeRaw === 'quiet' && isNoisy)) {
+                    // Route http_request logs to debug channel (console.debug)
                     logger.debug('http_request', {
                         reqId,
                         method: req.method,

@@ -79,7 +79,9 @@ export function renderUnitDetails(game, unit, options = {}) {
 
     const unitPanel = detailsContainer;
     if (unitPanel) {
-        unitPanel.addEventListener('click', (e) => {
+        // Avoid stacking multiple listeners across re-renders
+        try { if (unitPanel.__unitDetailsClickHandler) unitPanel.removeEventListener('click', unitPanel.__unitDetailsClickHandler); } catch {}
+        unitPanel.__unitDetailsClickHandler = (e) => {
             const abBtn = e.target.closest('button[data-ability]');
             if (abBtn) {
                 const key = abBtn.getAttribute('data-ability');
@@ -103,7 +105,8 @@ export function renderUnitDetails(game, unit, options = {}) {
                 return; // handled directly
             }
             options.onAction && options.onAction(action);
-        });
+        };
+        unitPanel.addEventListener('click', unitPanel.__unitDetailsClickHandler);
     }
 
     if (unit && unit.meta && unit.meta.cargoCapacity) {
