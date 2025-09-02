@@ -1412,4 +1412,3 @@ db.ready.then(() => {
         logger.info('server_started', { port: PORT, env: CONFIG.nodeEnv });
     });
 });
-
