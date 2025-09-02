@@ -14,7 +14,7 @@ export async function populateSystemFacts(game) {
             const minerals = Array.isArray(facts?.minerals) ? facts.minerals : [];
             const counts = new Map(minerals.map(m => [String(m.name), Number(m.count||0)]));
             const disp = facts?.mineralDisplay || {};
-            const fmt = (name, mult) => `${name} ${mult}${counts.has(name) ? ` — ×${counts.get(name)}` : ''}`;
+            const fmt = (name, mult) => `${name} ${mult}${counts.has(name) ? ` - ${counts.get(name)}` : ''}`;
             coreList = (disp.core || []).map(m => fmt(m.name, m.mult));
             primaryList = (disp.primary || []).map(m => fmt(m.name, m.mult));
             secondaryList = (disp.secondary || []).map(m => fmt(m.name, m.mult));
@@ -65,14 +65,14 @@ export async function loadGalaxyData(game) {
                 <div class="galaxy-system-info">
                     <div>👥 ${currentSystem.players} Player${currentSystem.players !== 1 ? 's' : ''}</div>
                     <div>⏰ Turn ${currentSystem.turn}</div>
-                    <div>🌌 ${currentSystem.celestialObjects} Celestial Objects</div>
-                    <div>📊 Status: <span style="color: #4CAF50;">${currentSystem.status}</span></div>
+                    <div>🛰️ ${currentSystem.celestialObjects} Celestial Objects</div>
+                    <div>📈 Status: <span style="color: #4CAF50;">${currentSystem.status}</span></div>
                 </div>
             </div>
             <div class="galaxy-system-card" style="opacity: 0.5; cursor: not-allowed;">
                 <div class="galaxy-system-name">Distant Systems</div>
                 <div class="galaxy-system-info">
-                    <div style="color: #888;">🚧 Coming Soon</div>
+                    <div style="color: #888;">🧭 Coming Soon</div>
                     <div style="color: #666; font-size: 0.8em;">Multi-system gameplay will be available in future updates</div>
                 </div>
             </div>`;
@@ -113,66 +113,84 @@ export function openMapModal() {
         modalContent.className = 'map-root';
         modalContent.innerHTML = `
             <div class="map-tabs">
-                <button class="map-tab active sf-btn sf-btn-secondary" data-tab="solar-system">🌌 Solar System</button>
+                <button class="map-tab active sf-btn sf-btn-secondary" data-tab="solar-system">🪐 Solar System</button>
                 <button class="map-tab sf-btn sf-btn-secondary" data-tab="galaxy">🌌 Galaxy</button>
             </div>
             <div id="solar-system-tab" class="map-tab-content">
                 <div class="map-row">
                     <div class="map-left">
                         <div style="flex:0 0 auto;">
-                            <h3 style="color: #64b5f6; margin: 0 0 4px 0; font-size:1.1em;">🌌 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
+                            <h3 style="color: #64b5f6; margin: 0 0 4px 0; font-size:1.1em;">🪐 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
                             <p style="color: #ccc; margin: 0; font-size: 0.85em;">Strategic sector overview</p>
                         </div>
-                        <div style="flex:0 0 auto; margin: 0 0 4px 2px; color:#9ecbff; font-size:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" id="toggleRegions" checked>
-                                <span>Show Regions/Health</span>
-                            </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" id="toggleBelts" checked>
-                                <span>Show Belts</span>
-                            </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" id="toggleWormholes" checked>
-                                <span>Show Wormholes</span>
+                        <div style="flex:0 0 auto; margin: 0 0 4px 2px; color:#9ecbff; font-size:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; position:relative;">
+                            <label id="layersChip" style="display:flex; align-items:center; gap:6px; cursor:pointer; background:rgba(100,181,246,0.08); padding:4px 8px; border-radius:6px; border:1px solid rgba(100,181,246,0.2);">
+                                <input type="checkbox" id="toggleLayers" checked>
+                                <span>🗺️ Layers</span>
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
                                 <input type="checkbox" id="toggleLanes">
-                                <span>Show Warp Lanes</span>
+                                <span>🛰️ Lanes</span>
                             </label>
-                        </div>
-                        <div id="miniLegend" style="flex:0 0 auto; margin: 0 2px 6px 2px; background:rgba(100,181,246,0.08); border-radius:6px; padding:6px; display:flex; gap:10px; align-items:center; color:#9ecbff; font-size:11px;">
-                            <div style="display:flex; align-items:center; gap:4px;"><span style="width:8px; height:8px; border-radius:50%; background:#4CAF50; display:inline-block;"></span><span>Yours</span></div>
-                            <div style="display:flex; align-items:center; gap:4px;"><span style="width:8px; height:8px; border-radius:50%; background:#FF9800; display:inline-block;"></span><span>Others</span></div>
+                            <div id="layerPanel" style="display:none; position:absolute; top:30px; left:0; background:rgba(10,18,32,0.95); border:1px solid rgba(100,181,246,0.3); border-radius:6px; padding:8px; min-width:180px; z-index:1000; box-shadow:0 6px 16px rgba(0,0,0,0.4);">
+                                <div style="margin-bottom:6px; font-weight:bold; color:#64b5f6;">Display Layers</div>
+                                <label style="display:block; margin:4px 0;">
+                                    <input type="checkbox" id="toggleRegions" checked> 🧭 Regions
+                                </label>
+                                <label style="display:block; margin:4px 0;">
+                                    <input type="checkbox" id="toggleBelts" checked> ⛓️ Belts
+                                </label>
+                                <label style="display:block; margin:4px 0;">
+                                    <input type="checkbox" id="toggleWormholes" checked> 🌀 Wormholes
+                                </label>
+                            </div>
                         </div>
                         <div class="map-canvas-wrap">
                             <canvas id="fullMapCanvas" class="full-map-canvas"></canvas>
                         </div>
                     </div>
-                    <div class="map-rail">
-                        <div id="plannerPanel" class="section">
-                            <h4 style="margin:0; color:#9ecbff;">Warp Planner</h4>
-                            <div id="plannerHelp" style="font-size:12px; color:#9ecbff;">Click on the map or pick a POI to plan a route.</div>
-                            <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
+                    <div class="map-rail" style="position:relative; display:grid; grid-template-rows:auto 1fr auto; gap:12px; min-width:340px; height:100%;">
+                        <!-- Header / controls -->
+                        <div id="plannerPanel" class="section" style="padding:12px;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                <div>
+                                    <h4 style="margin:0; color:#9ecbff;">Warp Planner</h4>
+                                    <div id="plannerHelp" style="font-size:12px; color:#9ecbff;">Click on the map or pick a POI to plan a route.</div>
+                                </div>
+                                <button id="factsToggle" class="sf-btn sf-btn-secondary small" title="Show system facts" style="white-space:nowrap; display:flex; align-items:center; gap:6px;">
+                                    <span>Facts</span><span id="factsChevron">▸</span>
+                                </button>
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center; margin:10px 0 0;">
                                 <input id="coordX" type="number" placeholder="X" style="width:60px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/>
                                 <input id="coordY" type="number" placeholder="Y" style="width:60px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/>
                                 <button class="sf-btn sf-btn-primary small" id="btnPlanCoords">Plan</button>
                             </div>
-                            <div id="poiSelector" style="display:flex; flex-direction:column; gap:6px;">
-                                <div style="display:flex; gap:6px;">
+                            <div id="poiSelector" style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
+                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
                                     <button class="sf-btn sf-btn-secondary small" data-poi-tab="planets">Planets</button>
                                     <button class="sf-btn sf-btn-secondary small" data-poi-tab="wormholes">Wormholes</button>
                                     <button class="sf-btn sf-btn-secondary small" data-poi-tab="taps">Taps</button>
                                     <button class="sf-btn sf-btn-secondary small" data-poi-tab="belts">Belts</button>
                                 </div>
-                                <div id="poiList" style="max-height:200px; overflow:auto; border:1px solid rgba(100,181,246,0.15); border-radius:6px; padding:4px;"></div>
                             </div>
+                        </div>
+
+                        <!-- The ONLY scrollable area -->
+                        <div id="railScroll" class="section" style="overflow:auto; min-height:0; padding:0 12px 8px 12px;">
+                            <div id="poiList" style="border:1px solid rgba(100,181,246,0.15); border-radius:6px; padding:4px; margin-bottom:10px;"></div>
                             <div id="plannerRoutes" style="display:flex; flex-direction:column; gap:8px;"></div>
+                            <div class="section" style="margin-top:10px; background:#0b1220; border:1px solid rgba(100,181,246,.25); border-radius:8px;">
+                                <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; cursor:pointer;" id="factsBar">
+                                    <div style="color:#9ecbff; font-size:0.9em; font-weight:600;">System Facts</div>
+                                    <div id="factsChevron2" style="color:#9ecbff;">▸</div>
+                                </div>
+                                <div id="sysMetaSummaryWrap" style="display:none; border-top:1px solid rgba(100,181,246,.15);">
+                                    <div id="sysMetaSummary" style="font-size:13px; line-height:1.5; padding:10px 12px;">Loading...</div>
+                                </div>
+                            </div>
                         </div>
-                        <div id="systemFacts" class="section scroll">
-                            <h4 style="margin:0 0 8px 0; color:#9ecbff; font-size:0.9em;">System Facts</h4>
-                            <div id="sysMetaSummary" style="font-size:13px; line-height:1.6;">Loading...</div>
-                        </div>
+
                     </div>
                 </div>
             </div>
@@ -186,7 +204,6 @@ export function openMapModal() {
                         <div class="map-canvas-wrap">
                             <canvas id="galaxyCanvas" class="full-map-canvas"></canvas>
                         </div>
-                        <div id="galaxyLegend" style="margin-top: 8px; font-size: 0.85em; color: #9ecbff;">● Size/brightness highlights strategic hubs (choke points). Lines show warp-gate connectivity.</div>
                     </div>
                     <div class="map-rail">
                         <div id="galaxySystemsList" class="section scroll" style="flex:1;">
@@ -195,7 +212,7 @@ export function openMapModal() {
                     </div>
                 </div>
             </div>`;
-        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:940 });
+        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:1020 });
         // Bind tab switching without globals
         bindTabEvents(modalContent);
         // Planner coordinate inputs
@@ -211,8 +228,40 @@ export function openMapModal() {
             modalContent.querySelectorAll('[data-poi-tab]').forEach(btn => btn.addEventListener('click', ()=>populatePoiList(modalContent, btn.dataset.poiTab)));
             setTimeout(()=>populatePoiList(modalContent, 'planets'), 150);
         } catch {}
+        // Layers chip toggle
+        try {
+            const chip = modalContent.querySelector('#layersChip');
+            const panel = modalContent.querySelector('#layerPanel');
+            if (chip && panel) {
+                const hidePanel = (ev)=>{ if (!panel.contains(ev.target) && !chip.contains(ev.target)) { panel.style.display='none'; document.removeEventListener('click', hidePanel); } };
+                chip.onclick = (e)=>{
+                    e.stopPropagation();
+                    const vis = panel.style.display === 'block';
+                    panel.style.display = vis ? 'none' : 'block';
+                    if (!vis) setTimeout(()=>document.addEventListener('click', hidePanel), 0);
+                };
+            }
+        } catch {}
         // Ensure planner availability based on selection
         try { updatePlannerState(modalContent); } catch {}
+        
+        // Collapsible facts: closed by default
+        try {
+            const toggle = modalContent.querySelector('#factsToggle');
+            const factsBar = modalContent.querySelector('#factsBar');
+            const wrap = modalContent.querySelector('#sysMetaSummaryWrap');
+            const chev = modalContent.querySelector('#factsChevron');
+            const chev2 = modalContent.querySelector('#factsChevron2');
+            const setFacts = (open) => {
+                if (!wrap) return; wrap.style.display = open ? 'block' : 'none';
+                if (chev)  chev.textContent  = open ? '▾' : '▸';
+                if (chev2) chev2.textContent = open ? '▾' : '▸';
+            };
+            setFacts(false);
+            if (toggle)  toggle.onclick  = () => setFacts(wrap && wrap.style.display === 'none');
+            if (factsBar) factsBar.onclick = () => setFacts(wrap && wrap.style.display === 'none');
+        } catch {}
+        
         // Load any active itineraries to show Start/Abort CTA on reopen
         try {
             (async () => {
@@ -225,7 +274,7 @@ export function openMapModal() {
                         if (container) {
                             const rows = items.slice(0, 3).map((it, idx) => {
                                 const legs = (it.legs||[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
-                                const legsText = legs.map(L=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
+                                const legsText = legs.map(L=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}-${Math.round(L.sEnd)}]`).join(' | ');
                                 return `<div style=\"display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; border:1px solid rgba(100,181,246,0.25); padding:6px; border-radius:6px;\">\n                                    <div><div style=\\\"font-size:12px; color:#9ecbff\\\">Active itinerary • Ship ${it.shipId}</div>\n                                    <div style=\\\"font-size:11px; color:#9ecbff;\\\">${legsText}</div></div>\n                                    <div style=\\\"display:flex; gap:6px;\\\">\n                                        <button class=\\\"sf-btn sf-btn-secondary\\\" data-itin-index=\\\"${idx}\\\" data-action=\\\"startItin\\\">Start</button>\n                                    </div>\n                                </div>`;
                             }).join('');
                             container.innerHTML = `<div style=\"color:#9ecbff; font-size:12px;\">Confirmed routes</div>${rows}`;
@@ -330,6 +379,10 @@ async function populatePoiList(root, tab) {
 function showPlannerRoutes(routes) {
         try {
             const client = window.gameClient; const container = document.getElementById('plannerRoutes'); if (!container) return;
+            const cta = document.getElementById('plannerStickyCTA');
+            const ctaSummary = document.getElementById('ctaSummary');
+            const ctaStart = document.getElementById('ctaStartBest');
+            const ctaAbort = document.getElementById('ctaAbort');
             const rawList = Array.isArray(routes) ? routes.slice(0,3) : [];
             // Normalize and drop degenerate (all zero-length) routes
             const list = rawList.filter(r => {
@@ -343,18 +396,54 @@ function showPlannerRoutes(routes) {
             window.__lastPlannedRoutes = list;
             debug('[client] showPlannerRoutes received routes:', list.map(r => ({ legsCount: Array.isArray(r.legs)?r.legs.length:'not-array', hasEdgeId: !!r.edgeId, keys:Object.keys(r||{}) })));
             container.innerHTML = '';
+            // Destination summary card
+            try {
+                if (client.__plannerTarget) {
+                    const t = client.__plannerTarget;
+                    const destCard = document.createElement('div');
+                    destCard.style.cssText = 'background: rgba(100,181,246,0.10); border:1px solid rgba(100,181,246,0.3); border-radius:8px; padding:8px 12px; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:40px;';
+                    destCard.innerHTML = `<div style="font-weight:bold; color:#64b5f6;">Destination</div><div style="font-size:12px; color:#9ecbff;">${Math.round(t.x)}, ${Math.round(t.y)}</div>`;
+                    container.appendChild(destCard);
+                }
+            } catch {}
             list.forEach((r, idx) => {
                 const rho = Number(r.rho || 0); const color = rho<=1?'#66bb6a':(rho<=1.5?'#ffca28':'#ef5350');
-                const row = document.createElement('div'); row.style.display='grid'; row.style.gridTemplateColumns='1fr auto'; row.style.gap='6px'; row.style.alignItems='center'; row.style.border='1px solid rgba(100,181,246,0.25)'; row.style.padding='6px'; row.style.borderRadius='6px';
+                const row = document.createElement('div');
+                row.style.cssText = `background: rgba(255,255,255,0.05); border:2px solid ${color}40; border-radius:8px; padding:12px; margin-bottom:8px; transition:box-shadow .12s ease, border-color .12s ease; display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center;`;
                 const legs = Array.isArray(r.legs) ? r.legs : null;
                 if (!legs) { console.error(`[client] Route ${idx} missing legs array`, r); return; }
-                const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
-                row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● ρ ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
-                    <div style=\"display:flex; gap:6px;\">
-                        <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button>
-                    </div>`;
+                const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}-${Math.round(L.sEnd)}]`).join(' | ');
+                row.innerHTML = `<div><div style="font-size:12px; color:${color}">Load rho ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'!'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
+                    <div style=\"display:flex; gap:6px;\"><button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button></div>`;
+                row.onmouseenter = ()=>{ row.style.boxShadow = `0 0 0 2px ${color}55`; };
+                row.onmouseleave = ()=>{ row.style.boxShadow = 'none'; };
                 container.appendChild(row);
             });
+            // Sticky CTA summary & actions
+            if (cta) {
+                if (list.length) {
+                    const best = list[0];
+                    if (ctaSummary) ctaSummary.textContent = `Best route: rho ${Number(best.rho||0).toFixed(2)} • ETA ${best.eta} • ${best.legs.length} leg(s)`;
+                    cta.style.display = 'block';
+                    if (ctaStart) ctaStart.onclick = () => {
+                        const shipId = client.selectedUnit?.id; if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
+                        const legs = (Array.isArray(best.legs)?best.legs:[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
+                        const dest = client.__plannerTarget || null;
+                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: dest?.x, destY: dest?.y }, (resp)=>{
+                            if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
+                            try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
+                            client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector?.id, shipId }, (resp2)=>{
+                                if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
+                                client.addLogEntry('Travel started', 'success');
+                                initializeFullMap();
+                            });
+                        });
+                    };
+                    if (ctaAbort) ctaAbort.style.display = 'none';
+                } else {
+                    cta.style.display = 'none';
+                }
+            }
             container.onclick = (e) => {
                 const btn = e.target.closest('button'); if (!btn) return;
                 const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
@@ -367,32 +456,24 @@ function showPlannerRoutes(routes) {
                     client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: (dest&&typeof dest.x==='number')?dest.x:undefined, destY: (dest&&typeof dest.y==='number')?dest.y:undefined }, (resp)=>{
                         if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
                         try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
-                        client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp2)=>{
+                        client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector?.id, shipId }, (resp2)=>{
                             if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
                             if (resp2.approachRequired && resp2.approachTarget && typeof resp2.approachTarget.x==='number' && typeof resp2.approachTarget.y==='number') {
                                 try {
                                     const toX = Number(resp2.approachTarget.x), toY = Number(resp2.approachTarget.y);
                                     // Use the same movement flow the UI uses so the dashed path renders immediately
                                     if (typeof client.handleMoveCommand === 'function') {
-                                        const wasQueue = client.queueMode === true;
-                                        if (wasQueue) try { client.queueMode = false; } catch {}
+                                        const wasQueue = client.queueMode === true; if (wasQueue) try { client.queueMode = false; } catch {}
                                         try { client.handleMoveCommand(toX, toY); } finally { if (wasQueue) try { client.queueMode = true; } catch {} }
-                                    }
-                                    else {
+                                    } else {
                                         // Fallback: optimistic state update
                                         const fromX = client.selectedUnit?.x, fromY = client.selectedUnit?.y;
                                         const path = (typeof client.calculateMovementPath === 'function') ? client.calculateMovementPath(fromX, fromY, toX, toY) : [{x:fromX,y:fromY},{x:toX,y:toY}];
                                         client.selectedUnit.movementPath = path; client.selectedUnit.plannedDestination = { x: toX, y: toY }; client.selectedUnit.movementActive = true; client.render && client.render();
                                         client.socket.emit('move-ship', { gameId: client.gameId, shipId, destinationX: toX, destinationY: toY, movementPath: path });
                                     }
-                                    // Queue entries so the user sees upcoming phases
-                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'move', payload: { destination: { x: toX, y: toY } } }, (q1)=>{
-                                        if (!q1 || !q1.success) client.addLogEntry('Failed to queue approach move (visual only)', 'warning');
-                                    });
-                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{
-                                        if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error');
-                                        else client.addLogEntry('Approach plotted; lane start queued', 'info');
-                                    });
+                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'move', payload: { destination: { x: toX, y: toY } } }, (q1)=>{ if (!q1 || !q1.success) client.addLogEntry('Failed to queue approach move (visual only)', 'warning'); });
+                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{ if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error'); else client.addLogEntry('Approach plotted; lane start queued', 'info'); });
                                 } catch {}
                                 initializeFullMap();
                                 return;
@@ -548,6 +629,27 @@ function initializeFullMap() {
                 for (const e of cache.edges) { const pts=e.pts; if (pts.length<2) continue; for (let i=1;i<pts.length;i++){ const pr=projectToSegment({x:wx,y:wy}, pts[i-1], pts[i]); const dpx=Math.hypot(wx-pr.x, wy-pr.y)*pxScale; if (dpx<best.dpx) best={dpx, edge:e}; } }
                 if (best.edge && best.dpx < 14) tipText = `ρ ${best.edge.rho.toFixed(2)}  • cap ${best.edge.cap}  • headway ${best.edge.headway}`;
             }
+            // Region hover label near centroid when no lane/tap tip
+            if (!tipText) {
+                try {
+                    const factsCache = client.__factsCache;
+                    const facts = (factsCache && factsCache.until > Date.now()) ? factsCache.facts : factsCache?.facts;
+                    const regions = Array.isArray(facts?.regions) ? facts.regions : [];
+                    if (regions.length) {
+                        const cellW = 5000/3, cellH = 5000/3;
+                        let nearest = { dpx: Infinity, id: null, health: 0 };
+                        regions.forEach(rg => {
+                            let cx=0, cy=0, n=0; (rg.cells||[]).forEach(c=>{ cx += (c.col*cellW + cellW/2); cy += (c.row*cellH + cellH/2); n++; });
+                            if (n>0) {
+                                cx/=n; cy/=n;
+                                const dpx = Math.hypot(wx - cx, wy - cy) * pxScale;
+                                if (dpx < nearest.dpx) nearest = { dpx, id: String(rg.id||'').toUpperCase(), health: Number(rg.health||0) };
+                            }
+                        });
+                        if (nearest.id && nearest.dpx < 40) tipText = `Region ${nearest.id} (${nearest.health}%)`;
+                    }
+                } catch {}
+            }
             if (tipText) { tip.style.display='block'; tip.textContent = tipText; tip.style.left = `${ev.clientX + 12}px`; tip.style.top = `${ev.clientY - 10}px`; }
             else tip.style.display='none';
         };
@@ -586,6 +688,8 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         const client = window.gameClient; if (!client || !client.objects) return;
         // Always clear and redraw the base frame to avoid visual stacking on repeated calls
         try { ctx.clearRect(0,0,canvas.width,canvas.height); } catch {}
+        // Reset label occupancy grid for this draw
+        try { delete ctx.__labelGrid; } catch {}
         // Cached gradient background + optional subtle grid
         if (!canvas.__bgCache || canvas.__bgCache.w !== canvas.width || canvas.__bgCache.h !== canvas.height) {
             const bg = document.createElement('canvas'); bg.width = canvas.width; bg.height = canvas.height;
@@ -648,7 +752,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                             const health = Number(r.health || 50);
                             const cx = (first.col*cellW + cellW*0.1)*scaleX, cy = (first.row*cellH + 16)*scaleY;
                             ctx.fillStyle = '#9ecbff'; ctx.font = '12px Arial'; ctx.textAlign='left'; ctx.textBaseline='top';
-                            ctx.fillText(`Region ${r.id} — Health ${health}`, cx, cy);
+                            ctx.fillText(`Region ${r.id} - Health ${health}`, cx, cy);
                         }
                     });
                 }
@@ -739,8 +843,8 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                     const rho = Number(r.rho || 0); const color = rho<=1?'#66bb6a':(rho<=1.5?'#ffca28':'#ef5350');
                                     const row = document.createElement('div'); row.style.display='grid'; row.style.gridTemplateColumns='1fr auto'; row.style.gap='6px'; row.style.alignItems='center'; row.style.border='1px solid rgba(100,181,246,0.25)'; row.style.padding='6px'; row.style.borderRadius='6px';
                                     const legs = Array.isArray(r.legs) ? r.legs : [{ edgeId: r.edgeId, entry: r.entry, sStart: r.sStart, sEnd: r.sEnd, tapId: r.nearestTapId, mergeTurns: r.mergeTurns }];
-                                    const legsText = legs.map((L,i)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}→${Math.round(L.sEnd)}]`).join(' → ');
-                                    row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">● ρ ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'★'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
+                                    const legsText = legs.map((L,i)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}-${Math.round(L.sEnd)}]`).join(' | ');
+                                    row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">Load rho ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'!'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
                                         <div style=\"display:flex; gap:6px;\">
                                             <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button>
                                         </div>`;
@@ -770,21 +874,17 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                                                         const toX = Number(resp2.approachTarget.x), toY = Number(resp2.approachTarget.y);
                                                         // Use the same movement flow the UI uses so the dashed path renders immediately
                                                         if (typeof client.handleMoveCommand === 'function') {
-                                                            const wasQueue = client.queueMode === true;
-                                                            if (wasQueue) try { client.queueMode = false; } catch {}
+                                                            const wasQueue = client.queueMode === true; if (wasQueue) try { client.queueMode = false; } catch {}
                                                             try { client.handleMoveCommand(toX, toY); } finally { if (wasQueue) try { client.queueMode = true; } catch {} }
-                                                        }
-                                                        else {
+                                                        } else {
                                                             // Fallback: optimistic state update
                                                             const fromX = client.selectedUnit?.x, fromY = client.selectedUnit?.y;
                                                             const path = (typeof client.calculateMovementPath === 'function') ? client.calculateMovementPath(fromX, fromY, toX, toY) : [{x:fromX,y:fromY},{x:toX,y:toY}];
                                                             client.selectedUnit.movementPath = path; client.selectedUnit.plannedDestination = { x: toX, y: toY }; client.selectedUnit.movementActive = true; client.render && client.render();
                                                             client.socket.emit('move-ship', { gameId: client.gameId, shipId, destinationX: toX, destinationY: toY, movementPath: path });
                                                         }
-                                                        client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{
-                                                            if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error');
-                                                            else client.addLogEntry('Approach plotted; lane start queued', 'info');
-                                                        });
+                                                        client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'move', payload: { destination: { x: toX, y: toY } } }, (q1)=>{ if (!q1 || !q1.success) client.addLogEntry('Failed to queue approach move (visual only)', 'warning'); });
+                                                        client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{ if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error'); else client.addLogEntry('Approach plotted; lane start queued', 'info'); });
                                                     } catch {}
                                                     initializeFullMap();
                                                     return;
@@ -1020,6 +1120,51 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 } catch {}
             }
         } catch {}
+        // Helper: smart label drawing with simple collision grid
+        function drawSmartLabel(ctx2, lx, ly, text, maxChars=18, fontSize=11) {
+            try {
+                if (!ctx2.__labelGrid) ctx2.__labelGrid = new Set();
+                const positions = [
+                    { x: lx, y: ly + 6, align:'center', base:'top' },
+                    { x: lx + 8, y: ly, align:'left', base:'middle' },
+                    { x: lx - 8, y: ly, align:'right', base:'middle' },
+                    { x: lx, y: ly - 6, align:'center', base:'bottom' }
+                ];
+                const label = String(text||'').slice(0, maxChars);
+                ctx2.font = `${fontSize}px Arial`;
+                const m = ctx2.measureText(label);
+                const w = Math.min(m.width, maxChars * 6) + 6;
+                const h = fontSize + 4;
+                const cell = 10;
+                for (const pos of positions) {
+                    const left = Math.round(pos.x - w/2), top = Math.round(pos.y - h/2);
+                    // Occupancy cells covered
+                    const x0 = Math.floor(left / cell), y0 = Math.floor(top / cell);
+                    const x1 = Math.floor((left + w) / cell), y1 = Math.floor((top + h) / cell);
+                    let collides = false;
+                    for (let gx=x0; gx<=x1 && !collides; gx++) for (let gy=y0; gy<=y1 && !collides; gy++) {
+                        if (ctx2.__labelGrid.has(`${gx},${gy}`)) collides = true;
+                    }
+                    if (collides) continue;
+                    // Draw background pill
+                    ctx2.save();
+                    ctx2.fillStyle = 'rgba(10,18,32,0.82)';
+                    ctx2.strokeStyle = 'rgba(100,181,246,0.25)';
+                    ctx2.lineWidth = 1;
+                    ctx2.fillRect(left, top, w, h);
+                    ctx2.strokeRect(left, top, w, h);
+                    // Text
+                    ctx2.fillStyle = '#cfe8ff';
+                    ctx2.textAlign = pos.align; ctx2.textBaseline = pos.base;
+                    ctx2.fillText(label, pos.x, pos.y);
+                    ctx2.restore();
+                    // Mark occupied
+                    for (let gx=x0; gx<=x1; gx++) for (let gy=y0; gy<=y1; gy++) ctx2.__labelGrid.add(`${gx},${gy}`);
+                    return true;
+                }
+            } catch {}
+            return false;
+        }
         // Base objects with labels
         client.objects.forEach(obj => {
             const x = obj.x * scaleX, y = obj.y * scaleY; ctx.fillStyle = '#64b5f6';
@@ -1027,9 +1172,8 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 ctx.fillStyle = '#9ecbff'; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill();
                 const meta = obj.meta || {}; const t = obj.celestial_type || obj.type;
                 if (t === 'sun' || t === 'planet' || t === 'wormhole' || t === 'belt') {
-                    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font='11px Arial'; ctx.textAlign='center'; ctx.textBaseline='top';
                     const name = meta.name || (t==='sun'?'Sun': t==='planet'?'Planet':'Wormhole');
-                    ctx.fillText(String(name).slice(0,18), x, y + 6);
+                    drawSmartLabel(ctx, x, y, name, 18, 11);
                 }
             } else if (obj.type === 'resource_node') {
                 ctx.fillStyle = '#ffd54f'; ctx.fillRect(x-2,y-2,4,4);
@@ -1043,7 +1187,7 @@ async function loadGalaxyDataInternal() {
         try {
             const client = window.gameClient; const list = document.getElementById('galaxySystemsList'); if (!client || !list) return;
             const currentSystem = { name: client.gameState?.sector?.name || 'Current System', id: client.gameId, players: 1, status: 'Active', turn: client.gameState?.turn?.number || 1, celestialObjects: client.objects ? client.objects.filter(o=>client.isCelestialObject(o)).length : 0 };
-            list.innerHTML = `<div class="galaxy-system-card"><div class="galaxy-system-name">${currentSystem.name}</div><div class="galaxy-system-info"><div>👥 ${currentSystem.players} Player${currentSystem.players!==1?'s':''}</div><div>⏰ Turn ${currentSystem.turn}</div><div>🌌 ${currentSystem.celestialObjects} Celestial Objects</div><div>📊 Status: <span style="color:#4CAF50;">${currentSystem.status}</span></div></div></div>`;
+            list.innerHTML = `<div class="galaxy-system-card"><div class="galaxy-system-name">${currentSystem.name}</div><div class="galaxy-system-info"><div>👥 ${currentSystem.players} Player${currentSystem.players!==1?'s':''}</div><div>⏰ Turn ${currentSystem.turn}</div><div>🛰️ ${currentSystem.celestialObjects} Celestial Objects</div><div>📈 Status: <span style="color:#4CAF50;">${currentSystem.status}</span></div></div></div>`;
         } catch {}
 }
 
@@ -1055,12 +1199,10 @@ async function populateSystemFactsInternal() {
             const minerals = Array.isArray(facts?.minerals) ? facts.minerals : [];
             const counts = new Map(minerals.map(m => [String(m.name), Number(m.count||0)]));
             const disp = facts?.mineralDisplay || {};
-            const fmt = (name, mult) => `${name} ${mult}${counts.has(name) ? ` — ×${counts.get(name)}` : ''}`;
+            const fmt = (name, mult) => `${name} ${mult}${counts.has(name) ? ` - ${counts.get(name)}` : ''}`;
             const coreList = (disp.core || []).map(m => fmt(m.name, m.mult));
             const primaryList = (disp.primary || []).map(m => fmt(m.name, m.mult));
             const secondaryList = (disp.secondary || []).map(m => fmt(m.name, m.mult));
             wrap.innerHTML = `<div><b>Name:</b> ${sector.name}</div><div><b>Type:</b> ${sector.archetype||'standard'}</div><div style="margin-top:8px;"><b>Core minerals</b></div><div>${coreList.length?coreList.join(', '):'—'}</div><div style="margin-top:8px;"><b>Primary minerals present</b></div><div>${primaryList.length?primaryList.join(', '):'—'}</div><div style="margin-top:8px;"><b>Secondary minerals present</b></div><div>${secondaryList.length?secondaryList.join(', '):'—'}</div>`;
         } catch {}
 }
-
-
