@@ -84,6 +84,29 @@
         const currentScreenX = centerX + (ship.x - camera.x) * tileSize;
         const currentScreenY = centerY + (ship.y - camera.y) * tileSize;
         ctx.setLineDash([]);
+        
+        // Warp Streak Effect for ships in lanes
+        const isInLane = ship.movementStatus === 'warp' || (this && this.__laneTransitsCache?.rows?.some(r => r.shipId === ship.id));
+        if (isInLane && !isLingering) {
+            ctx.save();
+            const streakLen = 20;
+            const grad = ctx.createRadialGradient(currentScreenX, currentScreenY, 0, currentScreenX, currentScreenY, streakLen);
+            grad.addColorStop(0, 'rgba(138, 43, 226, 0.8)');
+            grad.addColorStop(1, 'rgba(138, 43, 226, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(currentScreenX, currentScreenY, streakLen, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Pulsing core
+            const pulse = (Math.sin(Date.now() / 100) + 1) / 2;
+            ctx.fillStyle = `rgba(255, 255, 255, ${0.4 + pulse * 0.4})`;
+            ctx.beginPath();
+            ctx.arc(currentScreenX, currentScreenY, 3 + pulse * 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
         if (!isLingering) {
             ctx.beginPath();
             if (isSelected) ctx.fillStyle = '#4caf50'; else if (isOwned) ctx.fillStyle = '#66bb6a'; else ctx.fillStyle = '#ef5350';

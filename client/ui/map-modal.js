@@ -414,7 +414,7 @@ function showPlannerRoutes(routes) {
                 if (!legs) { console.error(`[client] Route ${idx} missing legs array`, r); return; }
                 const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}-${Math.round(L.sEnd)}]`).join(' | ');
                 row.innerHTML = `<div><div style="font-size:12px; color:${color}">Load rho ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'!'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
-                    <div style=\"display:flex; gap:6px;\"><button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button></div>`;
+                    <div style=\"display:flex; gap:6px;\"><button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Execute</button></div>`;
                 row.onmouseenter = ()=>{ row.style.boxShadow = `0 0 0 2px ${color}55`; };
                 row.onmouseleave = ()=>{ row.style.boxShadow = 'none'; };
                 container.appendChild(row);
@@ -425,20 +425,25 @@ function showPlannerRoutes(routes) {
                     const best = list[0];
                     if (ctaSummary) ctaSummary.textContent = `Best route: rho ${Number(best.rho||0).toFixed(2)} • ETA ${best.eta} • ${best.legs.length} leg(s)`;
                     cta.style.display = 'block';
-                    if (ctaStart) ctaStart.onclick = () => {
-                        const shipId = client.selectedUnit?.id; if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
-                        const legs = (Array.isArray(best.legs)?best.legs:[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
-                        const dest = client.__plannerTarget || null;
-                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: dest?.x, destY: dest?.y }, (resp)=>{
-                            if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                            try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
-                            client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector?.id, shipId }, (resp2)=>{
-                                if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
-                                client.addLogEntry('Travel started', 'success');
-                                initializeFullMap();
+                    if (ctaStart) {
+                        ctaStart.textContent = 'Execute';
+                        ctaStart.onclick = () => {
+                            const shipId = client.selectedUnit?.id; if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
+                            const legs = (Array.isArray(best.legs)?best.legs:[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
+                            const dest = client.__plannerTarget || null;
+                            client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: dest?.x, destY: dest?.y }, (resp)=>{
+                                if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
+                                try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
+                                
+                                // Automatically trigger start
+                                client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector?.id, shipId }, (resp2)=>{
+                                    if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
+                                    client.addLogEntry('Travel execution started', 'success');
+                                    initializeFullMap();
+                                });
                             });
-                        });
-                    };
+                        };
+                    }
                     if (ctaAbort) ctaAbort.style.display = 'none';
                 } else {
                     cta.style.display = 'none';
@@ -930,15 +935,29 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     const cap = Math.max(1, Math.floor(Number(l.cap_base||0) * (Number(l.width_core||150)/150) * healthMult));
                     const load = Number(l.runtime?.load_cu || 0);
                     const rho = load / Math.max(1, cap);
-                    const coreColor = rho<=1?'rgba(102,187,106,0.95)':(rho<=1.5?'rgba(255,202,40,0.95)':'rgba(239,83,80,0.95)');
-                    // Shoulder halo
-                    ctx.strokeStyle = 'rgba(100,181,246,0.2)';
+                    
+                    // Enhanced Congestion Coloring
+                    let coreColor = 'rgba(102,187,106,0.95)'; // Healthy Green
+                    if (rho > 2.0) coreColor = 'rgba(211,47,47,0.95)'; // Critical Red
+                    else if (rho > 1.5) coreColor = 'rgba(239,83,80,0.95)'; // Heavy Orange-Red
+                    else if (rho > 1.0) coreColor = 'rgba(255,202,40,0.95)'; // Warning Yellow
+                    
+                    if (health < 40) coreColor = 'rgba(120,120,120,0.8)'; // Damaged/Grey
+
+                    // Shoulder halo (wider for healthy lanes)
+                    ctx.strokeStyle = health >= 80 ? 'rgba(100,255,246,0.15)' : 'rgba(100,181,246,0.1)';
                     ctx.lineWidth = Math.max(1, (l.width_shoulder || 220) * 0.5 * ((scaleX+scaleY)/2));
                     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                    
+                    // Unhealthy lanes get a dashed shoulder
+                    if (health < 60) ctx.setLineDash([10, 10]);
+                    
                     ctx.beginPath();
                     ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
                     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
                     ctx.stroke();
+                    ctx.setLineDash([]);
+
                     // Core ribbon
                     ctx.strokeStyle = coreColor;
                     ctx.lineWidth = Math.max(2, (l.width_core || 180) * 0.35 * ((scaleX+scaleY)/2));
@@ -1168,7 +1187,19 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         // Base objects with labels
         client.objects.forEach(obj => {
             const x = obj.x * scaleX, y = obj.y * scaleY; ctx.fillStyle = '#64b5f6';
-            if (client.isCelestialObject(obj)) {
+            if (obj.type === 'interstellar-gate') {
+                // Draw Gate Icon (🌀)
+                ctx.save();
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🌀', x, y);
+                
+                const meta = obj.meta || {};
+                const name = meta.name || 'Gate';
+                drawSmartLabel(ctx, x, y, name, 18, 11);
+                ctx.restore();
+            } else if (client.isCelestialObject(obj)) {
                 ctx.fillStyle = '#9ecbff'; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill();
                 const meta = obj.meta || {}; const t = obj.celestial_type || obj.type;
                 if (t === 'sun' || t === 'planet' || t === 'wormhole' || t === 'belt') {

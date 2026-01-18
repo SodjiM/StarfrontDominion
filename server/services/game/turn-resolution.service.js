@@ -173,13 +173,15 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                 const loadCU = Number(runtime.load_cu || 0);
                 const rho = loadCU / Math.max(1, cap);
                 const speedMult = rho<=1?1:rho<=1.5?0.8:rho<=2?0.6:0.4;
+                
                 // Use flat tiles-per-turn warp speed adjusted by congestion multiplier
                 const baseTilesPerTurn = Math.max(1, WARP_BASE_TILES_PER_TURN * speedMult);
-                // Release slots from taps FIFO
+                
+                // 1. Release slots from taps FIFO
                 const taps = await new Promise((resolve)=>db.all('SELECT id FROM lane_taps WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
                 const slotsPerTurn = Math.max(1, Math.floor(Number(e.lane_speed) / Math.max(1, Number(e.headway))));
                 let budgetCU = slotsPerTurn * 2; // slot carries 2 CU
-                try { console.log(`🛣️ Lane ${e.id} tick: headway=${e.headway} slotsPerTurn=${slotsPerTurn} cap_rho=${rho.toFixed(2)} warpTilesPerTurn=${baseTilesPerTurn.toFixed(1)} budgetCU=${budgetCU}`); } catch {}
+                
                 for (const t of taps) {
                     while (budgetCU > 0) {
                         const q = await new Promise((resolve)=>db.get(
@@ -189,8 +191,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                             [t.id, Number(turnNumber)], (er, row)=>resolve(row)));
                         if (!q) break;
                         if (q.cu > budgetCU) break;
+                        
                         await new Promise((resolve)=>db.run('UPDATE lane_tap_queue SET status = ? WHERE id = ?', ['launched', q.id], ()=>resolve()));
-                        // Initialize progress and target window from itinerary if available
+                        
                         let initialProgress = 0.0; let metaJson = null;
                         try {
                             const itin = await new Promise((resolve)=>db.get(
@@ -198,204 +201,152 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                                 [q.ship_id, sectorId], (er, row)=>resolve(row||null)));
                             if (itin) {
                                 let legs = []; try { legs = JSON.parse(itin.itinerary_json||'[]'); } catch {}
-                                const leg = legs.find(L => !L.done && Number(L.edgeId) === Number(e.id) && String(L.entry) === 'tap');
+                                const leg = legs.find(L => !L.done && Number(L.edgeId) === Number(e.id));
                                 if (leg) {
-                                    const edgeRow = await new Promise((resolve)=>db.get('SELECT polyline_json FROM lane_edges WHERE id = ?', [e.id], (er, r)=>resolve(r||null)));
-                                    const pts = (()=>{ try { return JSON.parse(edgeRow?.polyline_json||'[]'); } catch { return []; } })();
-                                    let total = 1; if (pts.length>1) { let d=0; for(let i=1;i<pts.length;i++){ d+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); } total = Math.max(1, d); }
-                                    const targetStartP = Math.max(0, Math.min(1, Number(leg.sStart||0) / total));
-                                    const targetEndP = Math.max(0, Math.min(1, Number(leg.sEnd||total) / total));
-                                    initialProgress = targetStartP;
-                                    metaJson = JSON.stringify({ targetStartP, targetEndP });
+                                    const geom = await getEdgeGeom(e.id);
+                                    initialProgress = Math.max(0, Math.min(1, Number(leg.sStart||0) / geom.total));
+                                    metaJson = JSON.stringify({ targetStartP: initialProgress, targetEndP: Math.max(0, Math.min(1, Number(leg.sEnd||geom.total) / geom.total)) });
                                 }
                             }
                         } catch {}
-                        // Validate referenced ship exists to avoid FK failures
+                        
                         const shipRow = await new Promise((resolve)=>db.get('SELECT id FROM sector_objects WHERE id = ?', [q.ship_id], (er, r)=>resolve(r||null)));
-                        if (!shipRow) {
-                            console.warn('⚠️ Tap queue points to missing ship; discarding', { tapId: t.id, queueId: q.id, shipId: q.ship_id });
-                            // Remove bad queue entry and continue
-                            await new Promise((resolve)=>db.run('UPDATE lane_tap_queue SET status = ? WHERE id = ?', ['cancelled', q.id], ()=>resolve()));
-                            continue;
-                        }
-                        let inserted = false;
-                        let insertErr = null;
-                        await new Promise((resolve)=>db.run(
-                            `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, entered_turn, meta)
-                             VALUES (?, ?, ?, ?, ?, 'core', ?, ?)`,
-                            [e.id, q.ship_id, 1, initialProgress, q.cu, turnNumber, metaJson],
-                            (err)=>{ inserted = !err; insertErr = err || null; resolve(); }
-                        ));
-                        if (!inserted) {
-                            // Revert queue status so we don't lose the ship in limbo
-                            try { await new Promise((resolve)=>db.run('UPDATE lane_tap_queue SET status = ? WHERE id = ?', ['queued', q.id], ()=>resolve())); } catch {}
-                            console.warn('⚠️ Failed to insert lane_transit from tap', { edgeId: e.id, shipId: q.ship_id, cu: q.cu, err: insertErr?.message || insertErr });
-                            // Skip runtime/load update; continue to next tap/iteration
-                            continue;
-                        }
-                        await new Promise((resolve)=>db.run(
-                            `UPDATE lane_edges_runtime SET load_cu = load_cu + ?, updated_at = CURRENT_TIMESTAMP WHERE edge_id = ?`,
-                            [q.cu, e.id], ()=>resolve()));
-                        try { console.log(`🚦 Launch from tap: edge=${e.id} ship=${q.ship_id} cu=${q.cu} initialP=${initialProgress.toFixed(3)} meta=${metaJson}`); } catch {}
-                        // Immediately snap ship to the lane at initial progress so the client sees the reposition without waiting a tick
-                        try {
+                        if (shipRow) {
+                            await new Promise((resolve)=>db.run(
+                                `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, entered_turn, meta)
+                                 VALUES (?, ?, ?, ?, ?, 'core', ?, ?)`,
+                                [e.id, q.ship_id, 1, initialProgress, q.cu, turnNumber, metaJson], ()=>resolve()));
+                            
                             const geom = await getEdgeGeom(e.id);
-                            const pos0 = pointAtProgress(geom, Math.max(0, Math.min(1, initialProgress)));
+                            const pos0 = pointAtProgress(geom, initialProgress);
                             await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos0.x, pos0.y, new Date().toISOString(), q.ship_id], ()=>resolve()));
-                            // Removed verbose real-time progress snapshot for turn-based UX; client will refresh via turn state
-                            // try { io.to(`game-${gameId}`).emit('travel:progress', { shipId: q.ship_id, edgeId: e.id, progress: Math.max(0, Math.min(1, initialProgress)), x: pos0.x, y: pos0.y }); } catch {}
-                        } catch {}
-                        try { io.to(`game-${gameId}`).emit('travel:entered', { shipId: q.ship_id, edgeId: e.id, mode: 'tap' }); } catch {}
+                        }
                         budgetCU -= q.cu;
                     }
                 }
-                // Progress transits
-                const transits = await new Promise((resolve)=>db.all('SELECT id, ship_id, progress, cu, mode, merge_turns, meta FROM lane_transits WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
-                try { console.debug(`[lanes] edge ${e.id} transits: ${transits.length}`); } catch {}
-                for (const tr of transits) {
-                    // Shoulder merge countdown: after merge_turns expire, flip to core
-                    if (tr.mode === 'shoulder' && tr.merge_turns != null) {
-                        const left = Number(tr.merge_turns);
-                        if (left <= 1) {
-                            await new Promise((resolve)=>db.run('UPDATE lane_transits SET mode = ?, merge_turns = NULL WHERE id = ?', ['core', tr.id], ()=>resolve()));
-                        } else {
-                            await new Promise((resolve)=>db.run('UPDATE lane_transits SET merge_turns = ? WHERE id = ?', [left-1, tr.id], ()=>resolve()));
+
+                // 2. Launch Wildcat merges from itineraries (FIX: Wildcat Itinerary Bug)
+                if (rho < 1.2) {
+                    const wildcatCandidates = await new Promise((resolve)=>db.all(
+                        `SELECT * FROM lane_itineraries WHERE sector_id = ? AND status = 'active'`, [sectorId], (er, rows)=>resolve(rows||[])));
+                    
+                    for (const itin of wildcatCandidates) {
+                        let legs = []; try { legs = JSON.parse(itin.itinerary_json||'[]'); } catch {}
+                        const nextLeg = legs.find(L => !L.done);
+                        if (nextLeg && Number(nextLeg.edgeId) === Number(e.id) && nextLeg.entry === 'wildcat') {
+                            const inTransit = await new Promise((resolve)=>db.get('SELECT id FROM lane_transits WHERE ship_id = ?', [itin.ship_id], (er, r)=>resolve(r||null)));
+                            if (inTransit) continue;
+
+                            const ship = await new Promise((resolve)=>db.get('SELECT x, y, meta FROM sector_objects WHERE id = ?', [itin.ship_id], (er, r)=>resolve(r||null)));
+                            if (!ship) continue;
+
+                            const geom = await getEdgeGeom(e.id);
+                            const startPos = pointAtProgress(geom, Number(nextLeg.sStart || 0) / geom.total);
+                            const d = Math.hypot(ship.x - startPos.x, ship.y - startPos.y);
+                            
+                            if (d <= 5) { // Close enough to "auto-merge" if turn tick picks it up
+                                let cu = 1; try { cu = JSON.parse(ship.meta||'{}').convoyUnits || 1; } catch {}
+                                const startP = Number(nextLeg.sStart || 0) / geom.total;
+                                const endP = Number(nextLeg.sEnd || geom.total) / geom.total;
+                                
+                                await new Promise((resolve)=>db.run(
+                                    `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, merge_turns, entered_turn, meta)
+                                     VALUES (?, ?, 1, ?, ?, 'shoulder', ?, ?, ?)`,
+                                    [e.id, itin.ship_id, startP, cu, Math.max(1, Number(nextLeg.mergeTurns || 1)), turnNumber, JSON.stringify({ targetStartP: startP, targetEndP: endP })], ()=>resolve()));
+                                await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + ? WHERE edge_id = ?`, [cu, e.id], ()=>resolve()));
+                            }
                         }
                     }
-                    let targetStartP = null, targetEndP = null;
-                    try { const m = tr.meta ? JSON.parse(tr.meta) : null; if (m) { if (typeof m.targetStartP === 'number') targetStartP = m.targetStartP; if (typeof m.targetEndP === 'number') targetEndP = m.targetEndP; } } catch {}
-                    // Geometry-informed progress increment: convert lane_speed (units/turn) into fraction of polyline per turn
-                    const geomForDelta = await getEdgeGeom(e.id);
-                    // Per-ship warp speed multiplier (default 1)
-                    let shipWarpMult = 1;
-                    try {
-                        const shipRow = await new Promise((resolve)=>db.get('SELECT meta FROM sector_objects WHERE id = ?', [tr.ship_id], (er, r)=>resolve(r||null)));
-                        const meta = shipRow?.meta ? JSON.parse(shipRow.meta) : {};
-                        shipWarpMult = Number(meta.warpSpeedMultiplier || meta.warpSpeed || 1) || 1;
-                    } catch {}
-                    const effectiveTilesPerTurn = Math.max(1, baseTilesPerTurn * shipWarpMult);
-                    // Convert tiles-per-turn into progress fraction along this polyline. Ensure a minimum step.
-                    const deltaP = Math.max(0.02, Math.min(1, Number(effectiveTilesPerTurn) / Math.max(1, Number(geomForDelta.total || 1))));
-                    let curP = Number(tr.progress || 0);
-                    if (targetStartP != null && curP < targetStartP) curP = targetStartP;
-                    const targetP = (targetEndP != null) ? targetEndP : 1;
-                    const newProgress = Math.min(targetP, curP + deltaP);
-                    // Update in-flight position for visualization and emit progress
-                    try {
-                        const geom = geomForDelta;
-                        const pos = pointAtProgress(geom, newProgress);
-                        await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos.x, pos.y, new Date().toISOString(), tr.ship_id], ()=>resolve()));
-                        const remainingP = Math.max(0, targetP - newProgress);
-                        const remainingTurns = Math.max(0, Math.ceil(remainingP / Math.max(1e-6, deltaP)));
-                        try { console.log(`➡️ Transit: edge=${e.id} ship=${tr.ship_id} mode=${tr.mode} p=${newProgress.toFixed(4)} dp=${deltaP.toFixed(6)} targetP=${targetP} eta=${remainingTurns} mult=${shipWarpMult}`); } catch {}
-                        // Removed frequent progress emission to reduce network and UI churn in turn-based flow
-                        // try { io.to(`game-${gameId}`).emit('travel:progress', { shipId: tr.ship_id, edgeId: e.id, progress: newProgress, x: pos.x, y: pos.y, eta: remainingTurns, tpt: effectiveTilesPerTurn }); } catch {}
-                    } catch {}
-                    if (newProgress >= targetP) {
-                        // Off-ramp and attempt itinerary handoff
-                        await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [tr.id], ()=>resolve()));
-                        await new Promise((resolve)=>db.run('UPDATE lane_edges_runtime SET load_cu = MAX(0, load_cu - ?) WHERE edge_id = ?', [tr.cu, e.id], ()=>resolve()));
-                        try { console.log(`🏁 Off-ramp: edge=${e.id} ship=${tr.ship_id} reached targetP=${targetP}`); } catch {}
-                        // Check for active itinerary for this ship in this sector
-                        const itinRow = await new Promise((resolve)=>db.get(
-                            `SELECT id, created_turn, freshness_turns, itinerary_json, status FROM lane_itineraries 
-                             WHERE ship_id = ? AND sector_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1`,
-                            [tr.ship_id, sectorId], (er, row)=>resolve(row||null)));
-                        if (itinRow) {
-                            let itinerary = []; try { itinerary = JSON.parse(itinRow.itinerary_json||'[]'); } catch {}
-                            const curIdx = itinerary.findIndex(L => !L.done && Number(L.edgeId) === Number(e.id));
-                            if (curIdx !== -1) itinerary[curIdx].done = true;
-                            const nextLeg = itinerary.find(L => !L.done);
-                            const isFresh = (Number(itinRow.created_turn||0) + Number(itinRow.freshness_turns||0)) >= Number(turnNumber);
-                            if (!nextLeg) {
-                                // Completed itinerary
-                                await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = ? WHERE id = ?', ['consumed', itinRow.id], ()=>resolve()));
-                                // Clean up any leftover queued travel starts or tap queue entries for this ship in this sector
-                                try { await new Promise((resolve)=>db.run(`UPDATE queued_orders SET status = 'skipped' WHERE ship_id = ? AND order_type = 'travel_start' AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
-                                try { await new Promise((resolve)=>db.run(`UPDATE lane_tap_queue SET status = 'cancelled' WHERE ship_id = ? AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
-                                // Reposition ship to exit point along edge at leg.sEnd and notify
-                                try {
-                                    const completeLeg = itinerary[curIdx];
-                                    if (completeLeg && typeof completeLeg.sEnd === 'number') {
-                                        const geom = await getEdgeGeom(e.id);
-                                        const sTarget = Math.max(0, Math.min(geom.total, Number(completeLeg.sEnd)));
-                                        const pos = pointAtProgress(geom, sTarget / Math.max(1, geom.total));
-                                        await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos.x, pos.y, new Date().toISOString(), tr.ship_id], ()=>resolve()));
-                                        try { io.to(`game-${gameId}`).emit('travel:arrived', { shipId: tr.ship_id, edgeId: e.id, x: pos.x, y: pos.y }); } catch {}
-                                        // Post-impulse: if itinerary meta has a dest XY different from current, materialize a movement order
-                                        try {
-                                            const metaRow = await new Promise((resolve)=>db.get('SELECT meta FROM lane_itineraries WHERE id = ?', [itinRow.id], (er, r)=>resolve(r||null)));
-                                            if (metaRow && metaRow.meta) {
-                                                const meta = (()=>{ try { return JSON.parse(metaRow.meta||'{}'); } catch { return {}; } })();
-                                                if (meta?.dest && typeof meta.dest.x==='number' && typeof meta.dest.y==='number') {
-                                                    const dx = Number(meta.dest.x) - Number(pos.x);
-                                                    const dy = Number(meta.dest.y) - Number(pos.y);
-                                                    if (Math.hypot(dx, dy) >= 1) {
-                                                        const shipRow = await new Promise((resolve)=>db.get('SELECT meta FROM sector_objects WHERE id = ?', [tr.ship_id], (er, r)=>resolve(r||null)));
-                                                        let speed = 1; try { const m = shipRow?.meta?JSON.parse(shipRow.meta):{}; speed = Math.max(1, Number(m.movementSpeed||1)); } catch {}
-                                                        const { computePathBresenham } = require('../../utils/path');
-                                                        const path = computePathBresenham(Number(pos.x), Number(pos.y), Number(meta.dest.x), Number(meta.dest.y));
-                                                        const eta = Math.ceil(Math.max(0, path.length - 1) / Math.max(1, speed));
-                                                        await new Promise((resolve)=>db.run('DELETE FROM movement_orders WHERE object_id = ? AND status IN ("active","blocked")', [tr.ship_id], ()=>resolve()));
-                                                        await new Promise((resolve, reject)=>db.run(
-                                                            `INSERT INTO movement_orders (object_id, destination_x, destination_y, movement_speed, eta_turns, movement_path, current_step, status, created_at)
-                                                             VALUES (?, ?, ?, ?, ?, ?, 0, 'active', ?)`,
-                                                            [tr.ship_id, Number(meta.dest.x), Number(meta.dest.y), speed, eta, JSON.stringify(path), new Date().toISOString()],
-                                                            (err)=> err ? reject(err) : resolve()
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        } catch {}
-                                    }
-                                } catch {}
-                            } else if (isFresh) {
-                                // Start next leg: enqueue at tap or shoulder merge
-                                if (nextLeg.entry === 'tap' && nextLeg.tapId) {
-                                    const slotEdge = await new Promise((resolve)=>db.get('SELECT lane_speed, headway FROM lane_edges WHERE id = ?', [nextLeg.edgeId], (er, r)=>resolve(r||null)));
-                                    const slotsPerTurn = Math.max(0, Math.floor(Number(slotEdge?.lane_speed || 0) / Math.max(1, Number(slotEdge?.headway || 40))));
-                                    const ahead = await new Promise((resolve)=>db.get(`SELECT COALESCE(SUM(cu), 0) as cu FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued'`, [nextLeg.tapId], (er, r)=>resolve(Number(r?.cu || 0))));
-                                    // Simple: enqueue CU  tr.cu
-                                    await new Promise((resolve)=>db.run(
-                                        `INSERT INTO lane_tap_queue (tap_id, ship_id, cu, enqueued_turn, status) VALUES (?, ?, ?, ?, 'queued')`,
-                                        [nextLeg.tapId, tr.ship_id, tr.cu, Number(turnNumber)], ()=>resolve()));
-                                    try { io.to(`game-${gameId}`).emit('lane:queued-next-leg', { shipId: tr.ship_id, nextEdgeId: nextLeg.edgeId, tapId: nextLeg.tapId }); } catch {}
-                                    await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(itinerary), itinRow.id], ()=>resolve()));
-                                } else if (nextLeg.entry === 'wildcat') {
-                                    // Shoulder merge transit for next edge with target window
-                                    const edgeRow2 = await new Promise((resolve)=>db.get('SELECT polyline_json FROM lane_edges WHERE id = ?', [nextLeg.edgeId], (er, r)=>resolve(r||null)));
-                                    const pts2 = (()=>{ try { return JSON.parse(edgeRow2?.polyline_json||'[]'); } catch { return []; } })();
-                                    let total2 = 1; if (pts2.length>1) { let d2=0; for(let i=1;i<pts2.length;i++){ d2+=Math.hypot(pts2[i].x-pts2[i-1].x, pts2[i].y-pts2[i-1].y); } total2 = Math.max(1, d2); }
-                                    const targetStartP2 = Math.max(0, Math.min(1, Number(nextLeg.sStart||0) / total2));
-                                    const targetEndP2 = Math.max(0, Math.min(1, Number(nextLeg.sEnd||total2) / total2));
-                                    await new Promise((resolve)=>db.run(
-                                        `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, merge_turns, entered_turn, meta)
-                                         VALUES (?, ?, 1, ?, ?, 'shoulder', ?, ?, ?)`,
-                                        [nextLeg.edgeId, tr.ship_id, targetStartP2, tr.cu, Math.max(1, Number(nextLeg.mergeTurns || 1)), Number(turnNumber), JSON.stringify({ targetStartP: targetStartP2, targetEndP: targetEndP2 })], ()=>resolve()));
-                                    await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + ? WHERE edge_id = ?`, [tr.cu, nextLeg.edgeId], ()=>resolve()));
-                                    try { io.to(`game-${gameId}`).emit('lane:next-leg-started', { shipId: tr.ship_id, nextEdgeId: nextLeg.edgeId, mode: 'wildcat' }); } catch {}
-                                    await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(itinerary), itinRow.id], ()=>resolve()));
-                                }
+                }
+
+                // 3. Progress transits with Multi-Leg support
+                const transits = await new Promise((resolve)=>db.all('SELECT * FROM lane_transits WHERE edge_id = ?', [e.id], (er, rows)=>resolve(rows||[])));
+                for (const tr of transits) {
+                    let distanceRemaining = baseTilesPerTurn; // tiles we can still move this turn
+                    let currentTransit = tr;
+                    let currentEdgeId = e.id;
+
+                    while (distanceRemaining > 0 && currentTransit) {
+                        if (currentTransit.mode === 'shoulder' && currentTransit.merge_turns != null) {
+                            const left = Number(currentTransit.merge_turns);
+                            if (left <= 1) {
+                                await new Promise((resolve)=>db.run('UPDATE lane_transits SET mode = ?, merge_turns = NULL WHERE id = ?', ['core', currentTransit.id], ()=>resolve()));
+                                currentTransit.mode = 'core';
                             } else {
-                                // Itinerary expired: also clear any pending travel-start orders and queued tap entries
-                                await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = ? WHERE id = ?', ['expired', itinRow.id], ()=>resolve()));
-                                try { await new Promise((resolve)=>db.run(`UPDATE queued_orders SET status = 'skipped' WHERE ship_id = ? AND order_type = 'travel_start' AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
-                                try { await new Promise((resolve)=>db.run(`UPDATE lane_tap_queue SET status = 'cancelled' WHERE ship_id = ? AND status = 'queued'`, [tr.ship_id], ()=>resolve())); } catch {}
-                            }
-                        } else {
-                            // No itinerary: simple off-ramp effect (retain existing behavior: occasional hard)
-                            const hard = Math.random() < 0.05;
-                            if (hard && tr.ship_id) {
-                                const stunData = JSON.stringify({ stunTurns: 1 });
-                                await new Promise((resolve)=>db.run(
-                                    `INSERT INTO ship_status_effects (ship_id, effect_key, effect_data, expires_turn) VALUES (?, 'stunned', ?, NULL)`,
-                                    [tr.ship_id, stunData], ()=>resolve()
-                                ));
-                                try { io.to(`game-${gameId}`).emit('lane:hard-offramp', { shipId: tr.ship_id, edgeId: e.id, effect: 'stun', turns: 1 }); } catch {}
+                                await new Promise((resolve)=>db.run('UPDATE lane_transits SET merge_turns = ? WHERE id = ?', [left-1, currentTransit.id], ()=>resolve()));
+                                break;
                             }
                         }
-                    } else {
-                        await new Promise((resolve)=>db.run('UPDATE lane_transits SET progress = ? WHERE id = ?', [newProgress, tr.id], ()=>resolve()));
+
+                        let targetStartP = 0, targetEndP = 1;
+                        try { const m = currentTransit.meta ? JSON.parse(currentTransit.meta) : null; if (m) { targetStartP = m.targetStartP ?? 0; targetEndP = m.targetEndP ?? 1; } } catch {}
+                        
+                        const geom = await getEdgeGeom(currentEdgeId);
+                        let shipWarpMult = 1;
+                        try {
+                            const shipRow = await new Promise((resolve)=>db.get('SELECT meta FROM sector_objects WHERE id = ?', [currentTransit.ship_id], (er, r)=>resolve(r||null)));
+                            shipWarpMult = JSON.parse(shipRow?.meta || '{}').warpSpeedMultiplier || 1;
+                        } catch {}
+
+                        const effectiveSpeed = distanceRemaining * shipWarpMult;
+                        const deltaP = effectiveSpeed / geom.total;
+                        let curP = Number(currentTransit.progress || 0);
+                        if (curP < targetStartP) curP = targetStartP;
+
+                        const newProgress = Math.min(targetEndP, curP + deltaP);
+                        const actualDeltaP = newProgress - curP;
+                        const distanceUsed = actualDeltaP * geom.total / shipWarpMult;
+                        distanceRemaining -= distanceUsed;
+
+                        const pos = pointAtProgress(geom, newProgress);
+                        await new Promise((resolve)=>db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [pos.x, pos.y, new Date().toISOString(), currentTransit.ship_id], ()=>resolve()));
+                        await new Promise((resolve)=>db.run('UPDATE lane_transits SET progress = ? WHERE id = ?', [newProgress, currentTransit.id], ()=>resolve()));
+
+                        if (newProgress >= targetEndP) {
+                            await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [currentTransit.id], ()=>resolve()));
+                            await new Promise((resolve)=>db.run('UPDATE lane_edges_runtime SET load_cu = MAX(0, load_cu - ?) WHERE edge_id = ?', [currentTransit.cu, currentEdgeId], ()=>resolve()));
+                            
+                            const itinRow = await new Promise((resolve)=>db.get(
+                                `SELECT id, itinerary_json FROM lane_itineraries WHERE ship_id = ? AND sector_id = ? AND status = 'active'`, [currentTransit.ship_id, sectorId], (er, row)=>resolve(row)));
+                            
+                            if (itinRow) {
+                                let legs = []; try { legs = JSON.parse(itinRow.itinerary_json||'[]'); } catch {}
+                                const curIdx = legs.findIndex(L => !L.done && Number(L.edgeId) === Number(currentEdgeId));
+                                if (curIdx !== -1) legs[curIdx].done = true;
+                                const nextLeg = legs.find(L => !L.done);
+                                await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET itinerary_json = ? WHERE id = ?', [JSON.stringify(legs), itinRow.id], ()=>resolve()));
+
+                                if (nextLeg) {
+                                    if (nextLeg.entry === 'wildcat') {
+                                        const nextGeom = await getEdgeGeom(nextLeg.edgeId);
+                                        const nextStartP = Number(nextLeg.sStart || 0) / nextGeom.total;
+                                        const nextEndP = Number(nextLeg.sEnd || nextGeom.total) / nextGeom.total;
+                                        
+                                        const insertRes = await new Promise((resolve)=>db.run(
+                                            `INSERT INTO lane_transits (edge_id, ship_id, direction, progress, cu, mode, entered_turn, meta)
+                                             VALUES (?, ?, 1, ?, ?, 'core', ?, ?)`,
+                                            [nextLeg.edgeId, currentTransit.ship_id, nextStartP, currentTransit.cu, turnNumber, JSON.stringify({ targetStartP: nextStartP, targetEndP: nextEndP })], function(err){ resolve(this); }));
+                                        
+                                        await new Promise((resolve)=>db.run(`UPDATE lane_edges_runtime SET load_cu = load_cu + ? WHERE edge_id = ?`, [currentTransit.cu, nextLeg.edgeId], ()=>resolve()));
+                                        
+                                        currentTransit = { id: insertRes.lastID, ship_id: currentTransit.ship_id, cu: currentTransit.cu, progress: nextStartP, mode: 'core', meta: JSON.stringify({ targetStartP: nextStartP, targetEndP: nextEndP }) };
+                                        currentEdgeId = nextLeg.edgeId;
+                                        continue; 
+                                    } else {
+                                        await new Promise((resolve)=>db.run(
+                                            `INSERT INTO lane_tap_queue (tap_id, ship_id, cu, enqueued_turn, status) VALUES (?, ?, ?, ?, 'queued')`,
+                                            [nextLeg.tapId, currentTransit.ship_id, currentTransit.cu, turnNumber], ()=>resolve()));
+                                        break; 
+                                    }
+                                } else {
+                                    await new Promise((resolve)=>db.run('UPDATE lane_itineraries SET status = "consumed" WHERE id = ?', [itinRow.id], ()=>resolve()));
+                                    break;
+                                }
+                            }
+                            break;
+                        } else {
+                            break;
+                        }
                     }
                 }
             }

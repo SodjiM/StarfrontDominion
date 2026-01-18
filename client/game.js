@@ -341,7 +341,17 @@ export class GameClient {
         // Lane route overlays on main canvas (purple lanes + yellow dest)
         try {
             const client = this;
-            const highlight = (client.__laneHighlight && client.__laneHighlight.until > Date.now()) ? (client.__laneHighlight.legs||[]) : [];
+            // 1. Manual highlights (from planner)
+            let highlight = (client.__laneHighlight && client.__laneHighlight.until > Date.now()) ? (client.__laneHighlight.legs||[]) : [];
+            
+            // 2. Active itinerary highlight for selected unit
+            if (!highlight.length && client.selectedUnit?.id) {
+                const itin = client.__activeItineraries?.get(client.selectedUnit.id);
+                if (itin && itin.status === 'active') {
+                    highlight = itin.legs || [];
+                }
+            }
+
             if (highlight.length && client.gameState?.sector?.id) {
                 const facts = client.__factsCache?.facts || null;
                 if (facts && Array.isArray(facts.lanes)) {

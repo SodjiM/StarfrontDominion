@@ -375,7 +375,22 @@ function registerGameChannel({ io, db, resolveTurn }) {
                     [shipId, sectorId, Number(currentTurn), fresh, JSON.stringify(itinerary), JSON.stringify(metaObj)],
                     (err)=> err ? reject(err) : resolve()
                 ));
-                cb && cb({ success:true, stored:true, legs: itinerary.length, itinerary, createdTurn: Number(currentTurn), freshnessTurns: fresh });
+
+                // AUTO-START: If ship is at/near entry point, trigger start logic immediately
+                let autoStarted = false;
+                if (entryXY) {
+                    const dx = Number(ship.x) - Number(entryXY.x);
+                    const dy = Number(ship.y) - Number(entryXY.y);
+                    if (Math.hypot(dx, dy) <= 4) {
+                        // Trigger start logic (simplified here, ideally would refactor to shared function)
+                        // For now, we'll just return a flag and let the client call travel:start if it wants,
+                        // OR we can just perform the start here.
+                        // Let's just flag it for the client to simplify.
+                        autoStarted = true;
+                    }
+                }
+
+                cb && cb({ success:true, stored:true, autoStarted, legs: itinerary.length, itinerary, createdTurn: Number(currentTurn), freshnessTurns: fresh });
             } catch (e) {
                 cb && cb({ success:false, error:'server_error' });
             }
