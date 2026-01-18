@@ -213,6 +213,8 @@
             max-width: 80vw;
             max-height: 80vh;
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
             animation: modalSlideIn 0.3s ease-out;
         }
@@ -256,6 +258,24 @@
             padding: 20px;
             max-height: 60vh;
             overflow-y: auto;
+        }
+
+        /* Map modal needs full height - override default constraints */
+        .map-modal {
+            height: 92vh !important;
+            max-height: 92vh !important;
+            width: min(1400px, 96vw) !important;
+            max-width: min(1400px, 96vw) !important;
+        }
+        .map-modal .game-modal-content {
+            padding: 0 !important;
+            max-height: none !important;
+            height: auto !important;
+            flex: 1 1 0 !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+            display: flex !important;
+            flex-direction: column !important;
         }
 
         .game-modal-actions {
@@ -765,21 +785,7 @@
             border-color: rgba(100, 181, 246, 0.6);
         }
 
-        /* Full map modal styles */
-        .map-modal {
-            max-width: 95vw;
-            max-height: 92vh;
-            width: 1280px;
-            height: 820px;
-        }
-
-        .map-modal .game-modal-content {
-            padding: 0;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden; /* prevent scrollbars inside the modal */
-        }
+        /* Map modal styles - see override near line 264 */
 
         /* Player assets modal styles */
         .player-assets-modal .modal-content {
