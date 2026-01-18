@@ -168,85 +168,148 @@ body {
 
 /* Modal */
 .map-modal { background: var(--bg-panel)!important; border: 1px solid var(--border)!important; box-shadow: var(--shadow)!important; }
-.full-map-canvas { width: 100%; height: 320px; background: #0a0f1c; border: 1px solid var(--border); border-radius: 10px; }
+.full-map-canvas { width: 100%; height: 100%; background: #0a0f1c; border: 1px solid var(--border); border-radius: 10px; }
 
-/* Map modal layout fixes */
+/* Map Modal Refined Layout */
 .map-modal .map-root {
   display: flex;
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
 }
-.map-modal .modal-body {
+
+.map-modal .map-row {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+  padding: 0 16px 16px;
+}
+
+.map-sidebar {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  box-sizing: border-box;
-}
-
-/* Tabs row */
-.map-tabs { flex: 0 0 auto; }
-
-/* Active tab content fills the rest */
-.map-tab-content {
-  flex: 1 1 auto;
-  min-height: 0;       /* allow children to shrink */
-  overflow: hidden;    /* keep the canvas inside */
-  padding: 8px 14px 12px;
-  box-sizing: border-box;
-}
-
-/* The left/right split row */
-.map-row {
-  display: flex;
   gap: 12px;
   height: 100%;
-  min-height: 0;       /* critical */
+  min-height: 0;
+  overflow: hidden;
 }
 
-/* Left column with canvas */
-.map-left {
-  flex: 1 1 auto;
+.sidebar-section {
+  background: rgba(10, 18, 32, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.sidebar-section.scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.sidebar-title {
+  color: var(--primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.map-header {
+  margin-bottom: 8px;
+}
+
+.map-header h3 {
+  color: var(--primary);
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.map-header p {
+  color: var(--muted);
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+}
+
+/* Route Cards & POI Items */
+.route-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.route-card:hover {
+  background: rgba(100, 181, 246, 0.08);
+  border-color: var(--primary);
+  transform: translateX(4px);
+}
+
+.poi-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  font-size: 0.9rem;
+  color: var(--text);
+  border: 1px solid transparent;
+}
+
+.poi-item:hover {
+  background: rgba(100, 181, 246, 0.12);
+  border-color: rgba(100, 181, 246, 0.3);
+}
+
+.poi-item.active {
+  background: rgba(100, 181, 246, 0.2);
+  border-color: var(--primary);
+}
+
+/* Layer & Map Controls */
+.map-controls-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.layer-chip {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  min-width: 0;
-  max-width: 100%;     /* prevent overflow */
-  min-height: 0;       /* allow to shrink */
-}
-.map-canvas-wrap {
-  flex: 1 1 auto;       /* grow to fill available space */
-  min-height: 0;        /* critical to allow canvas to reach bottom */
-  max-height: 100%;     /* don't exceed container */
-  position: relative;
-  min-width: 0;        /* allow shrinking horizontally */
-}
-.map-canvas-wrap .full-map-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;        /* fill the container */
+  background: rgba(100, 181, 246, 0.1);
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(100, 181, 246, 0.25);
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--primary);
+  transition: all 0.2s ease;
 }
 
-/* Right rail */
-.map-rail {
-  width: 320px;        /* or 280 if you prefer */
-  min-width: 260px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;       /* allow to shrink to match canvas */
+.layer-chip:hover {
+  background: rgba(100, 181, 246, 0.15);
+  border-color: var(--primary);
 }
-.map-rail .section {
-  background:#0b1220;
-  border:1px solid rgba(100,181,246,.25);
-  border-radius:8px;
-  padding:12px;
-  color:#e3f2fd;
-  min-height: 0;       /* allow to shrink */
-}
-.map-rail .section.scroll {
-  overflow:auto;       /* System Facts uses this */
-  flex: 1 1 auto;       /* grow to fill available space */
+
+/* Modal override for wider view */
+.map-modal {
+  width: min(1400px, 98vw) !important;
+  height: min(900px, 94vh) !important;
 }
 
 /* Global modal system (used by UI.showModal) */

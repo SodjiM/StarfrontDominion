@@ -119,95 +119,105 @@ export function openMapModal() {
             <div id="solar-system-tab" class="map-tab-content">
                 <div class="map-row">
                     <div class="map-left">
-                        <div style="flex:0 0 auto;">
-                            <h3 style="color: #64b5f6; margin: 0 0 4px 0; font-size:1.1em;">🪐 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
-                            <p style="color: #ccc; margin: 0; font-size: 0.85em;">Strategic sector overview</p>
+                        <div class="map-header">
+                            <h3>🪐 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
+                            <p>Strategic sector overview & navigation</p>
                         </div>
-                        <div style="flex:0 0 auto; margin: 0 0 4px 2px; color:#9ecbff; font-size:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; position:relative;">
-                            <label id="layersChip" style="display:flex; align-items:center; gap:6px; cursor:pointer; background:rgba(100,181,246,0.08); padding:4px 8px; border-radius:6px; border:1px solid rgba(100,181,246,0.2);">
-                                <input type="checkbox" id="toggleLayers" checked>
-                                <span>🗺️ Layers</span>
+                        
+                        <div class="map-controls-row">
+                            <label id="layersChip" class="layer-chip">
+                                <input type="checkbox" id="toggleLayers" checked style="display:none;">
+                                <span>🗺️ Map Layers</span>
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" id="toggleLanes">
-                                <span>🛰️ Lanes</span>
+                            <label class="layer-chip">
+                                <input type="checkbox" id="toggleLanes" style="display:none;">
+                                <span>🛰️ Warp Lanes</span>
                             </label>
-                            <div id="layerPanel" style="display:none; position:absolute; top:30px; left:0; background:rgba(10,18,32,0.95); border:1px solid rgba(100,181,246,0.3); border-radius:6px; padding:8px; min-width:180px; z-index:1000; box-shadow:0 6px 16px rgba(0,0,0,0.4);">
-                                <div style="margin-bottom:6px; font-weight:bold; color:#64b5f6;">Display Layers</div>
-                                <label style="display:block; margin:4px 0;">
-                                    <input type="checkbox" id="toggleRegions" checked> 🧭 Regions
+                            
+                            <div id="layerPanel" style="display:none; position:absolute; top:110px; left:30px; background:rgba(10,18,32,0.95); border:1px solid rgba(100,181,246,0.3); border-radius:12px; padding:12px; min-width:200px; z-index:1000; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+                                <div style="margin-bottom:10px; font-weight:bold; color:#64b5f6; border-bottom:1px solid rgba(100,181,246,0.2); padding-bottom:6px;">Display Filters</div>
+                                <label style="display:flex; align-items:center; gap:8px; margin:8px 0; cursor:pointer;">
+                                    <input type="checkbox" id="toggleRegions" checked> 🧭 Control Regions
                                 </label>
-                                <label style="display:block; margin:4px 0;">
-                                    <input type="checkbox" id="toggleBelts" checked> ⛓️ Belts
+                                <label style="display:flex; align-items:center; gap:8px; margin:8px 0; cursor:pointer;">
+                                    <input type="checkbox" id="toggleBelts" checked> ⛓️ Asteroid Belts
                                 </label>
-                                <label style="display:block; margin:4px 0;">
+                                <label style="display:flex; align-items:center; gap:8px; margin:8px 0; cursor:pointer;">
                                     <input type="checkbox" id="toggleWormholes" checked> 🌀 Wormholes
                                 </label>
                             </div>
                         </div>
-                        <div class="map-canvas-wrap">
+
+                        <div class="map-canvas-wrap" style="border-radius:12px; overflow:hidden; border:1px solid var(--border);">
                             <canvas id="fullMapCanvas" class="full-map-canvas"></canvas>
                         </div>
                     </div>
-                    <div class="map-rail" style="position:relative; display:grid; grid-template-rows:auto 1fr auto; gap:12px; min-width:340px; height:100%;">
-                        <!-- Header / controls -->
-                        <div id="plannerPanel" class="section" style="padding:12px;">
-                            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-                                <div>
-                                    <h4 style="margin:0; color:#9ecbff;">Warp Planner</h4>
-                                    <div id="plannerHelp" style="font-size:12px; color:#9ecbff;">Click on the map or pick a POI to plan a route.</div>
-                                </div>
-                                <button id="factsToggle" class="sf-btn sf-btn-secondary small" title="Show system facts" style="white-space:nowrap; display:flex; align-items:center; gap:6px;">
-                                    <span>Facts</span><span id="factsChevron">▸</span>
+
+                    <div class="map-sidebar">
+                        <!-- Warp Planner Section -->
+                        <div id="plannerPanel" class="sidebar-section">
+                            <div class="sidebar-header">
+                                <h4 class="sidebar-title">Warp Planner</h4>
+                                <button id="factsToggle" class="sf-btn sf-btn-secondary small" title="System Dashboard" style="padding:4px 8px;">
+                                    <span>Stats</span><span id="factsChevron">▸</span>
                                 </button>
                             </div>
-                            <div style="display:flex; gap:6px; align-items:center; margin:10px 0 0;">
-                                <input id="coordX" type="number" placeholder="X" style="width:60px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/>
-                                <input id="coordY" type="number" placeholder="Y" style="width:60px; background:#0b1220; color:#cfe8ff; border:1px solid rgba(100,181,246,0.35); border-radius:4px; padding:2px 6px;"/>
-                                <button class="sf-btn sf-btn-primary small" id="btnPlanCoords">Plan</button>
-                            </div>
-                            <div id="poiSelector" style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
-                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="planets">Planets</button>
-                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="wormholes">Wormholes</button>
-                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="taps">Taps</button>
-                                    <button class="sf-btn sf-btn-secondary small" data-poi-tab="belts">Belts</button>
+                            <div id="plannerHelp" style="font-size:12px; color:var(--muted); line-height:1.4;">Select a warp-capable ship and destination to plot a route.</div>
+                            
+                            <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+                                <div style="display:flex; gap:4px;">
+                                    <input id="coordX" type="number" placeholder="X" class="sf-input" style="width:70px;"/>
+                                    <input id="coordY" type="number" placeholder="Y" class="sf-input" style="width:70px;"/>
                                 </div>
+                                <button class="sf-btn sf-btn-primary small" id="btnPlanCoords" style="flex:1;">Plot Route</button>
+                            </div>
+
+                            <div id="poiSelector" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="planets" style="font-size:11px; padding:6px;">Planets</button>
+                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="wormholes" style="font-size:11px; padding:6px;">Wormholes</button>
+                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="taps" style="font-size:11px; padding:6px;">Lane Taps</button>
+                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="belts" style="font-size:11px; padding:6px;">Belts</button>
                             </div>
                         </div>
 
-                        <!-- The ONLY scrollable area -->
-                        <div id="railScroll" class="section" style="overflow:auto; min-height:0; padding:0 12px 8px 12px;">
-                            <div id="poiList" style="border:1px solid rgba(100,181,246,0.15); border-radius:6px; padding:4px; margin-bottom:10px;"></div>
-                            <div id="plannerRoutes" style="display:flex; flex-direction:column; gap:8px;"></div>
-                            <div class="section" style="margin-top:10px; background:#0b1220; border:1px solid rgba(100,181,246,.25); border-radius:8px;">
-                                <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; cursor:pointer;" id="factsBar">
-                                    <div style="color:#9ecbff; font-size:0.9em; font-weight:600;">System Facts</div>
-                                    <div id="factsChevron2" style="color:#9ecbff;">▸</div>
+                        <!-- Scrollable Content: POI List & Routes -->
+                        <div class="sidebar-section scroll" id="railScroll">
+                            <div id="poiList" style="margin-bottom:12px;"></div>
+                            <div id="plannerRoutes" style="display:flex; flex-direction:column; gap:10px;"></div>
+                            
+                            <!-- System Facts (Dashboard) -->
+                            <div class="sidebar-section" style="margin-top:auto; padding:0; background:transparent; border:none;">
+                                <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; cursor:pointer; border-top:1px solid var(--border);" id="factsBar">
+                                    <div style="color:var(--primary); font-size:0.85rem; font-weight:600;">System Dashboard</div>
+                                    <div id="factsChevron2" style="color:var(--primary);">▸</div>
                                 </div>
-                                <div id="sysMetaSummaryWrap" style="display:none; border-top:1px solid rgba(100,181,246,.15);">
-                                    <div id="sysMetaSummary" style="font-size:13px; line-height:1.5; padding:10px 12px;">Loading...</div>
+                                <div id="sysMetaSummaryWrap" style="display:none;">
+                                    <div id="sysMetaSummary" style="font-size:12px; line-height:1.6; padding:8px 0;">Loading system telemetry...</div>
                                 </div>
                             </div>
                         </div>
-
                     </div>
                 </div>
             </div>
             <div id="galaxy-tab" class="map-tab-content hidden">
                 <div class="map-row">
                     <div class="map-left">
-                        <div style="margin-bottom: 10px;">
-                            <h3 style="color: #64b5f6; margin: 0 0 10px 0;">🌌 Galaxy Overview</h3>
-                            <p style="color: #ccc; margin: 0; font-size: 0.9em;">All known solar systems in the galaxy</p>
+                        <div class="map-header">
+                            <h3>🌌 Galaxy Cartography</h3>
+                            <p>Interstellar gate network and known systems</p>
                         </div>
-                        <div class="map-canvas-wrap">
+                        <div class="map-canvas-wrap" style="border-radius:12px; overflow:hidden; border:1px solid var(--border);">
                             <canvas id="galaxyCanvas" class="full-map-canvas"></canvas>
                         </div>
                     </div>
-                    <div class="map-rail">
-                        <div id="galaxySystemsList" class="section scroll" style="flex:1;">
-                            <!-- Galaxy systems list will be populated here -->
+                    <div class="map-sidebar">
+                        <div class="sidebar-section scroll">
+                            <div class="sidebar-header">
+                                <h4 class="sidebar-title">Known Systems</h4>
+                            </div>
+                            <div id="galaxySystemsList">
+                                <!-- Galaxy systems list will be populated here -->
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -356,140 +366,157 @@ async function populatePoiList(root, tab) {
         const wrap = root.querySelector('#poiList'); if (!wrap) return;
         const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
         const items = [];
+        let icon = '📍';
         if (tab === 'planets') {
+            icon = '🪐';
             const planets = client.objects.filter(o => (o.celestial_type === 'planet'));
             planets.forEach(p => items.push({ label: p.meta?.name || `Planet ${p.id}`, x: p.x, y: p.y }));
         } else if (tab === 'wormholes') {
+            icon = '🌀';
             (facts?.wormholeEndpoints||[]).forEach(w => items.push({ label: (safeName(w.meta?.name) || `Wormhole ${w.id}`), x: w.x, y: w.y }));
         } else if (tab === 'taps') {
+            icon = '🛰️';
             const tapsByEdge = facts?.laneTapsByEdge || {}; Object.keys(tapsByEdge).forEach(eid => {
                 (tapsByEdge[eid]||[]).forEach((t, i) => items.push({ label: `Tap ${eid}-${i+1}`, x: t.x, y: t.y }));
             });
         } else if (tab === 'belts') {
+            icon = '⛓️';
             (facts?.belts||[]).forEach(b => {
                 const cx = 2500, cy = 2500; const rMid = Number(b.inner_radius) + Number(b.width)/2; const aMid = (Number(b.arc_start)+Number(b.arc_end))/2; items.push({ label: `Belt ${b.belt_key}-${b.sector_index}`, x: Math.round(cx+Math.cos(aMid)*rMid), y: Math.round(cy+Math.sin(aMid)*rMid) });
             });
         }
-        wrap.innerHTML = items.map((it, idx)=>`<div class="poi-item" data-idx="${idx}" style="padding:4px 6px; cursor:pointer; border-radius:4px;">${it.label}</div>`).join('');
-        wrap.querySelectorAll('.poi-item').forEach(el => el.onmouseenter = ()=>{ el.style.background = 'rgba(100,181,246,0.08)'; });
-        wrap.querySelectorAll('.poi-item').forEach(el => el.onmouseleave = ()=>{ el.style.background = 'transparent'; });
-        wrap.onclick = (e)=>{ const row = e.target.closest('.poi-item'); if (!row) return; const it = items[Number(row.dataset.idx||0)]; const xEl = root.querySelector('#coordX'); const yEl = root.querySelector('#coordY'); if (xEl && yEl) { xEl.value = it.x; yEl.value = it.y; } planToDestination({ x: it.x, y: it.y }); };
+        
+        wrap.innerHTML = items.length ? `
+            <div style="margin-bottom:8px; font-size:12px; color:var(--primary); font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">${tab}</div>
+            <div style="display:flex; flex-direction:column; gap:2px;">
+                ${items.map((it, idx)=>`<div class="poi-item" data-idx="${idx}">${icon} ${it.label}</div>`).join('')}
+            </div>
+        ` : '';
+        
+        wrap.onclick = (e)=>{ 
+            const row = e.target.closest('.poi-item'); 
+            if (!row) return; 
+            wrap.querySelectorAll('.poi-item').forEach(el => el.classList.remove('active'));
+            row.classList.add('active');
+            const it = items[Number(row.dataset.idx||0)]; 
+            const xEl = root.querySelector('#coordX'); 
+            const yEl = root.querySelector('#coordY'); 
+            if (xEl && yEl) { xEl.value = it.x; yEl.value = it.y; } 
+            planToDestination({ x: it.x, y: it.y }); 
+        };
 }
 
 function showPlannerRoutes(routes) {
         try {
             const client = window.gameClient; const container = document.getElementById('plannerRoutes'); if (!container) return;
-            const cta = document.getElementById('plannerStickyCTA');
-            const ctaSummary = document.getElementById('ctaSummary');
-            const ctaStart = document.getElementById('ctaStartBest');
-            const ctaAbort = document.getElementById('ctaAbort');
             const rawList = Array.isArray(routes) ? routes.slice(0,3) : [];
             // Normalize and drop degenerate (all zero-length) routes
             const list = rawList.filter(r => {
                 const legs = Array.isArray(r.legs) ? r.legs.map(normalizeLeg) : [];
                 const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-                if (!legs.length || !nonZero.length) { debug('[client] Skipping degenerate route', { route:r, legs }); return false; }
-                // replace with normalized legs for downstream use
+                if (!legs.length || !nonZero.length) return false;
                 r.legs = legs;
                 return true;
             });
             window.__lastPlannedRoutes = list;
-            debug('[client] showPlannerRoutes received routes:', list.map(r => ({ legsCount: Array.isArray(r.legs)?r.legs.length:'not-array', hasEdgeId: !!r.edgeId, keys:Object.keys(r||{}) })));
             container.innerHTML = '';
-            // Destination summary card
-            try {
-                if (client.__plannerTarget) {
-                    const t = client.__plannerTarget;
-                    const destCard = document.createElement('div');
-                    destCard.style.cssText = 'background: rgba(100,181,246,0.10); border:1px solid rgba(100,181,246,0.3); border-radius:8px; padding:8px 12px; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:40px;';
-                    destCard.innerHTML = `<div style="font-weight:bold; color:#64b5f6;">Destination</div><div style="font-size:12px; color:#9ecbff;">${Math.round(t.x)}, ${Math.round(t.y)}</div>`;
-                    container.appendChild(destCard);
-                }
-            } catch {}
-            list.forEach((r, idx) => {
-                const rho = Number(r.rho || 0); const color = rho<=1?'#66bb6a':(rho<=1.5?'#ffca28':'#ef5350');
-                const row = document.createElement('div');
-                row.style.cssText = `background: rgba(255,255,255,0.05); border:2px solid ${color}40; border-radius:8px; padding:12px; margin-bottom:8px; transition:box-shadow .12s ease, border-color .12s ease; display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center;`;
-                const legs = Array.isArray(r.legs) ? r.legs : null;
-                if (!legs) { console.error(`[client] Route ${idx} missing legs array`, r); return; }
-                const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}-${Math.round(L.sEnd)}]`).join(' | ');
-                row.innerHTML = `<div><div style="font-size:12px; color:${color}">Load rho ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'!'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
-                    <div style=\"display:flex; gap:6px;\"><button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Execute</button></div>`;
-                row.onmouseenter = ()=>{ row.style.boxShadow = `0 0 0 2px ${color}55`; };
-                row.onmouseleave = ()=>{ row.style.boxShadow = 'none'; };
-                container.appendChild(row);
-            });
-            // Sticky CTA summary & actions
-            if (cta) {
-                if (list.length) {
-                    const best = list[0];
-                    if (ctaSummary) ctaSummary.textContent = `Best route: rho ${Number(best.rho||0).toFixed(2)} • ETA ${best.eta} • ${best.legs.length} leg(s)`;
-                    cta.style.display = 'block';
-                    if (ctaStart) {
-                        ctaStart.textContent = 'Execute';
-                        ctaStart.onclick = () => {
-                            const shipId = client.selectedUnit?.id; if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
-                            const legs = (Array.isArray(best.legs)?best.legs:[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
-                            const dest = client.__plannerTarget || null;
-                            client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: dest?.x, destY: dest?.y }, (resp)=>{
-                                if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                                try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
-                                
-                                // Automatically trigger start
-                                client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector?.id, shipId }, (resp2)=>{
-                                    if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
-                                    client.addLogEntry('Travel execution started', 'success');
-                                    initializeFullMap();
-                                });
-                            });
-                        };
-                    }
-                    if (ctaAbort) ctaAbort.style.display = 'none';
-                } else {
-                    cta.style.display = 'none';
-                }
+            
+            if (list.length === 0) {
+                container.innerHTML = `<div style="padding:20px; text-align:center; color:var(--muted); font-size:13px; border:1px dashed var(--border); border-radius:10px;">No viable warp routes found for this destination.</div>`;
+                return;
             }
+
+            // Destination summary header
+            if (client.__plannerTarget) {
+                const t = client.__plannerTarget;
+                const destHeader = document.createElement('div');
+                destHeader.style.cssText = 'font-size:12px; color:var(--primary); font-weight:600; text-transform:uppercase; margin-bottom:4px;';
+                destHeader.textContent = `Dest: ${Math.round(t.x)}, ${Math.round(t.y)}`;
+                container.appendChild(destHeader);
+            }
+
+            list.forEach((r, idx) => {
+                const rho = Number(r.rho || 0); 
+                const color = rho <= 1.0 ? '#66bb6a' : (rho <= 1.5 ? '#ffca28' : '#ef5350');
+                const riskColor = r.risk > 3 ? '#ef5350' : (r.risk > 1 ? '#ffca28' : '#66bb6a');
+                
+                const card = document.createElement('div');
+                card.className = 'route-card';
+                card.style.borderColor = `${color}40`;
+                
+                const legs = r.legs;
+                const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'}`).join(' → ');
+                
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+                        <div>
+                            <div style="font-weight:600; font-size:14px; color:${color}">Option ${idx + 1}</div>
+                            <div style="font-size:11px; color:var(--muted);">${legsText}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:14px; font-weight:bold; color:var(--text);">ETA ${r.eta}</div>
+                            <div style="font-size:10px; color:${riskColor};">Risk: ${'!'.repeat(Math.max(1, r.risk || 1))}</div>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+                        <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:${color}20; color:${color}; border:1px solid ${color}40;">ρ ${rho.toFixed(2)}</span>
+                        <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:rgba(255,255,255,0.05); color:var(--muted); border:1px solid var(--border);">${legs.length} Leg${legs.length!==1?'s':''}</span>
+                    </div>
+                    <button class="sf-btn sf-btn-primary small" data-route-index="${idx}" data-action="start" style="width:100%; justify-content:center; padding:8px;">Execute Warp</button>
+                `;
+                
+                // Mouse interactive preview
+                card.onmouseenter = () => { 
+                    card.style.boxShadow = `0 4px 12px ${color}20`;
+                    try { 
+                        client.__laneHighlight = { until: Date.now() + 30000, legs: r.legs };
+                        const canvas = document.getElementById('fullMapCanvas');
+                        if (canvas) {
+                            const ctx = canvas.getContext('2d');
+                            const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
+                            const toggles = {
+                                regions: document.getElementById('toggleRegions')?.checked !== false,
+                                belts: document.getElementById('toggleBelts')?.checked !== false,
+                                wormholes: document.getElementById('toggleWormholes')?.checked !== false,
+                                lanes: document.getElementById('toggleLanes')?.checked === true
+                            };
+                            renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
+                        }
+                    } catch {}
+                };
+                card.onmouseleave = () => { 
+                    card.style.boxShadow = 'none';
+                    // We don't clear it immediately to allow seeing it, but renderFullMap will eventually clear it if not active
+                };
+                
+                container.appendChild(card);
+            });
+            
             container.onclick = (e) => {
                 const btn = e.target.closest('button'); if (!btn) return;
-                const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
+                const idx = Number(btn.getAttribute('data-route-index')||0); const r = list[idx];
                 const action = btn.getAttribute('data-action');
                 if (action === 'start') {
                     const shipId = client.selectedUnit?.id;
                     if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
-                    const legs = (Array.isArray(r.legs)?r.legs:[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
+                    const legs = r.legs;
                     const dest = client.__plannerTarget || null;
                     client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: (dest&&typeof dest.x==='number')?dest.x:undefined, destY: (dest&&typeof dest.y==='number')?dest.y:undefined }, (resp)=>{
                         if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                        try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
+                        client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
                         client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector?.id, shipId }, (resp2)=>{
                             if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
-                            if (resp2.approachRequired && resp2.approachTarget && typeof resp2.approachTarget.x==='number' && typeof resp2.approachTarget.y==='number') {
-                                try {
-                                    const toX = Number(resp2.approachTarget.x), toY = Number(resp2.approachTarget.y);
-                                    // Use the same movement flow the UI uses so the dashed path renders immediately
-                                    if (typeof client.handleMoveCommand === 'function') {
-                                        const wasQueue = client.queueMode === true; if (wasQueue) try { client.queueMode = false; } catch {}
-                                        try { client.handleMoveCommand(toX, toY); } finally { if (wasQueue) try { client.queueMode = true; } catch {} }
-                                    } else {
-                                        // Fallback: optimistic state update
-                                        const fromX = client.selectedUnit?.x, fromY = client.selectedUnit?.y;
-                                        const path = (typeof client.calculateMovementPath === 'function') ? client.calculateMovementPath(fromX, fromY, toX, toY) : [{x:fromX,y:fromY},{x:toX,y:toY}];
-                                        client.selectedUnit.movementPath = path; client.selectedUnit.plannedDestination = { x: toX, y: toY }; client.selectedUnit.movementActive = true; client.render && client.render();
-                                        client.socket.emit('move-ship', { gameId: client.gameId, shipId, destinationX: toX, destinationY: toY, movementPath: path });
-                                    }
-                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'move', payload: { destination: { x: toX, y: toY } } }, (q1)=>{ if (!q1 || !q1.success) client.addLogEntry('Failed to queue approach move (visual only)', 'warning'); });
-                                    client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{ if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error'); else client.addLogEntry('Approach plotted; lane start queued', 'info'); });
-                                } catch {}
-                                initializeFullMap();
-                                return;
+                            if (resp2.approachRequired && resp2.approachTarget) {
+                                client.addLogEntry('Approach plotted; lane start queued', 'info');
+                            } else {
+                                client.addLogEntry('Travel started', 'success');
                             }
-                            client.addLogEntry('Travel started', 'success');
                             initializeFullMap();
                         });
                     });
                 }
             };
-        } catch {}
+        } catch (e) { console.error('showPlannerRoutes error', e); }
 }
 
 function planToDestination(dest) {
@@ -741,23 +768,40 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 if (facts && Array.isArray(facts.regions) && facts.regions.length > 0) {
                     const cellW = 5000 / 3, cellH = 5000 / 3;
                     facts.regions.forEach(r => {
-                        // Fixed colors per region id: A=blue, B=red, C=gold
-                        let fill = 'rgba(100,149,237,0.10)'; // A default (cornflower blue)
+                        let baseColor = '100, 149, 237'; // A default (cornflower blue)
                         const id = String(r.id || '').toUpperCase();
-                        if (id === 'A') fill = 'rgba(80,130,255,0.10)';
-                        else if (id === 'B') fill = 'rgba(255,99,99,0.10)';
-                        else if (id === 'C') fill = 'rgba(255,200,80,0.10)';
-                        ctx.fillStyle = fill;
+                        if (id === 'A') baseColor = '80, 130, 255';
+                        else if (id === 'B') baseColor = '255, 99, 99';
+                        else if (id === 'C') baseColor = '255, 200, 80';
+                        
+                        // Check if mouse is in this region for hover highlight
+                        let isHovered = false;
+                        if (mouse && typeof mouse.x === 'number') {
+                            const col = Math.floor(mouse.x / cellW), row = Math.floor(mouse.y / cellH);
+                            isHovered = (r.cells || []).some(c => c.col === col && c.row === row);
+                        }
+
+                        ctx.fillStyle = `rgba(${baseColor}, ${isHovered ? '0.15' : '0.08'})`;
                         (r.cells || []).forEach(c => {
                             ctx.fillRect(c.col*cellW*scaleX, c.row*cellH*scaleY, cellW*scaleX, cellH*scaleY);
+                            // Draw subtle inner border
+                            ctx.strokeStyle = `rgba(${baseColor}, ${isHovered ? '0.4' : '0.2'})`;
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(c.col*cellW*scaleX + 2, c.row*cellH*scaleY + 2, cellW*scaleX - 4, cellH*scaleY - 4);
                         });
-                        // label
+
+                        // Region Label
                         const first = (r.cells||[])[0];
                         if (first) {
                             const health = Number(r.health || 50);
-                            const cx = (first.col*cellW + cellW*0.1)*scaleX, cy = (first.row*cellH + 16)*scaleY;
-                            ctx.fillStyle = '#9ecbff'; ctx.font = '12px Arial'; ctx.textAlign='left'; ctx.textBaseline='top';
-                            ctx.fillText(`Region ${r.id} - Health ${health}`, cx, cy);
+                            const cx = (first.col*cellW + 20)*scaleX, cy = (first.row*cellH + 20)*scaleY;
+                            ctx.fillStyle = `rgba(${baseColor}, 0.9)`;
+                            ctx.font = 'bold 13px Arial';
+                            ctx.textAlign='left'; ctx.textBaseline='top';
+                            ctx.fillText(`REGION ${r.id}`, cx, cy);
+                            ctx.font = '11px Arial';
+                            ctx.fillStyle = `rgba(${baseColor}, 0.7)`;
+                            ctx.fillText(`Health: ${health}%`, cx, cy + 16);
                         }
                     });
                 }
@@ -834,75 +878,20 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 canvas.onclick = async (ev) => {
                     const rect = canvas.getBoundingClientRect();
                     const click = { x: (ev.clientX-rect.left)/scaleX, y: (ev.clientY-rect.top)/scaleY };
+                    
+                    // Visual feedback for click
+                    client.__mapClickMarker = { x: click.x, y: click.y, time: Date.now() };
+                    
                     try {
                         client.__plannerTarget = click;
                         const routes = await new Promise((resolve)=>{
                             SFApi.Socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: click }, (resp)=>resolve(resp));
                         });
                         if (routes?.success && Array.isArray(routes.routes)) {
-                            const list = routes.routes.slice(0,3);
-                            const container = document.getElementById('plannerRoutes');
-                            if (container) {
-                                container.innerHTML = '';
-                                list.forEach((r, idx) => {
-                                    const rho = Number(r.rho || 0); const color = rho<=1?'#66bb6a':(rho<=1.5?'#ffca28':'#ef5350');
-                                    const row = document.createElement('div'); row.style.display='grid'; row.style.gridTemplateColumns='1fr auto'; row.style.gap='6px'; row.style.alignItems='center'; row.style.border='1px solid rgba(100,181,246,0.25)'; row.style.padding='6px'; row.style.borderRadius='6px';
-                                    const legs = Array.isArray(r.legs) ? r.legs : [{ edgeId: r.edgeId, entry: r.entry, sStart: r.sStart, sEnd: r.sEnd, tapId: r.nearestTapId, mergeTurns: r.mergeTurns }];
-                                    const legsText = legs.map((L,i)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}-${Math.round(L.sEnd)}]`).join(' | ');
-                                    row.innerHTML = `<div><div style=\"font-size:12px; color:${color}\">Load rho ${rho.toFixed(2)} • ETA ${r.eta} • Risk ${'!'.repeat(r.risk||2)}</div><div style=\"font-size:11px; color:#9ecbff;\">${legsText}</div></div>
-                                        <div style=\"display:flex; gap:6px;\">
-                                            <button class=\"sf-btn sf-btn-primary\" data-route-index=\"${idx}\" data-action=\"start\">Start</button>
-                                        </div>`;
-                                    container.appendChild(row);
-                                });
-                                // Ensure planner panel is visible (no tabs now)
-                                // Bind actions (delegated)
-                                container.onclick = (e) => {
-                                    const btn = e.target.closest('button'); if (!btn) return;
-                                    const idx = Number(btn.getAttribute('data-route-index')||0) || 0; const r = list[idx];
-                                    const action = btn.getAttribute('data-action');
-                                    if (action === 'start') {
-                                        const rawLegs = Array.isArray(r.legs)
-                                            ? r.legs
-                                            : [{ edgeId: r.edgeId ?? r.edge_id, entry: r.entry, sStart: r.sStart ?? r.s_start, sEnd: r.sEnd ?? r.s_end, tapId: r.tapId ?? r.tap_id ?? r.nearestTapId ?? r.nearest_tap_id, mergeTurns: r.mergeTurns ?? r.merge_turns }];
-                                        const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
-                                        const shipId = client.selectedUnit?.id;
-                                        if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
-                                        const dest = client.__plannerTarget || null;
-                                        client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: (dest&&typeof dest.x==='number')?dest.x:undefined, destY: (dest&&typeof dest.y==='number')?dest.y:undefined }, (resp)=>{
-                                            if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                                            try { client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs }; initializeFullMap(); } catch {}
-                                            client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId }, (resp2)=>{
-                                                if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
-                                                if (resp2.approachRequired && resp2.approachTarget && typeof resp2.approachTarget.x==='number' && typeof resp2.approachTarget.y==='number') {
-                                                    try {
-                                                        const toX = Number(resp2.approachTarget.x), toY = Number(resp2.approachTarget.y);
-                                                        // Use the same movement flow the UI uses so the dashed path renders immediately
-                                                        if (typeof client.handleMoveCommand === 'function') {
-                                                            const wasQueue = client.queueMode === true; if (wasQueue) try { client.queueMode = false; } catch {}
-                                                            try { client.handleMoveCommand(toX, toY); } finally { if (wasQueue) try { client.queueMode = true; } catch {} }
-                                                        } else {
-                                                            // Fallback: optimistic state update
-                                                            const fromX = client.selectedUnit?.x, fromY = client.selectedUnit?.y;
-                                                            const path = (typeof client.calculateMovementPath === 'function') ? client.calculateMovementPath(fromX, fromY, toX, toY) : [{x:fromX,y:fromY},{x:toX,y:toY}];
-                                                            client.selectedUnit.movementPath = path; client.selectedUnit.plannedDestination = { x: toX, y: toY }; client.selectedUnit.movementActive = true; client.render && client.render();
-                                                            client.socket.emit('move-ship', { gameId: client.gameId, shipId, destinationX: toX, destinationY: toY, movementPath: path });
-                                                        }
-                                                        client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'move', payload: { destination: { x: toX, y: toY } } }, (q1)=>{ if (!q1 || !q1.success) client.addLogEntry('Failed to queue approach move (visual only)', 'warning'); });
-                                                        client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'travel_start' }, (q)=>{ if (!q || !q.success) client.addLogEntry('Queued lane start after approach failed', 'error'); else client.addLogEntry('Approach plotted; lane start queued', 'info'); });
-                                                    } catch {}
-                                                    initializeFullMap();
-                                                    return;
-                                                }
-                                                client.addLogEntry('Travel started', 'success');
-                                                initializeFullMap();
-                                            });
-                                        });
-                                    }
-                                };
-                            }
+                            showPlannerRoutes(routes.routes);
                         }
                     } catch {}
+                    initializeFullMap(); // Redraw to show the click marker
                 };
                 // Draw lanes
                 const highlight = client.__laneHighlight && client.__laneHighlight.until > Date.now() ? (client.__laneHighlight.legs||[]) : [];
@@ -1144,19 +1133,21 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
             try {
                 if (!ctx2.__labelGrid) ctx2.__labelGrid = new Set();
                 const positions = [
-                    { x: lx, y: ly + 6, align:'center', base:'top' },
-                    { x: lx + 8, y: ly, align:'left', base:'middle' },
-                    { x: lx - 8, y: ly, align:'right', base:'middle' },
-                    { x: lx, y: ly - 6, align:'center', base:'bottom' }
+                    { x: lx, y: ly + 10, align:'center', base:'top' },
+                    { x: lx + 12, y: ly, align:'left', base:'middle' },
+                    { x: lx - 12, y: ly, align:'right', base:'middle' },
+                    { x: lx, y: ly - 10, align:'center', base:'bottom' }
                 ];
                 const label = String(text||'').slice(0, maxChars);
-                ctx2.font = `${fontSize}px Arial`;
+                ctx2.font = `600 ${fontSize}px "Inter", "Segoe UI", Arial`;
                 const m = ctx2.measureText(label);
-                const w = Math.min(m.width, maxChars * 6) + 6;
-                const h = fontSize + 4;
-                const cell = 10;
+                const w = m.width + 10;
+                const h = fontSize + 6;
+                const cell = 12;
                 for (const pos of positions) {
-                    const left = Math.round(pos.x - w/2), top = Math.round(pos.y - h/2);
+                    const left = pos.align === 'center' ? pos.x - w/2 : (pos.align === 'left' ? pos.x : pos.x - w);
+                    const top = pos.base === 'middle' ? pos.y - h/2 : (pos.base === 'top' ? pos.y : pos.y - h);
+                    
                     // Occupancy cells covered
                     const x0 = Math.floor(left / cell), y0 = Math.floor(top / cell);
                     const x1 = Math.floor((left + w) / cell), y1 = Math.floor((top + h) / cell);
@@ -1165,18 +1156,28 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                         if (ctx2.__labelGrid.has(`${gx},${gy}`)) collides = true;
                     }
                     if (collides) continue;
+                    
                     // Draw background pill
                     ctx2.save();
-                    ctx2.fillStyle = 'rgba(10,18,32,0.82)';
-                    ctx2.strokeStyle = 'rgba(100,181,246,0.25)';
+                    ctx2.beginPath();
+                    const radius = 4;
+                    ctx2.roundRect(left, top, w, h, radius);
+                    ctx2.fillStyle = 'rgba(7, 11, 22, 0.9)';
+                    ctx2.fill();
+                    ctx2.strokeStyle = 'rgba(100, 181, 246, 0.3)';
                     ctx2.lineWidth = 1;
-                    ctx2.fillRect(left, top, w, h);
-                    ctx2.strokeRect(left, top, w, h);
+                    ctx2.stroke();
+                    
                     // Text
-                    ctx2.fillStyle = '#cfe8ff';
-                    ctx2.textAlign = pos.align; ctx2.textBaseline = pos.base;
-                    ctx2.fillText(label, pos.x, pos.y);
+                    ctx2.fillStyle = '#e3f2fd';
+                    ctx2.textAlign = pos.align; 
+                    ctx2.textBaseline = pos.base;
+                    // Adjust text position slightly if not centered
+                    const tx = pos.align === 'center' ? pos.x : (pos.align === 'left' ? pos.x + 5 : pos.x - 5);
+                    const ty = pos.y;
+                    ctx2.fillText(label, tx, ty);
                     ctx2.restore();
+                    
                     // Mark occupied
                     for (let gx=x0; gx<=x1; gx++) for (let gy=y0; gy<=y1; gy++) ctx2.__labelGrid.add(`${gx},${gy}`);
                     return true;
@@ -1184,32 +1185,106 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
             } catch {}
             return false;
         }
+        // Click Marker & Ripple
+        if (client.__mapClickMarker && (Date.now() - client.__mapClickMarker.time) < 1500) {
+            const m = client.__mapClickMarker;
+            const age = Date.now() - m.time;
+            const radius = 5 + (age / 1500) * 30;
+            const alpha = 1 - (age / 1500);
+            ctx.save();
+            ctx.strokeStyle = `rgba(100, 181, 246, ${alpha})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(m.x * scaleX, m.y * scaleY, radius, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            ctx.fillStyle = `rgba(100, 181, 246, ${alpha * 0.5})`;
+            ctx.beginPath();
+            ctx.arc(m.x * scaleX, m.y * scaleY, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+            // Trigger another frame if ripple is active
+            requestAnimationFrame(() => initializeFullMap());
+        }
+
         // Base objects with labels
         client.objects.forEach(obj => {
-            const x = obj.x * scaleX, y = obj.y * scaleY; ctx.fillStyle = '#64b5f6';
-            if (obj.type === 'interstellar-gate') {
-                // Draw Gate Icon (🌀)
+            const x = obj.x * scaleX, y = obj.y * scaleY; 
+            const isSelected = client.selectedUnit?.id === obj.id;
+            const isPlannerTarget = client.__plannerTarget && Math.hypot(client.__plannerTarget.x - obj.x, client.__plannerTarget.y - obj.y) < 10;
+            
+            // Selection Glow
+            if (isSelected || isPlannerTarget) {
                 ctx.save();
-                ctx.font = '16px Arial';
+                ctx.beginPath();
+                ctx.arc(x, y, 12, 0, Math.PI * 2);
+                const grad = ctx.createRadialGradient(x, y, 0, x, y, 12);
+                grad.addColorStop(0, isSelected ? 'rgba(100, 181, 246, 0.4)' : 'rgba(255, 202, 40, 0.4)');
+                grad.addColorStop(1, 'rgba(100, 181, 246, 0)');
+                ctx.fillStyle = grad;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            if (obj.type === 'interstellar-gate') {
+                ctx.save();
+                ctx.font = '20px Arial';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#b388ff';
                 ctx.fillText('🌀', x, y);
-                
-                const meta = obj.meta || {};
-                const name = meta.name || 'Gate';
-                drawSmartLabel(ctx, x, y, name, 18, 11);
                 ctx.restore();
+                
+                const name = obj.meta?.name || 'Gate';
+                drawSmartLabel(ctx, x, y, name, 18, 12);
             } else if (client.isCelestialObject(obj)) {
-                ctx.fillStyle = '#9ecbff'; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill();
-                const meta = obj.meta || {}; const t = obj.celestial_type || obj.type;
-                if (t === 'sun' || t === 'planet' || t === 'wormhole' || t === 'belt') {
-                    const name = meta.name || (t==='sun'?'Sun': t==='planet'?'Planet':'Wormhole');
-                    drawSmartLabel(ctx, x, y, name, 18, 11);
+                const t = obj.celestial_type || obj.type;
+                let color = '#9ecbff';
+                let icon = '';
+                let size = 5;
+                
+                if (t === 'sun' || t === 'star') { icon = '☀️'; color = '#ffca28'; size = 8; }
+                else if (t === 'planet') { icon = '🪐'; color = '#64b5f6'; size = 7; }
+                else if (t === 'wormhole') { icon = '🌀'; color = '#b388ff'; size = 6; }
+                else if (t === 'moon') { icon = '🌑'; color = '#cfd8dc'; size = 4; }
+                
+                if (icon) {
+                    ctx.save();
+                    ctx.font = `${size * 2}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(icon, x, y);
+                    ctx.restore();
+                } else {
+                    ctx.fillStyle = color;
+                    ctx.beginPath(); ctx.arc(x,y,size,0,Math.PI*2); ctx.fill();
                 }
+
+                const name = obj.meta?.name || (t.charAt(0).toUpperCase() + t.slice(1));
+                drawSmartLabel(ctx, x, y, name, 18, 11);
             } else if (obj.type === 'resource_node') {
-                ctx.fillStyle = '#ffd54f'; ctx.fillRect(x-2,y-2,4,4);
+                ctx.fillStyle = '#ffd54f';
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = '#ffd54f';
+                ctx.fillRect(x-2,y-2,4,4);
+                ctx.shadowBlur = 0;
             } else {
-                ctx.fillStyle = (obj.owner_id === client.userId) ? '#4CAF50' : '#FF9800'; ctx.fillRect(x-3,y-3,6,6);
+                // Ships
+                const isPlayer = obj.owner_id === client.userId;
+                ctx.fillStyle = isPlayer ? '#66bb6a' : '#ef5350';
+                ctx.beginPath();
+                ctx.moveTo(x, y - 5);
+                ctx.lineTo(x + 4, y + 4);
+                ctx.lineTo(x - 4, y + 4);
+                ctx.closePath();
+                ctx.fill();
+                
+                if (isSelected) {
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
             }
         });
 }
@@ -1230,10 +1305,31 @@ async function populateSystemFactsInternal() {
             const minerals = Array.isArray(facts?.minerals) ? facts.minerals : [];
             const counts = new Map(minerals.map(m => [String(m.name), Number(m.count||0)]));
             const disp = facts?.mineralDisplay || {};
-            const fmt = (name, mult) => `${name} ${mult}${counts.has(name) ? ` - ${counts.get(name)}` : ''}`;
-            const coreList = (disp.core || []).map(m => fmt(m.name, m.mult));
-            const primaryList = (disp.primary || []).map(m => fmt(m.name, m.mult));
-            const secondaryList = (disp.secondary || []).map(m => fmt(m.name, m.mult));
-            wrap.innerHTML = `<div><b>Name:</b> ${sector.name}</div><div><b>Type:</b> ${sector.archetype||'standard'}</div><div style="margin-top:8px;"><b>Core minerals</b></div><div>${coreList.length?coreList.join(', '):'—'}</div><div style="margin-top:8px;"><b>Primary minerals present</b></div><div>${primaryList.length?primaryList.join(', '):'—'}</div><div style="margin-top:8px;"><b>Secondary minerals present</b></div><div>${secondaryList.length?secondaryList.join(', '):'—'}</div>`;
+            
+            const chip = (txt, color='var(--primary)') => `<span style="display:inline-block; padding:2px 8px; border:1px solid ${color}40; background:${color}10; border-radius:12px; margin:2px; font-size:11px; color:var(--text); white-space:nowrap;">${txt}</span>`;
+            
+            const fmt = (name, mult) => `${name} x${mult}`;
+            const coreList = (disp.core || []).map(m => chip(fmt(m.name, m.mult), '#81c784'));
+            const primaryList = (disp.primary || []).map(m => chip(fmt(m.name, m.mult), 'var(--primary)'));
+            const secondaryList = (disp.secondary || []).map(m => chip(fmt(m.name, m.mult), 'var(--muted)'));
+            
+            wrap.innerHTML = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+                    <div><span style="color:var(--muted)">Sector ID:</span> ${sector.id}</div>
+                    <div><span style="color:var(--muted)">Archetype:</span> ${sector.archetype||'Standard'}</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:4px;">Core Minerals</div>
+                    <div style="display:flex; flex-wrap:wrap;">${coreList.length?coreList.join(''):'—'}</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:4px;">Primary Abundance</div>
+                    <div style="display:flex; flex-wrap:wrap;">${primaryList.length?primaryList.join(''):'—'}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:4px;">Trace Elements</div>
+                    <div style="display:flex; flex-wrap:wrap;">${secondaryList.length?secondaryList.join(''):'—'}</div>
+                </div>
+            `;
         } catch {}
 }
