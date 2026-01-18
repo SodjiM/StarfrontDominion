@@ -609,19 +609,19 @@ function showPlannerRoutes(routes) {
                 if (footerLegs) footerLegs.textContent = String(r.legs.length);
             };
             
-            // Hover to preview
+            // Hover to preview - use lightweight redraw
             card.onmouseenter = () => {
                 client.__laneHighlight = { until: Date.now() + 30000, legs: r.legs };
-                initializeFullMap();
+                redrawMap();
             };
             
             container.appendChild(card);
         });
         
-        // Highlight first route
+        // Highlight first route - use lightweight redraw
         if (list[0]) {
             client.__laneHighlight = { until: Date.now() + 30000, legs: list[0].legs };
-            initializeFullMap();
+            redrawMap();
         }
     } catch (e) { console.error('showPlannerRoutes error', e); }
 }
@@ -740,6 +740,18 @@ function observeCanvas(canvas) {
     });
     ro.observe(canvas.parentElement || canvas);
     canvas.__ro = ro;
+}
+
+// Lightweight redraw - uses cached data, no re-initialization
+function redrawMap() {
+    const client = window.gameClient;
+    const canvas = document.getElementById('fullMapCanvas');
+    if (!client || !canvas || !client.objects) return;
+    
+    const ctx = canvas.getContext('2d');
+    const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
+    const toggles = getMapToggles();
+    renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
 }
 
 function initializeFullMap() {
@@ -988,9 +1000,11 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                             showPlannerRoutes(routes.routes);
                         } else {
                             if (routesList) routesList.innerHTML = '<div class="routes-empty">No routes found</div>';
+                            redrawMap();
                         }
-                    } catch {}
-                    initializeFullMap();
+                    } catch {
+                        redrawMap();
+                    }
                 };
                 // Draw lanes
                 const highlight = client.__laneHighlight && client.__laneHighlight.until > Date.now() ? (client.__laneHighlight.legs||[]) : [];
@@ -1301,8 +1315,10 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
             ctx.arc(m.x * scaleX, m.y * scaleY, 4, 0, Math.PI * 2);
             ctx.fill();
             ctx.restore();
-            // Trigger another frame if ripple is active
-            requestAnimationFrame(() => initializeFullMap());
+            // Clear marker after animation completes (no more infinite loop)
+            if (age >= 1500) {
+                client.__mapClickMarker = null;
+            }
         }
 
         // Base objects with labels

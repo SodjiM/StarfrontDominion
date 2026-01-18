@@ -171,7 +171,7 @@ body {
   border: 1px solid var(--border) !important;
   box-shadow: var(--shadow) !important;
   width: min(1400px, 96vw) !important;
-  height: min(92vh, 920px) !important;
+  height: 92vh !important;
   max-height: none !important;
   display: flex !important;
   flex-direction: column !important;
