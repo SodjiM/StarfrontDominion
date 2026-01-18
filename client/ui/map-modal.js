@@ -109,222 +109,243 @@ function isCelestialObject(game, obj) {
 
 export function openMapModal() {
         const client = window.gameClient; if (!client) return;
+        const sectorName = client.gameState?.sector?.name || 'Current System';
         const modalContent = document.createElement('div');
         modalContent.className = 'map-root';
         modalContent.innerHTML = `
+            <!-- Tabs Row -->
             <div class="map-tabs">
-                <button class="map-tab active sf-btn sf-btn-secondary" data-tab="solar-system">🪐 Solar System</button>
-                <button class="map-tab sf-btn sf-btn-secondary" data-tab="galaxy">🌌 Galaxy</button>
+                <button class="map-tab active" data-tab="solar-system">🪐 ${sectorName}</button>
+                <button class="map-tab" data-tab="galaxy">🌌 Galaxy</button>
             </div>
-            <div id="solar-system-tab" class="map-tab-content">
-                <div class="map-row">
-                    <div class="map-left">
-                        <div class="map-header">
-                            <h3>🪐 ${client.gameState?.sector?.name || 'Current Solar System'}</h3>
-                            <p>Strategic sector overview & navigation</p>
-                        </div>
-                        
-                        <div class="map-controls-row">
-                            <label id="layersChip" class="layer-chip">
-                                <input type="checkbox" id="toggleLayers" checked style="display:none;">
-                                <span>🗺️ Map Layers</span>
-                            </label>
-                            <label class="layer-chip">
-                                <input type="checkbox" id="toggleLanes" style="display:none;">
-                                <span>🛰️ Warp Lanes</span>
-                            </label>
-                            
-                            <div id="layerPanel" style="display:none; position:absolute; top:110px; left:30px; background:rgba(10,18,32,0.95); border:1px solid rgba(100,181,246,0.3); border-radius:12px; padding:12px; min-width:200px; z-index:1000; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-                                <div style="margin-bottom:10px; font-weight:bold; color:#64b5f6; border-bottom:1px solid rgba(100,181,246,0.2); padding-bottom:6px;">Display Filters</div>
-                                <label style="display:flex; align-items:center; gap:8px; margin:8px 0; cursor:pointer;">
-                                    <input type="checkbox" id="toggleRegions" checked> 🧭 Control Regions
-                                </label>
-                                <label style="display:flex; align-items:center; gap:8px; margin:8px 0; cursor:pointer;">
-                                    <input type="checkbox" id="toggleBelts" checked> ⛓️ Asteroid Belts
-                                </label>
-                                <label style="display:flex; align-items:center; gap:8px; margin:8px 0; cursor:pointer;">
-                                    <input type="checkbox" id="toggleWormholes" checked> 🌀 Wormholes
-                                </label>
-                            </div>
-                        </div>
 
-                        <div class="map-canvas-wrap" style="border-radius:12px; overflow:hidden; border:1px solid var(--border);">
+            <!-- Solar System Tab -->
+            <div id="solar-system-tab" class="map-tab-content">
+                <div class="map-main">
+                    <!-- Left: Map Pane -->
+                    <div class="map-pane">
+                        <div class="map-container">
                             <canvas id="fullMapCanvas" class="full-map-canvas"></canvas>
+                            
+                            <!-- Overlay Controls -->
+                            <div class="map-overlay-controls">
+                                <button class="map-overlay-btn active" id="toggleLanes" title="Warp Lanes">🛰️</button>
+                                <button class="map-overlay-btn active" id="toggleRegions" title="Regions">🧭</button>
+                                <button class="map-overlay-btn" id="toggleLabels" title="Labels">🏷️</button>
+                                <button class="map-overlay-btn" id="btnRecenter" title="Recenter">⌖</button>
+                            </div>
                         </div>
                     </div>
 
+                    <!-- Right: Sidebar with 3 Zones -->
                     <div class="map-sidebar">
-                        <!-- Warp Planner Section -->
-                        <div id="plannerPanel" class="sidebar-section">
-                            <div class="sidebar-header">
-                                <h4 class="sidebar-title">Warp Planner</h4>
-                                <button id="factsToggle" class="sf-btn sf-btn-secondary small" title="System Dashboard" style="padding:4px 8px;">
-                                    <span>Stats</span><span id="factsChevron">▸</span>
-                                </button>
-                            </div>
-                            <div id="plannerHelp" style="font-size:12px; color:var(--muted); line-height:1.4;">Select a warp-capable ship and destination to plot a route.</div>
-                            
-                            <div style="display:flex; gap:8px; align-items:center; margin:4px 0;">
-                                <div style="display:flex; gap:4px;">
-                                    <input id="coordX" type="number" placeholder="X" class="sf-input" style="width:70px;"/>
-                                    <input id="coordY" type="number" placeholder="Y" class="sf-input" style="width:70px;"/>
-                                </div>
-                                <button class="sf-btn sf-btn-primary small" id="btnPlanCoords" style="flex:1;">Plot Route</button>
-                            </div>
-
-                            <div id="poiSelector" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
-                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="planets" style="font-size:11px; padding:6px;">Planets</button>
-                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="wormholes" style="font-size:11px; padding:6px;">Wormholes</button>
-                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="taps" style="font-size:11px; padding:6px;">Lane Taps</button>
-                                <button class="sf-btn sf-btn-secondary small" data-poi-tab="belts" style="font-size:11px; padding:6px;">Belts</button>
+                        <!-- Zone A: Destination (sticky) -->
+                        <div class="sidebar-zone-dest" id="zoneDestination">
+                            <div class="dest-label">Destination</div>
+                            <div class="dest-empty" id="destEmpty">Click map or select POI</div>
+                            <div id="destInfo" style="display:none;">
+                                <div class="dest-name" id="destName">--</div>
+                                <div class="dest-coords" id="destCoords">--</div>
                             </div>
                         </div>
 
-                        <!-- Scrollable Content: POI List & Routes -->
-                        <div class="sidebar-section scroll" id="railScroll">
-                            <div id="poiList" style="margin-bottom:12px;"></div>
-                            <div id="plannerRoutes" style="display:flex; flex-direction:column; gap:10px;"></div>
-                            
-                            <!-- System Facts (Dashboard) -->
-                            <div class="sidebar-section" style="margin-top:auto; padding:0; background:transparent; border:none;">
-                                <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; cursor:pointer; border-top:1px solid var(--border);" id="factsBar">
-                                    <div style="color:var(--primary); font-size:0.85rem; font-weight:600;">System Dashboard</div>
-                                    <div id="factsChevron2" style="color:var(--primary);">▸</div>
+                        <!-- Zone B: Route Options -->
+                        <div class="sidebar-zone-routes" id="zoneRoutes">
+                            <div class="routes-header">Route Options</div>
+                            <div id="routesList">
+                                <div class="routes-empty">Select a destination to see routes</div>
+                            </div>
+                        </div>
+
+                        <!-- Zone C: Tabbed Browser -->
+                        <div class="sidebar-zone-browser">
+                            <div class="browser-tabs">
+                                <button class="browser-tab active" data-browser-tab="pois">POIs</button>
+                                <button class="browser-tab" data-browser-tab="system">System</button>
+                            </div>
+                            <div class="browser-content" id="browserContent">
+                                <!-- POIs Tab Content (default) -->
+                                <div id="poisTabContent">
+                                    <input type="text" class="poi-search" id="poiSearch" placeholder="Search POIs...">
+                                    <div class="poi-filters" id="poiFilters">
+                                        <button class="poi-filter active" data-filter="planets">Planets</button>
+                                        <button class="poi-filter active" data-filter="belts">Belts</button>
+                                        <button class="poi-filter active" data-filter="wormholes">Wormholes</button>
+                                        <button class="poi-filter" data-filter="taps">Taps</button>
+                                    </div>
+                                    <div id="poiGroups"></div>
                                 </div>
-                                <div id="sysMetaSummaryWrap" style="display:none;">
-                                    <div id="sysMetaSummary" style="font-size:12px; line-height:1.6; padding:8px 0;">Loading system telemetry...</div>
+                                <!-- System Tab Content (hidden) -->
+                                <div id="systemTabContent" style="display:none;">
+                                    <div class="system-summary">
+                                        <div class="system-stat">
+                                            <div class="system-stat-label">Sector</div>
+                                            <div class="system-stat-value" id="sysId">${client.gameState?.sector?.id || '--'}</div>
+                                        </div>
+                                        <div class="system-stat">
+                                            <div class="system-stat-label">Archetype</div>
+                                            <div class="system-stat-value" id="sysArchetype">${client.gameState?.sector?.archetype || 'Standard'}</div>
+                                        </div>
+                                    </div>
+                                    <div class="system-section">
+                                        <div class="system-section-header">Core Minerals <span id="coreChevron">▾</span></div>
+                                        <div class="system-chips" id="coreMinerals">Loading...</div>
+                                    </div>
+                                    <div class="system-section">
+                                        <div class="system-section-header">Primary Abundance <span id="primaryChevron">▾</span></div>
+                                        <div class="system-chips" id="primaryMinerals">Loading...</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
+
+            <!-- Galaxy Tab -->
             <div id="galaxy-tab" class="map-tab-content hidden">
-                <div class="map-row">
-                    <div class="map-left">
-                        <div class="map-header">
-                            <h3>🌌 Galaxy Cartography</h3>
-                            <p>Interstellar gate network and known systems</p>
-                        </div>
-                        <div class="map-canvas-wrap" style="border-radius:12px; overflow:hidden; border:1px solid var(--border);">
+                <div class="map-main">
+                    <div class="map-pane">
+                        <div class="map-container">
                             <canvas id="galaxyCanvas" class="full-map-canvas"></canvas>
                         </div>
                     </div>
                     <div class="map-sidebar">
-                        <div class="sidebar-section scroll">
-                            <div class="sidebar-header">
-                                <h4 class="sidebar-title">Known Systems</h4>
+                        <div class="sidebar-zone-browser" style="grid-row: 1 / -1;">
+                            <div class="browser-tabs">
+                                <button class="browser-tab active">Known Systems</button>
                             </div>
-                            <div id="galaxySystemsList">
-                                <!-- Galaxy systems list will be populated here -->
-                            </div>
+                            <div class="browser-content" id="galaxySystemsList"></div>
                         </div>
                     </div>
                 </div>
-            </div>`;
-        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[{ text:'Close', style:'secondary', action:()=>true }], className:'map-modal', width:1280, height:1020 });
-        // Bind tab switching without globals
+            </div>
+
+            <!-- Footer Action Shelf -->
+            <div class="map-footer" id="mapFooter">
+                <div class="footer-route-info">
+                    <span id="footerOrigin">--</span>
+                    <span class="arrow">→</span>
+                    <span id="footerDest">Select destination</span>
+                </div>
+                <div class="footer-route-summary" id="footerSummary">
+                    <div class="footer-stat">ETA: <span id="footerEta">--</span></div>
+                    <div class="footer-stat">Legs: <span id="footerLegs">--</span></div>
+                </div>
+                <div class="footer-actions">
+                    <button class="footer-btn-primary" id="btnExecuteWarp" disabled>Execute Warp</button>
+                    <button class="footer-btn-secondary" id="btnCloseMap">Close</button>
+                </div>
+            </div>
+        `;
+        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[], className:'map-modal', width:1400, height:920 });
+        
+        // === EVENT BINDINGS ===
+        
+        // Map tab switching
         bindTabEvents(modalContent);
-        // Planner coordinate inputs
-        try {
-            const btn = modalContent.querySelector('#btnPlanCoords');
-            const xEl = modalContent.querySelector('#coordX');
-            const yEl = modalContent.querySelector('#coordY');
-            const doPlan = () => { if (!xEl || !yEl) return; const x = Number(xEl.value||0); const y = Number(yEl.value||0); if (!Number.isFinite(x) || !Number.isFinite(y)) return; planToDestination({ x, y }); };
-            if (btn) btn.onclick = doPlan;
-            if (xEl) xEl.onkeydown = (e)=>{ if (e.key==='Enter') doPlan(); };
-            if (yEl) yEl.onkeydown = (e)=>{ if (e.key==='Enter') doPlan(); };
-            // POI selector tabs
-            modalContent.querySelectorAll('[data-poi-tab]').forEach(btn => btn.addEventListener('click', ()=>populatePoiList(modalContent, btn.dataset.poiTab)));
-            setTimeout(()=>populatePoiList(modalContent, 'planets'), 150);
-        } catch {}
-        // Layers chip toggle
-        try {
-            const chip = modalContent.querySelector('#layersChip');
-            const panel = modalContent.querySelector('#layerPanel');
-            if (chip && panel) {
-                const hidePanel = (ev)=>{ if (!panel.contains(ev.target) && !chip.contains(ev.target)) { panel.style.display='none'; document.removeEventListener('click', hidePanel); } };
-                chip.onclick = (e)=>{
-                    e.stopPropagation();
-                    const vis = panel.style.display === 'block';
-                    panel.style.display = vis ? 'none' : 'block';
-                    if (!vis) setTimeout(()=>document.addEventListener('click', hidePanel), 0);
+        
+        // Browser tab switching (POIs / System)
+        modalContent.querySelectorAll('.browser-tab').forEach(btn => {
+            btn.onclick = () => {
+                modalContent.querySelectorAll('.browser-tab').forEach(t => t.classList.remove('active'));
+                btn.classList.add('active');
+                const tab = btn.dataset.browserTab;
+                const poisContent = modalContent.querySelector('#poisTabContent');
+                const sysContent = modalContent.querySelector('#systemTabContent');
+                if (poisContent) poisContent.style.display = tab === 'pois' ? 'block' : 'none';
+                if (sysContent) sysContent.style.display = tab === 'system' ? 'block' : 'none';
+            };
+        });
+        
+        // Map overlay control toggles
+        ['toggleLanes', 'toggleRegions', 'toggleLabels'].forEach(id => {
+            const btn = modalContent.querySelector('#' + id);
+            if (btn) {
+                btn.onclick = () => {
+                    btn.classList.toggle('active');
+                    initializeFullMap();
                 };
             }
-        } catch {}
-        // Ensure planner availability based on selection
-        try { updatePlannerState(modalContent); } catch {}
+        });
         
-        // Collapsible facts: closed by default
-        try {
-            const toggle = modalContent.querySelector('#factsToggle');
-            const factsBar = modalContent.querySelector('#factsBar');
-            const wrap = modalContent.querySelector('#sysMetaSummaryWrap');
-            const chev = modalContent.querySelector('#factsChevron');
-            const chev2 = modalContent.querySelector('#factsChevron2');
-            const setFacts = (open) => {
-                if (!wrap) return; wrap.style.display = open ? 'block' : 'none';
-                if (chev)  chev.textContent  = open ? '▾' : '▸';
-                if (chev2) chev2.textContent = open ? '▾' : '▸';
+        // Recenter button
+        const recenterBtn = modalContent.querySelector('#btnRecenter');
+        if (recenterBtn) recenterBtn.onclick = () => initializeFullMap();
+        
+        // POI filter chips
+        modalContent.querySelectorAll('.poi-filter').forEach(chip => {
+            chip.onclick = () => {
+                chip.classList.toggle('active');
+                populatePOIBrowser(modalContent);
             };
-            setFacts(false);
-            if (toggle)  toggle.onclick  = () => setFacts(wrap && wrap.style.display === 'none');
-            if (factsBar) factsBar.onclick = () => setFacts(wrap && wrap.style.display === 'none');
-        } catch {}
+        });
         
-        // Load any active itineraries to show Start/Abort CTA on reopen
-        try {
-            (async () => {
-                const client = window.gameClient;
-                if (client?.gameId && client?.userId) {
-                    const resp = await SFApi.State.itineraries(client.gameId, client.userId, client.gameState?.sector?.id);
-                    const items = Array.isArray(resp?.itineraries) ? resp.itineraries.filter(it => it.status === 'active') : [];
-                    if (items.length) {
-                        const container = modalContent.querySelector('#plannerRoutes');
-                        if (container) {
-                            const rows = items.slice(0, 3).map((it, idx) => {
-                                const legs = (it.legs||[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
-                                const legsText = legs.map(L=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'} [${Math.round(L.sStart)}-${Math.round(L.sEnd)}]`).join(' | ');
-                                return `<div style=\"display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; border:1px solid rgba(100,181,246,0.25); padding:6px; border-radius:6px;\">\n                                    <div><div style=\\\"font-size:12px; color:#9ecbff\\\">Active itinerary • Ship ${it.shipId}</div>\n                                    <div style=\\\"font-size:11px; color:#9ecbff;\\\">${legsText}</div></div>\n                                    <div style=\\\"display:flex; gap:6px;\\\">\n                                        <button class=\\\"sf-btn sf-btn-secondary\\\" data-itin-index=\\\"${idx}\\\" data-action=\\\"startItin\\\">Start</button>\n                                    </div>\n                                </div>`;
-                            }).join('');
-                            container.innerHTML = `<div style=\"color:#9ecbff; font-size:12px;\">Confirmed routes</div>${rows}`;
-                            container.onclick = (e) => {
-                                const btn = e.target.closest('button'); if (!btn) return;
-                                const action = btn.getAttribute('data-action');
-                                if (action === 'startItin') {
-                                    const idx = Number(btn.getAttribute('data-itin-index')||0);
-                                    const it = items[idx];
-                                    const shipId = Number(it?.shipId);
-                                    if (!shipId) return;
-                                    client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState?.sector?.id, shipId }, (resp)=>{
-                                        if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Start failed', 'error'); return; }
-                                        client.addLogEntry('Travel started', 'success');
-                                    });
-                                }
-                            };
-                            // Highlight the selected unit's itinerary on the map for persistence
-                            try {
-                                if (client.selectedUnit) {
-                                    const sel = items.find(it => Number(it.shipId) === Number(client.selectedUnit.id));
-                                    if (sel) {
-                                        const legs = (sel.legs||[]).map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId));
-                                        client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
-                                        initializeFullMap();
-                                    }
-                                }
-                            } catch {}
-                        }
-                    }
-                }
-            })();
-        } catch {}
-        try {
-            const interval = setInterval(()=>{
-                if (!document.body.contains(modalContent)) { clearInterval(interval); return; }
-                updatePlannerState(modalContent);
-            }, 800);
-        } catch {}
-        setTimeout(() => { try { initializeFullMap(); loadGalaxyDataInternal(); populateSystemFactsInternal(); } catch (e) { console.error('map init error', e); } }, 100);
+        // POI search
+        const poiSearch = modalContent.querySelector('#poiSearch');
+        if (poiSearch) {
+            poiSearch.oninput = () => populatePOIBrowser(modalContent);
+        }
+        
+        // Footer close button
+        const closeBtn = modalContent.querySelector('#btnCloseMap');
+        if (closeBtn) closeBtn.onclick = () => window.UI.closeModal();
+        
+        // Footer execute warp button
+        const executeBtn = modalContent.querySelector('#btnExecuteWarp');
+        if (executeBtn) {
+            executeBtn.onclick = () => {
+                const selectedRoute = client.__selectedRoute;
+                if (!selectedRoute || !client.selectedUnit?.id) return;
+                const legs = selectedRoute.legs;
+                const dest = client.__plannerTarget;
+                client.socket && client.socket.emit('travel:confirm', { 
+                    gameId: client.gameId, 
+                    sectorId: client.gameState.sector.id, 
+                    shipId: client.selectedUnit.id, 
+                    legs, 
+                    destX: dest?.x, 
+                    destY: dest?.y 
+                }, (resp) => {
+                    if (!resp?.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
+                    client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
+                    client.socket.emit('travel:start', { 
+                        gameId: client.gameId, 
+                        sectorId: client.gameState.sector?.id, 
+                        shipId: client.selectedUnit.id 
+                    }, (resp2) => {
+                        if (!resp2?.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
+                        client.addLogEntry('Warp initiated', 'success');
+                        initializeFullMap();
+                    });
+                });
+            };
+        }
+        
+        // Update footer origin based on selected unit
+        const updateFooterOrigin = () => {
+            const origin = modalContent.querySelector('#footerOrigin');
+            if (origin && client.selectedUnit) {
+                origin.textContent = client.selectedUnit.name || `Ship ${client.selectedUnit.id}`;
+            }
+        };
+        updateFooterOrigin();
+        
+        // Periodic state check
+        const interval = setInterval(() => {
+            if (!document.body.contains(modalContent)) { clearInterval(interval); return; }
+            updateFooterOrigin();
+        }, 1000);
+        
+        // Initialize
+        setTimeout(() => { 
+            try { 
+                initializeFullMap(); 
+                loadGalaxyDataInternal(); 
+                populatePOIBrowser(modalContent);
+                populateSystemDashboard(modalContent);
+            } catch (e) { console.error('map init error', e); } 
+        }, 100);
 }
 
 function bindTabEvents(root) {
@@ -361,175 +382,276 @@ function switchMapTab(root, tabName, clickedEl) {
         if (tabName === 'solar-system') setTimeout(() => initializeFullMap(), 50); else if (tabName === 'galaxy') setTimeout(() => initializeGalaxyMap(), 50);
 }
 
-async function populatePoiList(root, tab) {
-        const client = window.gameClient; if (!client || !client.gameState?.sector?.id) return;
-        const wrap = root.querySelector('#poiList'); if (!wrap) return;
-        const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
-        const items = [];
-        let icon = '📍';
-        if (tab === 'planets') {
-            icon = '🪐';
-            const planets = client.objects.filter(o => (o.celestial_type === 'planet'));
-            planets.forEach(p => items.push({ label: p.meta?.name || `Planet ${p.id}`, x: p.x, y: p.y }));
-        } else if (tab === 'wormholes') {
-            icon = '🌀';
-            (facts?.wormholeEndpoints||[]).forEach(w => items.push({ label: (safeName(w.meta?.name) || `Wormhole ${w.id}`), x: w.x, y: w.y }));
-        } else if (tab === 'taps') {
-            icon = '🛰️';
-            const tapsByEdge = facts?.laneTapsByEdge || {}; Object.keys(tapsByEdge).forEach(eid => {
-                (tapsByEdge[eid]||[]).forEach((t, i) => items.push({ label: `Tap ${eid}-${i+1}`, x: t.x, y: t.y }));
+async function populatePOIBrowser(root) {
+    const client = window.gameClient; 
+    if (!client || !client.gameState?.sector?.id) return;
+    const wrap = root.querySelector('#poiGroups'); 
+    if (!wrap) return;
+    
+    const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
+    const searchQuery = (root.querySelector('#poiSearch')?.value || '').toLowerCase();
+    
+    // Get active filters
+    const activeFilters = new Set();
+    root.querySelectorAll('.poi-filter.active').forEach(f => activeFilters.add(f.dataset.filter));
+    
+    // Collect all POIs by type
+    const poiGroups = {
+        planets: { icon: '🪐', label: 'Planets', items: [] },
+        belts: { icon: '⛓️', label: 'Belts', items: [] },
+        wormholes: { icon: '🌀', label: 'Wormholes', items: [] },
+        taps: { icon: '🛰️', label: 'Lane Taps', items: [] }
+    };
+    
+    // Planets
+    if (activeFilters.has('planets')) {
+        client.objects.filter(o => o.celestial_type === 'planet').forEach(p => {
+            const name = p.meta?.name || `Planet ${p.id}`;
+            if (!searchQuery || name.toLowerCase().includes(searchQuery)) {
+                poiGroups.planets.items.push({ name, x: p.x, y: p.y, id: p.id });
+            }
+        });
+    }
+    
+    // Belts
+    if (activeFilters.has('belts')) {
+        (facts?.belts || []).forEach(b => {
+            const name = `Belt ${b.belt_key}-${b.sector_index}`;
+            if (!searchQuery || name.toLowerCase().includes(searchQuery)) {
+                const cx = 2500, cy = 2500;
+                const rMid = Number(b.inner_radius) + Number(b.width) / 2;
+                const aMid = (Number(b.arc_start) + Number(b.arc_end)) / 2;
+                poiGroups.belts.items.push({ 
+                    name, 
+                    x: Math.round(cx + Math.cos(aMid) * rMid), 
+                    y: Math.round(cy + Math.sin(aMid) * rMid),
+                    id: `belt-${b.belt_key}-${b.sector_index}`
+                });
+            }
+        });
+    }
+    
+    // Wormholes
+    if (activeFilters.has('wormholes')) {
+        (facts?.wormholeEndpoints || []).forEach(w => {
+            const name = safeName(w.meta?.name) || `Wormhole ${w.id}`;
+            if (!searchQuery || name.toLowerCase().includes(searchQuery)) {
+                poiGroups.wormholes.items.push({ name, x: w.x, y: w.y, id: w.id });
+            }
+        });
+    }
+    
+    // Taps
+    if (activeFilters.has('taps')) {
+        const tapsByEdge = facts?.laneTapsByEdge || {};
+        Object.keys(tapsByEdge).forEach(eid => {
+            (tapsByEdge[eid] || []).forEach((t, i) => {
+                const name = `Tap E${eid}-${i + 1}`;
+                if (!searchQuery || name.toLowerCase().includes(searchQuery)) {
+                    poiGroups.taps.items.push({ name, x: t.x, y: t.y, id: `tap-${eid}-${i}` });
+                }
             });
-        } else if (tab === 'belts') {
-            icon = '⛓️';
-            (facts?.belts||[]).forEach(b => {
-                const cx = 2500, cy = 2500; const rMid = Number(b.inner_radius) + Number(b.width)/2; const aMid = (Number(b.arc_start)+Number(b.arc_end))/2; items.push({ label: `Belt ${b.belt_key}-${b.sector_index}`, x: Math.round(cx+Math.cos(aMid)*rMid), y: Math.round(cy+Math.sin(aMid)*rMid) });
-            });
-        }
-        
-        wrap.innerHTML = items.length ? `
-            <div style="margin-bottom:8px; font-size:12px; color:var(--primary); font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">${tab}</div>
-            <div style="display:flex; flex-direction:column; gap:2px;">
-                ${items.map((it, idx)=>`<div class="poi-item" data-idx="${idx}">${icon} ${it.label}</div>`).join('')}
+        });
+    }
+    
+    // Build HTML
+    let html = '';
+    for (const [type, group] of Object.entries(poiGroups)) {
+        if (group.items.length === 0) continue;
+        const isOpen = type === 'planets' || type === 'belts'; // Default open
+        html += `
+            <div class="poi-group ${isOpen ? '' : 'collapsed'}" data-group="${type}">
+                <div class="poi-group-header">
+                    <span class="poi-group-chevron">▾</span>
+                    ${group.icon} ${group.label} (${group.items.length})
+                </div>
+                <div class="poi-group-items">
+                    ${group.items.map(it => `
+                        <div class="poi-item" data-x="${it.x}" data-y="${it.y}" data-name="${it.name}">
+                            ${group.icon} ${it.name}
+                        </div>
+                    `).join('')}
+                </div>
             </div>
-        ` : '';
-        
-        wrap.onclick = (e)=>{ 
-            const row = e.target.closest('.poi-item'); 
-            if (!row) return; 
+        `;
+    }
+    
+    wrap.innerHTML = html || '<div style="color:var(--muted); text-align:center; padding:20px;">No POIs match filters</div>';
+    
+    // Bind group collapse
+    wrap.querySelectorAll('.poi-group-header').forEach(header => {
+        header.onclick = () => header.parentElement.classList.toggle('collapsed');
+    });
+    
+    // Bind POI click
+    wrap.querySelectorAll('.poi-item').forEach(item => {
+        item.onclick = () => {
             wrap.querySelectorAll('.poi-item').forEach(el => el.classList.remove('active'));
-            row.classList.add('active');
-            const it = items[Number(row.dataset.idx||0)]; 
-            const xEl = root.querySelector('#coordX'); 
-            const yEl = root.querySelector('#coordY'); 
-            if (xEl && yEl) { xEl.value = it.x; yEl.value = it.y; } 
-            planToDestination({ x: it.x, y: it.y }); 
+            item.classList.add('active');
+            const x = Number(item.dataset.x);
+            const y = Number(item.dataset.y);
+            const name = item.dataset.name;
+            selectDestination(root, { x, y, name });
         };
+    });
+}
+
+async function populateSystemDashboard(root) {
+    const client = window.gameClient;
+    if (!client?.gameState?.sector) return;
+    
+    const facts = await SFApi.State.systemFacts(client.gameState.sector.id);
+    const disp = facts?.mineralDisplay || {};
+    
+    const chip = (name, mult, color = 'var(--primary)') => 
+        `<span class="system-chip" style="border-color:${color}40; background:${color}10;">${name} x${mult}</span>`;
+    
+    const coreEl = root.querySelector('#coreMinerals');
+    const primaryEl = root.querySelector('#primaryMinerals');
+    
+    if (coreEl) {
+        const core = (disp.core || []).slice(0, 5);
+        coreEl.innerHTML = core.length ? core.map(m => chip(m.name, m.mult, '#81c784')).join('') : '—';
+    }
+    
+    if (primaryEl) {
+        const primary = (disp.primary || []).slice(0, 5);
+        primaryEl.innerHTML = primary.length ? primary.map(m => chip(m.name, m.mult)).join('') : '—';
+    }
+}
+
+function selectDestination(root, dest) {
+    const client = window.gameClient;
+    if (!client) return;
+    
+    client.__plannerTarget = { x: dest.x, y: dest.y };
+    client.__selectedDestName = dest.name || null;
+    
+    // Update destination zone
+    const destEmpty = root.querySelector('#destEmpty');
+    const destInfo = root.querySelector('#destInfo');
+    const destName = root.querySelector('#destName');
+    const destCoords = root.querySelector('#destCoords');
+    const footerDest = document.querySelector('#footerDest');
+    
+    if (destEmpty) destEmpty.style.display = 'none';
+    if (destInfo) destInfo.style.display = 'block';
+    if (destName) destName.textContent = dest.name || 'Custom Location';
+    if (destCoords) destCoords.textContent = `${Math.round(dest.x)}, ${Math.round(dest.y)}`;
+    if (footerDest) footerDest.textContent = dest.name || `${Math.round(dest.x)}, ${Math.round(dest.y)}`;
+    
+    // Plan routes
+    planToDestination(dest);
 }
 
 function showPlannerRoutes(routes) {
-        try {
-            const client = window.gameClient; const container = document.getElementById('plannerRoutes'); if (!container) return;
-            const rawList = Array.isArray(routes) ? routes.slice(0,3) : [];
-            // Normalize and drop degenerate (all zero-length) routes
-            const list = rawList.filter(r => {
-                const legs = Array.isArray(r.legs) ? r.legs.map(normalizeLeg) : [];
-                const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-                if (!legs.length || !nonZero.length) return false;
-                r.legs = legs;
-                return true;
-            });
-            window.__lastPlannedRoutes = list;
-            container.innerHTML = '';
+    try {
+        const client = window.gameClient; 
+        const container = document.getElementById('routesList'); 
+        if (!container) return;
+        
+        const rawList = Array.isArray(routes) ? routes.slice(0, 3) : [];
+        const list = rawList.filter(r => {
+            const legs = Array.isArray(r.legs) ? r.legs.map(normalizeLeg) : [];
+            const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
+            if (!legs.length || !nonZero.length) return false;
+            r.legs = legs;
+            return true;
+        });
+        window.__lastPlannedRoutes = list;
+        client.__selectedRoute = list[0] || null;
+        
+        // Update footer
+        const footerEta = document.querySelector('#footerEta');
+        const footerLegs = document.querySelector('#footerLegs');
+        const executeBtn = document.querySelector('#btnExecuteWarp');
+        
+        if (list.length === 0) {
+            container.innerHTML = '<div class="routes-empty">No routes available</div>';
+            if (footerEta) footerEta.textContent = '--';
+            if (footerLegs) footerLegs.textContent = '--';
+            if (executeBtn) executeBtn.disabled = true;
+            return;
+        }
+        
+        // Enable execute button
+        if (executeBtn) executeBtn.disabled = false;
+        if (footerEta) footerEta.textContent = list[0].eta || '--';
+        if (footerLegs) footerLegs.textContent = String(list[0].legs.length);
+        
+        container.innerHTML = '';
+        
+        list.forEach((r, idx) => {
+            const rho = Number(r.rho || 0);
+            const rhoBadgeClass = rho <= 1.0 ? 'rho-good' : (rho <= 1.5 ? 'rho-warn' : 'rho-bad');
             
-            if (list.length === 0) {
-                container.innerHTML = `<div style="padding:20px; text-align:center; color:var(--muted); font-size:13px; border:1px dashed var(--border); border-radius:10px;">No viable warp routes found for this destination.</div>`;
-                return;
-            }
-
-            // Destination summary header
-            if (client.__plannerTarget) {
-                const t = client.__plannerTarget;
-                const destHeader = document.createElement('div');
-                destHeader.style.cssText = 'font-size:12px; color:var(--primary); font-weight:600; text-transform:uppercase; margin-bottom:4px;';
-                destHeader.textContent = `Dest: ${Math.round(t.x)}, ${Math.round(t.y)}`;
-                container.appendChild(destHeader);
-            }
-
-            list.forEach((r, idx) => {
-                const rho = Number(r.rho || 0); 
-                const color = rho <= 1.0 ? '#66bb6a' : (rho <= 1.5 ? '#ffca28' : '#ef5350');
-                const riskColor = r.risk > 3 ? '#ef5350' : (r.risk > 1 ? '#ffca28' : '#66bb6a');
-                
-                const card = document.createElement('div');
-                card.className = 'route-card';
-                card.style.borderColor = `${color}40`;
-                
-                const legs = r.legs;
-                const legsText = legs.map((L)=>`E${L.edgeId} ${L.entry==='tap'?'tap':'wild'}`).join(' → ');
-                
-                card.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
-                        <div>
-                            <div style="font-weight:600; font-size:14px; color:${color}">Option ${idx + 1}</div>
-                            <div style="font-size:11px; color:var(--muted);">${legsText}</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:14px; font-weight:bold; color:var(--text);">ETA ${r.eta}</div>
-                            <div style="font-size:10px; color:${riskColor};">Risk: ${'!'.repeat(Math.max(1, r.risk || 1))}</div>
-                        </div>
-                    </div>
-                    <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
-                        <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:${color}20; color:${color}; border:1px solid ${color}40;">ρ ${rho.toFixed(2)}</span>
-                        <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:rgba(255,255,255,0.05); color:var(--muted); border:1px solid var(--border);">${legs.length} Leg${legs.length!==1?'s':''}</span>
-                    </div>
-                    <button class="sf-btn sf-btn-primary small" data-route-index="${idx}" data-action="start" style="width:100%; justify-content:center; padding:8px;">Execute Warp</button>
-                `;
-                
-                // Mouse interactive preview
-                card.onmouseenter = () => { 
-                    card.style.boxShadow = `0 4px 12px ${color}20`;
-                    try { 
-                        client.__laneHighlight = { until: Date.now() + 30000, legs: r.legs };
-                        const canvas = document.getElementById('fullMapCanvas');
-                        if (canvas) {
-                            const ctx = canvas.getContext('2d');
-                            const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
-                            const toggles = {
-                                regions: document.getElementById('toggleRegions')?.checked !== false,
-                                belts: document.getElementById('toggleBelts')?.checked !== false,
-                                wormholes: document.getElementById('toggleWormholes')?.checked !== false,
-                                lanes: document.getElementById('toggleLanes')?.checked === true
-                            };
-                            renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
-                        }
-                    } catch {}
-                };
-                card.onmouseleave = () => { 
-                    card.style.boxShadow = 'none';
-                    // We don't clear it immediately to allow seeing it, but renderFullMap will eventually clear it if not active
-                };
-                
-                container.appendChild(card);
-            });
+            const card = document.createElement('div');
+            card.className = 'route-card' + (idx === 0 ? ' selected' : '');
+            card.dataset.routeIndex = idx;
             
-            container.onclick = (e) => {
-                const btn = e.target.closest('button'); if (!btn) return;
-                const idx = Number(btn.getAttribute('data-route-index')||0); const r = list[idx];
-                const action = btn.getAttribute('data-action');
-                if (action === 'start') {
-                    const shipId = client.selectedUnit?.id;
-                    if (!shipId) { client.addLogEntry('Select a unit first', 'error'); return; }
-                    const legs = r.legs;
-                    const dest = client.__plannerTarget || null;
-                    client.socket && client.socket.emit('travel:confirm', { gameId: client.gameId, sectorId: client.gameState.sector.id, shipId, legs, destX: (dest&&typeof dest.x==='number')?dest.x:undefined, destY: (dest&&typeof dest.y==='number')?dest.y:undefined }, (resp)=>{
-                        if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-                        client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
-                        client.socket && client.socket.emit('travel:start', { gameId: client.gameId, sectorId: client.gameState.sector?.id, shipId }, (resp2)=>{
-                            if (!resp2 || !resp2.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
-                            if (resp2.approachRequired && resp2.approachTarget) {
-                                client.addLogEntry('Approach plotted; lane start queued', 'info');
-                            } else {
-                                client.addLogEntry('Travel started', 'success');
-                            }
-                            initializeFullMap();
-                        });
-                    });
-                }
+            card.innerHTML = `
+                <div class="route-info">
+                    <div class="route-name">Option ${idx + 1}</div>
+                    <div class="route-meta">${r.legs.map(L => L.entry === 'tap' ? 'tap' : 'wild').join(' → ')}</div>
+                </div>
+                <div class="route-stats">
+                    <span class="route-badge eta">ETA ${r.eta}</span>
+                    <span class="route-badge ${rhoBadgeClass}">ρ ${rho.toFixed(2)}</span>
+                </div>
+            `;
+            
+            // Click to select
+            card.onclick = () => {
+                container.querySelectorAll('.route-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                client.__selectedRoute = r;
+                if (footerEta) footerEta.textContent = r.eta || '--';
+                if (footerLegs) footerLegs.textContent = String(r.legs.length);
             };
-        } catch (e) { console.error('showPlannerRoutes error', e); }
+            
+            // Hover to preview
+            card.onmouseenter = () => {
+                client.__laneHighlight = { until: Date.now() + 30000, legs: r.legs };
+                initializeFullMap();
+            };
+            
+            container.appendChild(card);
+        });
+        
+        // Highlight first route
+        if (list[0]) {
+            client.__laneHighlight = { until: Date.now() + 30000, legs: list[0].legs };
+            initializeFullMap();
+        }
+    } catch (e) { console.error('showPlannerRoutes error', e); }
 }
 
 function planToDestination(dest) {
-        try {
-            const client = window.gameClient; if (!client || !client.gameState?.sector?.id) return;
-            const x = Number(dest?.x), y = Number(dest?.y); if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-            try { client.__plannerTarget = { x, y }; } catch {}
-            const panel = document.getElementById('plannerRoutes'); if (panel) panel.innerHTML = '<div style="color:#9ecbff;">Planning route...</div>';
-            client.socket && client.socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: { x, y } }, (resp)=>{
-                if (resp?.success && Array.isArray(resp.routes)) showPlannerRoutes(resp.routes);
-                else { const panel = document.getElementById('plannerRoutes'); if (panel) panel.innerHTML = '<div style="color:#ff8a80;">No route found</div>'; }
-            });
-        } catch (e) { try { console.error('planToDestination error', e); } catch {} }
+    try {
+        const client = window.gameClient; 
+        if (!client || !client.gameState?.sector?.id) return;
+        const x = Number(dest?.x), y = Number(dest?.y); 
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        
+        client.__plannerTarget = { x, y };
+        
+        const routesList = document.getElementById('routesList'); 
+        if (routesList) routesList.innerHTML = '<div class="routes-empty">Planning route...</div>';
+        
+        client.socket && client.socket.emit('travel:plan', { 
+            gameId: client.gameId, 
+            sectorId: client.gameState.sector.id, 
+            from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, 
+            to: { x, y } 
+        }, (resp) => {
+            if (resp?.success && Array.isArray(resp.routes)) {
+                showPlannerRoutes(resp.routes);
+            } else { 
+                const routesList = document.getElementById('routesList'); 
+                if (routesList) routesList.innerHTML = '<div class="routes-empty">No routes found</div>';
+            }
+        });
+    } catch (e) { console.error('planToDestination error', e); }
 }
 
 function safeName(n){ try { if (!n) return null; return String(n); } catch { return null; } }
@@ -592,6 +714,16 @@ function buildLaneCache(canvas, facts) {
 	}
 }
 
+function getMapToggles() {
+    return {
+        regions: document.getElementById('toggleRegions')?.classList.contains('active') ?? true,
+        lanes: document.getElementById('toggleLanes')?.classList.contains('active') ?? true,
+        labels: document.getElementById('toggleLabels')?.classList.contains('active') ?? false,
+        wormholes: true,
+        belts: false // Belt polygons removed - only POI markers shown
+    };
+}
+
 function observeCanvas(canvas) {
     if (canvas.__ro) return;
     const ro = new ResizeObserver(() => {
@@ -603,14 +735,7 @@ function observeCanvas(canvas) {
             canvas.height = h;
             const ctx = canvas.getContext('2d');
             const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
-            // Read toggles again for resize
-            const toggles = {
-                regions: document.getElementById('toggleRegions')?.checked !== false,
-                belts: document.getElementById('toggleBelts')?.checked !== false,
-                wormholes: document.getElementById('toggleWormholes')?.checked !== false,
-                lanes: (function(){ try { const pref = localStorage.getItem('ui.showLanes'); const el = document.getElementById('toggleLanes'); if (el && pref!=null) el.checked = (pref==='1'); return el?.checked === true; } catch { return document.getElementById('toggleLanes')?.checked === true; } })()
-            };
-            renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
+            renderFullMap(ctx, canvas, scaleX, scaleY, getMapToggles(), null);
         }
     });
     ro.observe(canvas.parentElement || canvas);
@@ -627,16 +752,10 @@ function initializeFullMap() {
         canvas.height = Math.max(200, Math.floor(rect.height));
 
         observeCanvas(canvas);
-        const ctx = canvas.getContext('2d'); ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
-        ctx.strokeStyle = 'rgba(100,181,246,0.3)'; ctx.lineWidth = 2; ctx.strokeRect(2,2,canvas.width-4,canvas.height-4);
+        const ctx = canvas.getContext('2d'); ctx.fillStyle = '#060a14'; ctx.fillRect(0,0,canvas.width,canvas.height);
         if (!client.objects) return;
         const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
-        const toggles = {
-            regions: document.getElementById('toggleRegions')?.checked !== false,
-            belts: document.getElementById('toggleBelts')?.checked !== false,
-            wormholes: document.getElementById('toggleWormholes')?.checked !== false,
-            lanes: (function(){ try { const pref = localStorage.getItem('ui.showLanes'); const el = document.getElementById('toggleLanes'); if (el && pref!=null) el.checked = (pref==='1'); return el?.checked === true; } catch { return document.getElementById('toggleLanes')?.checked === true; } })()
-        };
+        const toggles = getMapToggles();
         // Prepare a DOM tooltip and build lane cache
         let tip = document.getElementById('mapHoverTip');
         if (!tip) {
@@ -762,101 +881,61 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 if (!hasLanes) toggles.lanes = false;
             }
         } catch {}
-        // Regions overlay
+        // Regions overlay - OUTLINE ONLY, subtle by default
         if (toggles.regions && client.gameState?.sector?.id) {
             try {
                 if (facts && Array.isArray(facts.regions) && facts.regions.length > 0) {
                     const cellW = 5000 / 3, cellH = 5000 / 3;
                     facts.regions.forEach(r => {
-                        let baseColor = '100, 149, 237'; // A default (cornflower blue)
+                        let baseColor = '100, 149, 237';
                         const id = String(r.id || '').toUpperCase();
                         if (id === 'A') baseColor = '80, 130, 255';
                         else if (id === 'B') baseColor = '255, 99, 99';
                         else if (id === 'C') baseColor = '255, 200, 80';
                         
-                        // Check if mouse is in this region for hover highlight
+                        // Check if mouse is in this region
                         let isHovered = false;
                         if (mouse && typeof mouse.x === 'number') {
                             const col = Math.floor(mouse.x / cellW), row = Math.floor(mouse.y / cellH);
                             isHovered = (r.cells || []).some(c => c.col === col && c.row === row);
                         }
 
-                        ctx.fillStyle = `rgba(${baseColor}, ${isHovered ? '0.15' : '0.08'})`;
+                        // NO FILL by default - only outline
+                        const outlineOpacity = isHovered ? 0.35 : 0.12;
+                        ctx.strokeStyle = `rgba(${baseColor}, ${outlineOpacity})`;
+                        ctx.lineWidth = 1;
+                        
                         (r.cells || []).forEach(c => {
-                            ctx.fillRect(c.col*cellW*scaleX, c.row*cellH*scaleY, cellW*scaleX, cellH*scaleY);
-                            // Draw subtle inner border
-                            ctx.strokeStyle = `rgba(${baseColor}, ${isHovered ? '0.4' : '0.2'})`;
-                            ctx.lineWidth = 1;
-                            ctx.strokeRect(c.col*cellW*scaleX + 2, c.row*cellH*scaleY + 2, cellW*scaleX - 4, cellH*scaleY - 4);
+                            ctx.strokeRect(c.col*cellW*scaleX + 1, c.row*cellH*scaleY + 1, cellW*scaleX - 2, cellH*scaleY - 2);
                         });
 
-                        // Region Label
-                        const first = (r.cells||[])[0];
-                        if (first) {
-                            const health = Number(r.health || 50);
-                            const cx = (first.col*cellW + 20)*scaleX, cy = (first.row*cellH + 20)*scaleY;
-                            ctx.fillStyle = `rgba(${baseColor}, 0.9)`;
-                            ctx.font = 'bold 13px Arial';
-                            ctx.textAlign='left'; ctx.textBaseline='top';
-                            ctx.fillText(`REGION ${r.id}`, cx, cy);
-                            ctx.font = '11px Arial';
-                            ctx.fillStyle = `rgba(${baseColor}, 0.7)`;
-                            ctx.fillText(`Health: ${health}%`, cx, cy + 16);
+                        // Region Label - only show on hover
+                        if (isHovered) {
+                            const first = (r.cells||[])[0];
+                            if (first) {
+                                const health = Number(r.health || 50);
+                                const cx = (first.col*cellW + 15)*scaleX, cy = (first.row*cellH + 15)*scaleY;
+                                
+                                // Label background
+                                ctx.fillStyle = 'rgba(7, 11, 22, 0.85)';
+                                ctx.fillRect(cx - 4, cy - 2, 90, 32);
+                                ctx.strokeStyle = `rgba(${baseColor}, 0.4)`;
+                                ctx.strokeRect(cx - 4, cy - 2, 90, 32);
+                                
+                                ctx.fillStyle = `rgba(${baseColor}, 0.95)`;
+                                ctx.font = 'bold 12px Arial';
+                                ctx.textAlign='left'; ctx.textBaseline='top';
+                                ctx.fillText(`Region ${r.id}`, cx, cy);
+                                ctx.font = '10px Arial';
+                                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                                ctx.fillText(`Health: ${health}%`, cx, cy + 14);
+                            }
                         }
                     });
                 }
             } catch {}
         }
-        // Belts (from belt_sectors facts)
-        if (toggles.belts && client.gameState?.sector?.id) {
-            try {
-                const sectors = facts?.belts || [];
-                const cx = 2500*scaleX, cy = 2500*scaleY;
-                sectors.forEach(s => {
-                    const rInner = Number(s.inner_radius), rOuter = Number(s.inner_radius) + Number(s.width);
-                    const a0 = Number(s.arc_start), a1 = Number(s.arc_end);
-                    const rMid = (rInner + rOuter) / 2;
-                    const aMid = (a0 + a1) / 2;
-                    // Build thin wedge polygon
-                    const p0x = cx + Math.cos(a0)*rInner*scaleX, p0y = cy + Math.sin(a0)*rInner*scaleY;
-                    const p1x = cx + Math.cos(a1)*rInner*scaleX, p1y = cy + Math.sin(a1)*rInner*scaleY;
-                    const p2x = cx + Math.cos(a1)*rOuter*scaleX, p2y = cy + Math.sin(a1)*rOuter*scaleY;
-                    const p3x = cx + Math.cos(a0)*rOuter*scaleX, p3y = cy + Math.sin(a0)*rOuter*scaleY;
-                    // Fill and stroke
-                    ctx.beginPath();
-                    ctx.moveTo(p0x, p0y);
-                    ctx.lineTo(p1x, p1y);
-                    ctx.lineTo(p2x, p2y);
-                    ctx.lineTo(p3x, p3y);
-                    ctx.closePath();
-                    ctx.fillStyle = 'rgba(158,203,255,0.08)';
-                    ctx.fill();
-                    ctx.strokeStyle = 'rgba(158,203,255,0.35)';
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-
-                    // Centroid label
-                    const lx = cx + Math.cos(aMid)*rMid*scaleX;
-                    const ly = cy + Math.sin(aMid)*rMid*scaleY;
-                    ctx.fillStyle = 'rgba(200,230,255,0.9)'; ctx.font='10px Arial'; ctx.textAlign='center'; ctx.textBaseline='top';
-                    ctx.fillText(`Belt ${s.belt_key}-${s.sector_index}`, lx, ly + 2);
-
-                    // Hover details near centroid
-                    if (mouse && typeof mouse.x === 'number' && typeof mouse.y === 'number') {
-                        const dx = mouse.x - lx; const dy = mouse.y - ly; const d = Math.sqrt(dx*dx + dy*dy);
-                        if (d <= 10) {
-                            const tip = `Region ${s.region_id} • ${String(s.density || 'med').toUpperCase()}`;
-                            const tw = ctx.measureText(tip).width + 8; const th = 14;
-                            const tx = lx + 12; const ty = ly - 4;
-                            ctx.fillStyle = 'rgba(15,25,45,0.9)'; ctx.fillRect(tx, ty, tw, th);
-                            ctx.strokeStyle = 'rgba(158,203,255,0.6)'; ctx.strokeRect(tx, ty, tw, th);
-                            ctx.fillStyle = '#cfe8ff'; ctx.font='10px Arial'; ctx.textAlign='left'; ctx.textBaseline='top';
-                            ctx.fillText(tip, tx + 4, ty + 2);
-                        }
-                    }
-                });
-            } catch {}
-        }
+        // Belt polygon rendering removed - only belt POI markers are shown now
         // Wormholes (from facts)
         if (toggles.wormholes && client.gameState?.sector?.id) {
             try {
@@ -874,7 +953,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 const lanes = facts?.lanes || [];
                 const tapsByEdge = facts?.laneTapsByEdge || {};
                 const healthByRegion = new Map((facts?.regions||[]).map(r=>[String(r.id), Number(r.health||50)]));
-                // Planner click: show list of up to 3 routes with tap queue ETA and wildcat option
+                // Map click: select destination and plan routes
                 canvas.onclick = async (ev) => {
                     const rect = canvas.getBoundingClientRect();
                     const click = { x: (ev.clientX-rect.left)/scaleX, y: (ev.clientY-rect.top)/scaleY };
@@ -882,16 +961,36 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     // Visual feedback for click
                     client.__mapClickMarker = { x: click.x, y: click.y, time: Date.now() };
                     
+                    // Update destination zone
+                    const destEmpty = document.querySelector('#destEmpty');
+                    const destInfo = document.querySelector('#destInfo');
+                    const destName = document.querySelector('#destName');
+                    const destCoords = document.querySelector('#destCoords');
+                    const footerDest = document.querySelector('#footerDest');
+                    
+                    if (destEmpty) destEmpty.style.display = 'none';
+                    if (destInfo) destInfo.style.display = 'block';
+                    if (destName) destName.textContent = 'Map Location';
+                    if (destCoords) destCoords.textContent = `${Math.round(click.x)}, ${Math.round(click.y)}`;
+                    if (footerDest) footerDest.textContent = `${Math.round(click.x)}, ${Math.round(click.y)}`;
+                    
+                    client.__plannerTarget = click;
+                    
+                    // Plan routes
+                    const routesList = document.getElementById('routesList');
+                    if (routesList) routesList.innerHTML = '<div class="routes-empty">Planning...</div>';
+                    
                     try {
-                        client.__plannerTarget = click;
                         const routes = await new Promise((resolve)=>{
                             SFApi.Socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: click }, (resp)=>resolve(resp));
                         });
                         if (routes?.success && Array.isArray(routes.routes)) {
                             showPlannerRoutes(routes.routes);
+                        } else {
+                            if (routesList) routesList.innerHTML = '<div class="routes-empty">No routes found</div>';
                         }
                     } catch {}
-                    initializeFullMap(); // Redraw to show the click marker
+                    initializeFullMap();
                 };
                 // Draw lanes
                 const highlight = client.__laneHighlight && client.__laneHighlight.until > Date.now() ? (client.__laneHighlight.legs||[]) : [];
@@ -918,38 +1017,37 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 lanes.forEach(l => {
                     const pts = Array.isArray(l.polyline) ? l.polyline : [];
                     if (pts.length < 2) return;
-                    // Compute rho for coloring
+                    
                     const health = healthByRegion.get(String(l.region_id)) ?? 50;
                     const healthMult = health>=80?1.25:(health>=60?1.0:0.7);
                     const cap = Math.max(1, Math.floor(Number(l.cap_base||0) * (Number(l.width_core||150)/150) * healthMult));
                     const load = Number(l.runtime?.load_cu || 0);
                     const rho = load / Math.max(1, cap);
                     
-                    // Enhanced Congestion Coloring
-                    let coreColor = 'rgba(102,187,106,0.95)'; // Healthy Green
-                    if (rho > 2.0) coreColor = 'rgba(211,47,47,0.95)'; // Critical Red
-                    else if (rho > 1.5) coreColor = 'rgba(239,83,80,0.95)'; // Heavy Orange-Red
-                    else if (rho > 1.0) coreColor = 'rgba(255,202,40,0.95)'; // Warning Yellow
+                    // Check if this lane is part of highlighted route
+                    const isHighlighted = highlightEdges.has(Number(l.id));
                     
-                    if (health < 40) coreColor = 'rgba(120,120,120,0.8)'; // Damaged/Grey
+                    // SUBTLE by default - only prominent when highlighted
+                    const baseOpacity = isHighlighted ? 0.85 : 0.15;
+                    const lineWidth = isHighlighted ? 3 : 2;
+                    
+                    // Muted teal color by default
+                    let coreColor = `rgba(100, 180, 180, ${baseOpacity})`;
+                    if (isHighlighted) {
+                        // Bright colors for highlighted routes
+                        if (rho > 2.0) coreColor = `rgba(211,47,47,${baseOpacity})`;
+                        else if (rho > 1.5) coreColor = `rgba(239,83,80,${baseOpacity})`;
+                        else if (rho > 1.0) coreColor = `rgba(255,202,40,${baseOpacity})`;
+                        else coreColor = `rgba(102,220,150,${baseOpacity})`;
+                    }
+                    
+                    if (health < 40) coreColor = `rgba(120,120,120,${baseOpacity * 0.8})`;
 
-                    // Shoulder halo (wider for healthy lanes)
-                    ctx.strokeStyle = health >= 80 ? 'rgba(100,255,246,0.15)' : 'rgba(100,181,246,0.1)';
-                    ctx.lineWidth = Math.max(1, (l.width_shoulder || 220) * 0.5 * ((scaleX+scaleY)/2));
-                    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-                    
-                    // Unhealthy lanes get a dashed shoulder
-                    if (health < 60) ctx.setLineDash([10, 10]);
-                    
-                    ctx.beginPath();
-                    ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
-                    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-
-                    // Core ribbon
                     ctx.strokeStyle = coreColor;
-                    ctx.lineWidth = Math.max(2, (l.width_core || 180) * 0.35 * ((scaleX+scaleY)/2));
+                    ctx.lineWidth = lineWidth;
+                    ctx.lineCap = 'round'; 
+                    ctx.lineJoin = 'round';
+                    
                     ctx.beginPath();
                     ctx.moveTo(pts[0].x*scaleX, pts[0].y*scaleY);
                     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*scaleX, pts[i].y*scaleY);
