@@ -165,16 +165,21 @@ body {
    STRATEGIC MAP MODAL - Complete Rewrite
    ======================================== */
 
-/* Modal Container - 4-row grid */
+/* Modal Container - flexbox for proper height filling */
 .map-modal {
   background: var(--bg-panel) !important;
   border: 1px solid var(--border) !important;
   box-shadow: var(--shadow) !important;
   width: min(1400px, 96vw) !important;
   height: min(92vh, 920px) !important;
-  display: grid !important;
-  grid-template-rows: auto 1fr auto !important; /* header handled by modal system, then content, then footer */
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column !important;
   overflow: hidden !important;
+}
+
+.map-modal .game-modal-header {
+  flex: 0 0 auto;
 }
 
 .map-modal .game-modal-content {
@@ -182,19 +187,20 @@ body {
   overflow: hidden !important;
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   min-height: 0;
 }
 
-/* Root container */
+/* Root container - flexbox to handle hidden tabs properly */
 .map-root {
-  display: grid;
-  grid-template-rows: 44px 1fr 60px; /* tabs, main, footer */
-  height: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
-/* Tabs row */
+/* Tabs row - fixed height */
 .map-tabs {
   display: flex;
   gap: 8px;
@@ -202,7 +208,7 @@ body {
   padding: 6px 16px;
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .map-tab {
@@ -226,14 +232,17 @@ body {
   color: var(--primary);
 }
 
-/* Tab content area */
+/* Tab content area - must fill available space */
 .map-tab-content {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  flex: 1;
 }
 
 .map-tab-content.hidden {
-  display: none;
+  display: none !important;
 }
 
 /* Main row - map + sidebar */
@@ -244,6 +253,7 @@ body {
   padding: 12px;
   min-height: 0;
   overflow: hidden;
+  flex: 1;
 }
 
 /* Left pane - map container */
@@ -309,8 +319,8 @@ body {
 
 /* Right pane - sidebar with 3 zones */
 .map-sidebar {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   min-height: 0;
   overflow: hidden;
@@ -460,11 +470,12 @@ body {
   padding: 12px 0;
 }
 
-/* Zone C: Tabbed browser (scrolls) */
+/* Zone C: Tabbed browser (scrolls) - fills remaining space */
 .sidebar-zone-browser {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  flex: 1;
   overflow: hidden;
   background: rgba(10, 18, 32, 0.4);
   border: 1px solid var(--border);
@@ -503,7 +514,7 @@ body {
 }
 
 .browser-content {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
   padding: 10px;
   min-height: 0;
@@ -662,7 +673,7 @@ body {
   color: var(--text);
 }
 
-/* Footer action shelf */
+/* Footer action shelf - fixed at bottom */
 .map-footer {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -671,7 +682,7 @@ body {
   padding: 12px 16px;
   background: rgba(0, 0, 0, 0.3);
   border-top: 1px solid var(--border);
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .footer-route-info {
