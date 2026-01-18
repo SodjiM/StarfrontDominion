@@ -238,7 +238,7 @@ export function openMapModal() {
                 </div>
             </div>
         `;
-        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, actions:[], className:'map-modal', width:1400, height:920 });
+        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, className:'map-modal' });
         
         // === EVENT BINDINGS ===
         

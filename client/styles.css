@@ -171,8 +171,9 @@ body {
   border: 1px solid var(--border) !important;
   box-shadow: var(--shadow) !important;
   width: min(1400px, 96vw) !important;
+  max-width: min(1400px, 96vw) !important;
   height: 92vh !important;
-  max-height: none !important;
+  max-height: 92vh !important;
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
