@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router, {lobby:true});
 const { GamesRepository } = require('../repositories/games.repo');
 const gamesRepo = new GamesRepository();
 
@@ -96,6 +97,7 @@ router.delete('/game/:gameId', async (req, res) => {
 
 // Clear all games (admin)
 router.delete('/games/clear-all', async (req, res) => {
+    return res.status(403).json({error:'admin_operation_disabled'});
     const { confirm } = req.body || {};
     if (confirm !== 'DELETE') return res.status(400).json({ error: "Confirmation string 'DELETE' required" });
 

@@ -2,7 +2,7 @@ const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
 
-const db = new sqlite3.Database('./database.sqlite');
+const db = new sqlite3.Database(process.env.DATABASE_PATH || './database.sqlite');
 
 // Initialize tables sequentially to avoid issues
 let dbReadyResolve;

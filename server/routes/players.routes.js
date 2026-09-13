@@ -3,6 +3,7 @@ const { z } = require('zod');
 const db = require('../db');
 const { GameWorldManager } = require('../services/game/game-world.service');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router);
 
 // Switch player's view to a different sector
 router.post('/switch-sector', (req, res) => {

@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { GameWorldManager } = require('../services/game/game-world.service');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router);
 
 // PHASE 1C: Get movement history for accurate trail rendering
 router.get('/:gameId/movement-history/:userId', async (req, res) => {

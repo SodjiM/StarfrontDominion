@@ -425,6 +425,9 @@ class CargoManager {
             if (!fromObject || !toObject) {
                 return { success: false, error: 'One or both objects not found' };
             }
+            if (Number(fromObject.sector_id) !== Number(toObject.sector_id)) {
+                return { success: false, error: 'Objects must be in the same sector' };
+            }
             // If destination isn't owned by the player, require publicAccess flag
             if (Number(toObject.owner_id) !== Number(userId)) {
                 try {
@@ -483,12 +486,17 @@ class CargoManager {
                 };
             }
             
-            // Perform the transfer
-            // 1. Remove from source
-            await this.removeResourceFromCargo(fromObjectId, resourceName, quantity, fromUseLegacy);
-            
-            // 2. Add to destination
-            await this.addResourceToCargo(toObjectId, resourceName, quantity, toUseLegacy);
+            // Perform the transfer with compensation if the destination write fails.
+            // The shared SQLite connection is serialized by the request layer;
+            // restoring the source prevents a partial transfer from deleting cargo.
+            const removed = await this.removeResourceFromCargo(fromObjectId, resourceName, quantity, fromUseLegacy);
+            if (!removed?.success) return { success: false, error: removed?.error || 'Unable to remove source cargo' };
+            try {
+                await this.addResourceToCargo(toObjectId, resourceName, quantity, toUseLegacy);
+            } catch (error) {
+                await this.addResourceToCargo(fromObjectId, resourceName, quantity, fromUseLegacy).catch(() => {});
+                throw error;
+            }
             
             console.log(`📦 Transferred ${quantity} ${resourceName} from ${fromObject.type} ${fromObjectId} to ${toObject.type} ${toObjectId}`);
             
@@ -604,4 +612,3 @@ class CargoManager {
 }
 
 module.exports = { CargoManager };
-

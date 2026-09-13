@@ -32,10 +32,11 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*",
+        origin: false,
         methods: ["GET", "POST"]
     }
 });
+require('./middleware/auth').protectSockets(io);
 const CONFIG = loadConfig();
 // Verbose server turn/movement logs (enable with env LOG_TURNS=1)
 const TURN_LOGS = String(process.env.LOG_TURNS || '').toLowerCase() === '1';
@@ -61,9 +62,12 @@ app.use('/game', galaxyRoutes);
 app.use('/game', movementRoutes);
 app.use('/game', playersRoutes);
 app.use('/game', gameRoutes);
+const protectedApi = express.Router();
+require('./middleware/auth').protectRouter(protectedApi);
+app.use(protectedApi);
 // Sector trails: always-visible movement history (last N turns)
 // Ability cooldowns endpoint
-app.get('/game/ability-cooldowns/:shipId', async (req, res) => {
+protectedApi.get('/game/ability-cooldowns/:shipId', async (req, res) => {
     const { shipId } = req.params;
     try {
         const rows = await new Promise((resolve, reject) => {
@@ -75,7 +79,7 @@ app.get('/game/ability-cooldowns/:shipId', async (req, res) => {
         res.status(500).json({ error: 'server_error' });
     }
 });
-app.get('/game/sector/:sectorId/trails', async (req, res) => {
+protectedApi.get('/game/sector/:sectorId/trails', async (req, res) => {
     const { sectorId } = req.params;
     const { sinceTurn, maxAge = 10 } = req.query;
     try {
@@ -90,7 +94,7 @@ app.get('/game/sector/:sectorId/trails', async (req, res) => {
     }
 });
     // Combat logs read API (simple fetch)
-    app.get('/combat/logs/:gameId/:turnNumber', (req, res) => {
+    protectedApi.get('/combat/logs/:gameId/:turnNumber', (req, res) => {
         const { gameId, turnNumber } = req.params;
         db.all(
             'SELECT * FROM combat_logs WHERE game_id = ? AND turn_number = ? ORDER BY id ASC',

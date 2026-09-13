@@ -4,6 +4,7 @@ const db = require('../db');
 const { CargoManager } = require('../services/game/cargo-manager');
 const { BuildService } = require('../services/game/build.service');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router);
 
 router.post('/build-ship', async (req, res) => {
     const schema = z.object({ stationId: z.coerce.number().int().positive(), blueprintId: z.string().min(1), userId: z.coerce.number().int().positive(), freeBuild: z.boolean().optional() });

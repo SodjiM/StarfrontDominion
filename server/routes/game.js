@@ -3,6 +3,7 @@ const { z } = require('zod');
 const db = require('../db');
 const { GameWorldManager, getCurrentTurnNumberServer, computePilotStats } = require('../services/game/game-world.service');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router);
 
 
 // Start a game (change status from recruiting to active) - ASYNCHRONOUS FRIENDLY

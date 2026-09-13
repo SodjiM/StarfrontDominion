@@ -20,6 +20,7 @@ class MovementService {
         const gate = await new Promise((resolve, reject) => {
             db.get('SELECT * FROM sector_objects WHERE id = ? AND type = ?', [gateId, 'interstellar-gate'], (err, row) => err ? reject(err) : resolve(row || null));
         });
+        if (gate && gate.sector_id !== ship.sector_id) return {success:false,httpStatus:400,error:'Gate is in another sector'};
         if (!gate) return { success: false, httpStatus: 404, error: 'Interstellar gate not found' };
         const gateMeta = JSON.parse(gate.meta || '{}');
         const destinationSectorId = gateMeta.destinationSectorId;
@@ -35,54 +36,21 @@ class MovementService {
             );
         });
         if (!pairedGate) return { success: false, httpStatus: 404, error: 'Destination gate not found' };
-        const newX = pairedGate.x + (Math.random() < 0.5 ? -1 : 1);
-        const newY = pairedGate.y + (Math.random() < 0.5 ? -1 : 1);
+        const {LaneTravelService}=require('./lane-travel.service');
+        const navigation=new LaneTravelService(db);
+        const sector=await navigation.get('SELECT game_id FROM sectors WHERE id=?',[ship.sector_id]);
+        const dest=await navigation.get('SELECT game_id FROM sectors WHERE id=?',[destinationSectorId]);
+        if(!dest || dest.game_id!==sector.game_id)return {success:false,httpStatus:400,error:'Invalid destination game'};
+        const objects=await navigation.all('SELECT id,type,x,y,radius FROM sector_objects WHERE sector_id=?',[destinationSectorId]);
+        const blocked=require('../../utils/navigation').occupancy(objects,ship.id);
+        let landing;for(const [dx,dy] of [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]){const p={x:pairedGate.x+dx,y:pairedGate.y+dy};if(!blocked(p)){landing=p;break;}}
+        if(!landing)return {success:false,httpStatus:400,error:'Destination gate blocked'};
+        await navigation.cancel(shipId);
+        const {x:newX,y:newY}=landing;
         await new Promise((resolve, reject) => {
             db.run('UPDATE sector_objects SET sector_id = ?, x = ?, y = ? WHERE id = ?', [destinationSectorId, newX, newY, shipId], function(err){ return err ? reject(err) : resolve(); });
         });
         return { success: true, destinationSectorId, newX, newY, fromSectorId: ship.sector_id, shipName: (JSON.parse(ship.meta || '{}').name) };
-    }
-
-    async createMoveOrder({ gameId, shipId, currentX, currentY, destinationX, destinationY, movementPath }) {
-        const ship = await new Promise((resolve, reject) => db.get('SELECT x, y, meta FROM sector_objects WHERE id = ?', [shipId], (e, r) => e ? reject(e) : resolve(r || null)));
-        if (!ship) return { success: false, httpStatus: 404, error: 'Ship not found' };
-        const meta = (() => { try { return JSON.parse(ship.meta || '{}'); } catch { return {}; } })();
-        const movementSpeed = meta.movementSpeed || 1;
-        const pathLength = movementPath ? Math.max(0, movementPath.length - 1) : 0;
-        const actualETA = Math.ceil(pathLength / Math.max(1, movementSpeed));
-        await new Promise((resolve, reject) => db.run('DELETE FROM movement_orders WHERE object_id = ? AND status IN ("active","blocked")', [shipId], function(err){ return err ? reject(err) : resolve(); }));
-        const orderTimestamp = new Date().toISOString();
-        await new Promise((resolve, reject) => db.run(
-            `INSERT INTO movement_orders 
-             (object_id, destination_x, destination_y, movement_speed, eta_turns, movement_path, current_step, status, created_at) 
-             VALUES (?, ?, ?, ?, ?, ?, 0, 'active', ?)`,
-            [shipId, destinationX, destinationY, movementSpeed, actualETA, JSON.stringify(movementPath || []), orderTimestamp],
-            (err) => err ? reject(err) : resolve()
-        ));
-        return { success: true, pathLength, eta: actualETA };
-    }
-
-    async createWarpOrder({ gameId, shipId, targetId, targetX, targetY, shipName, targetName }) {
-        const ship = await new Promise((resolve, reject) => db.get('SELECT x, y, meta FROM sector_objects WHERE id = ?', [shipId], (e, r) => e ? reject(e) : resolve(r || null)));
-        if (!ship) return { success: false, httpStatus: 404, error: 'Ship not found' };
-        await new Promise((resolve, reject) => db.run('DELETE FROM movement_orders WHERE object_id = ? AND status IN ("active","blocked")', [shipId], function(err){ return err ? reject(err) : resolve(); }));
-        let requiredPrep = 2;
-        try {
-            const metaObj = (() => { try { return JSON.parse(ship.meta || '{}'); } catch { return {}; } })();
-            if (typeof metaObj.warpPreparationTurns === 'number' && metaObj.warpPreparationTurns >= 0) {
-                requiredPrep = Math.max(0, Math.floor(metaObj.warpPreparationTurns));
-            }
-        } catch {}
-        const orderTimestamp = new Date().toISOString();
-        await new Promise((resolve, reject) => db.run(
-            `INSERT INTO movement_orders 
-             (object_id, warp_target_id, warp_destination_x, warp_destination_y, 
-              warp_phase, warp_preparation_turns, status, created_at) 
-             VALUES (?, ?, ?, ?, 'preparing', 0, 'warp_preparing', ?)`,
-            [shipId, targetId || null, targetX, targetY, orderTimestamp],
-            (err) => err ? reject(err) : resolve()
-        ));
-        return { success: true, requiredPrep };
     }
 
     async fetchMovementHistoryRaw({ gameId, userId, turns = 10, shipId }) {

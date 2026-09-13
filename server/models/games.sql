@@ -17,5 +17,6 @@ CREATE TABLE IF NOT EXISTS game_players (
     color_secondary TEXT DEFAULT NULL,
     setup_completed BOOLEAN DEFAULT FALSE,
     FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (game_id) REFERENCES games(id)
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    UNIQUE(game_id, user_id)
 ); 

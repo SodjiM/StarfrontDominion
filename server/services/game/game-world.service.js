@@ -487,10 +487,11 @@ class GameWorldManager {
                                                                 const movementPath = JSON.parse(obj.movement_path || '[]');
                                                                 movementData = {
                                                                     movementPath,
-                                                                    plannedDestination: obj.destination_x && obj.destination_y ? { x: obj.destination_x, y: obj.destination_y } : null,
+                                                                    plannedDestination: obj.destination_x != null && obj.destination_y != null ? { x: obj.destination_x, y: obj.destination_y } : null,
                                                                     movementETA: obj.eta_turns,
                                                                     movementActive: obj.movement_status === 'active',
                                                                     movementStatus: obj.movement_status,
+                                                                    movementRetrying: obj.movement_status === 'blocked',
                                                                     currentStep: (obj.current_step !== null && obj.current_step !== undefined) ? obj.current_step : null,
                                                                     baseMovementSpeed: (obj.movement_speed !== null && obj.movement_speed !== undefined) ? obj.movement_speed : null
                                                                 };
@@ -646,5 +647,4 @@ async function computePilotStats(gameId, userId, currentTurn) {
 }
 
 module.exports = { GameWorldManager, getCurrentTurnNumberServer, computePilotStats };
-
 

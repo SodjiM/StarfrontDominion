@@ -25,6 +25,7 @@ export function connectSocket(game) {
         } catch {}
     });
 
+    socket.on('connect_error', (error) => { game.addLogEntry(error.message, 'error'); if(error.message==='authentication_required') window.location.href='login.html'; });
     socket.on('disconnect', () => console.log('🔌 Disconnected from server'));
 }
 

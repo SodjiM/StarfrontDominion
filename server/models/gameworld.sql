@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS turns (
     status TEXT DEFAULT 'waiting', -- 'waiting', 'resolving', 'completed'
     resolved_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (game_id) REFERENCES games(id)
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    UNIQUE(game_id, turn_number)
 );
 
 -- Track which players have locked their turn

@@ -74,6 +74,19 @@ Defined in `server/config/index.js`:
 - Sample games are inserted on first run.
 - Resetting the DB: stop the server and delete `database.sqlite` (this removes all data).
 
+## Playing locally on your computer
+
+No Linux server is needed. From the project folder, run `npm start`, then open
+[http://localhost:3000/play](http://localhost:3000/play). Leave that terminal running.
+This one Node process serves the game, login, multiplayer connections, and local SQLite database.
+To view the landing page too, run `npm run build` once and open http://localhost:3000/.
+
+`npm run web:dev` is optional: it provides live updates while editing the React landing page
+on port 5173. It does not run the game server. Keep `npm start` running as well; Play/Join
+on port 5173 redirects to the game on port 3000. Restart Vite after changing its configuration.
+If the game uses a custom port, start Vite with `GAME_SERVER_PORT=3100 npm run web:dev`
+(or your chosen port), matching the game's `PORT` value.
+
 ## Running in Development
 
 Option A: single process (recommended to start)
@@ -154,3 +167,25 @@ Issues and PRs are welcome. Before contributing, please run the server locally a
 ## License
 
 ISC
+## Navigation and authentication update
+
+- Movement commands submit a destination. The server computes a bounded obstacle-aware route from the current ship position and retries blocked routes on subsequent turns. Route previews and ETAs are returned in the acknowledgement.
+- Use the strategic map for warp lanes. The server issues a short-lived route identifier and executes approach, tap queue/wildcat merge, transit, inter-lane approach, and final arrival. Reverse lanes and zero endpoints are supported. A ship completes at most one lane leg per turn; unused warp distance does not carry into the next leg. Cancel an itinerary before issuing ordinary movement. The retired instant-warp command is unavailable.
+- Login/registration establish a seven-day HttpOnly, SameSite=Strict session cookie. HTTP and Socket.IO verify it; submitted user IDs cannot change identity. Logout revokes the session and disconnects its sockets. Existing localStorage identity alone is insufficient: sign in again.
+- Production cookies require HTTPS (`NODE_ENV=production`). Keep the browser and API on the same origin. Administrative clear-all is disabled, and resource respawn requires a configured admin secret.
+- `DATABASE_PATH` selects the SQLite file (default `./database.sqlite`). No old-world conversion is provided for the new travel lifecycle.
+
+### Deterministic local QA world
+
+Create a disposable, repeatable two-player scenario for movement and lane testing with:
+
+```bash
+npm run test:world
+```
+
+The command uses `.data/family-test.sqlite` by default and prints the game/sector IDs and test logins (`family-alice` and `family-bob`, password `family-test`). It replaces only the specifically named `Family QA World`; it does not modify the normal `database.sqlite`. To place the scenario elsewhere, set `DATABASE_PATH` explicitly, for example `DATABASE_PATH=/tmp/starfront-family.sqlite npm run test:world`.
+
+Run `npm run test:playability` for the automated movement, lane, authentication, and turn gate. The browser reconnect/restart checklist is in [docs/reviews/2026-09-12-playability-checklist.md](docs/reviews/2026-09-12-playability-checklist.md).
+- Run `npm test` for real SQLite navigation/turn tests and localhost HTTP/Socket.IO authentication tests. Run `npm run build` for the landing build. Tests create only in-memory databases; the initial audit harness now delegates to correctness tests.
+
+Lane ETAs remain estimates: obstacles, congestion, queueing, and per-leg transitions can add turns. A full family playtest and the separate economy/combat findings from the review remain follow-up work.

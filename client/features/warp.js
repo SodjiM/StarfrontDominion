@@ -1,65 +1,11 @@
 // Warp Controller - ESM version (no globals)
 
 export function showWarpConfirmation(client, target) {
-        const distance = Math.sqrt(
-            Math.pow(client.selectedUnit.x - target.x, 2) + 
-            Math.pow(client.selectedUnit.y - target.y, 2)
-        );
-        const modalContent = document.createElement('div');
-        const requiredPrep = (client.selectedUnit?.meta && typeof client.selectedUnit.meta.warpPreparationTurns === 'number')
-            ? client.selectedUnit.meta.warpPreparationTurns
-            : 2;
-        modalContent.innerHTML = `
-            <div class="warp-confirmation">
-                <h3>🌌 Warp Jump Confirmation</h3>
-                <div class="warp-info">
-                    <p><strong>Ship:</strong> ${client.selectedUnit.meta.name}</p>
-                    <p><strong>Destination:</strong> ${target.meta.name || target.type}</p>
-                    <p><strong>Distance:</strong> ${Math.round(distance)} tiles</p>
-                    <p><strong>Preparation Time:</strong> ${requiredPrep} turn${requiredPrep === 1 ? '' : 's'}</p>
-                    <p><strong>Jump Time:</strong> Instant</p>
-                </div>
-                <div class="warp-warning">⚠️ Warp preparation cannot be interrupted once started</div>
-            </div>
-        `;
-        window.UI.showModal({
-            title: '🌌 Warp Jump',
-            content: modalContent,
-            actions: [
-                { text: 'Cancel', style: 'secondary', action: () => true },
-                { text: 'Engage Warp Drive', style: 'primary', action: () => executeWarpOrder(client, target) }
-            ]
-        });
+    client.__plannerTarget = target ? {x:target.x,y:target.y} : null;
+    return import('../ui/map-modal.js').then(m=>m.openMapModal());
 }
-
-export function executeWarpOrder(client, target) {
-        if (client.queueMode) {
-            client.socket.emit('queue-order', {
-                gameId: client.gameId,
-                shipId: client.selectedUnit.id,
-                orderType: 'warp',
-                payload: { targetId: target.id, destination: { x: target.x, y: target.y }, targetName: target.meta.name }
-            }, (resp) => {
-                if (resp && resp.success) client.addLogEntry(`Queued: Warp to ${target.meta.name}`, 'success');
-                else client.addLogEntry(`Failed to queue warp: ${resp?.error || 'error'}`, 'error');
-            });
-            return true;
-        } else {
-            client.socket.emit('warp-ship', {
-                gameId: client.gameId,
-                shipId: client.selectedUnit.id,
-                targetId: target.id,
-                targetX: target.x,
-                targetY: target.y,
-                shipName: client.selectedUnit.meta.name,
-                targetName: target.meta.name
-            });
-            client.addLogEntry(`${client.selectedUnit.meta.name} engaging warp drive. Target: ${target.meta.name}`, 'success');
-            return true;
-        }
-}
-
-export function enterWarpMode(client) { showWarpTargetSelection(client); }
+export function executeWarpOrder(client,target) { showWarpConfirmation(client,target); return true; }
+export function enterWarpMode(client) { return showWarpConfirmation(client); }
 
 export function exitWarpMode(client) {
         if (!client || !client.canvas) return;

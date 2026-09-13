@@ -98,7 +98,7 @@ export function getUnitStatuses(meta, unit) {
         }
 
         // Standardize: prefer movementStatus as the single source of truth; treat movementActive as derived
-        if (unit.movementStatus === 'active' || unit.movement_path || m.moving === true) {
+        if (unit.movementStatus === 'active' || unit.movementStatus === 'blocked' || unit.movement_path || m.moving === true) {
             active.add('moving');
         }
 
@@ -122,5 +122,4 @@ export function getUnitStatuses(meta, unit) {
         return ['idle'];
     }
 }
-
 

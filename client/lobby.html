@@ -39,26 +39,26 @@
                 <button class="sf-btn sf-btn-secondary rounded-xl border border-white/10 bg-white/10 px-3 py-1 hover:bg-white/15" onclick="logout()">Logout</button>
             </div>
         </div>
-        
+
         <div class="games-section grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
             <div class="games-panel sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4">
                 <h2 class="text-lg font-semibold pb-2 border-b border-white/10">💠 Your Games</h2>
                 <div id="userGames" class="loading text-slate-300">Loading your games...</div>
             </div>
-            
+
             <div class="games-panel sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4">
                 <h2 class="text-lg font-semibold pb-2 border-b border-white/10">🧩 Available Games</h2>
                 <div id="availableGames" class="loading text-slate-300">Loading available games...</div>
             </div>
         </div>
-        
+
         <div class="actions flex gap-3 mt-4">
             <button class="sf-btn sf-btn-primary rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-4 py-2 font-semibold shadow-lg shadow-cyan-500/30" onclick="showCreateGameModal()">🚀 Create New Game</button>
             <button class="sf-btn sf-btn-secondary rounded-2xl border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15" onclick="refreshGames()">🔄 Refresh</button>
             <button class="sf-btn sf-btn-secondary rounded-2xl border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15" onclick="window.location.href='/'">← Main Menu</button>
-            <button class="sf-btn sf-btn-danger rounded-2xl bg-rose-500/80 hover:bg-rose-500 text-white px-4 py-2 ml-auto" onclick="clearAllGames()">🗑️ Clear All Games</button>
+
         </div>
-        
+
         <div id="gameDetails" class="game-details sf-card mt-6 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4"></div>
         <div id="error" class="error sf-card mt-4 hidden text-rose-400 text-center"></div>
     </div>
@@ -74,12 +74,12 @@
         function checkAuth() {
             currentUserId = localStorage.getItem('userId');
             const username = localStorage.getItem('username');
-            
+
             if (!currentUserId) {
                 window.location.href = 'login.html';
                 return false;
             }
-            
+
             document.getElementById('username').textContent = `Welcome, ${username}!`;
             return true;
         }
@@ -87,11 +87,11 @@
         // Load games data
         async function loadGames() {
             if (!currentUserId) return;
-            
+
             try {
                 const response = await fetch(`/lobby/games/${currentUserId}`);
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     allGames = data.allGames;
                     userGameIds = data.userGameIds;
@@ -108,17 +108,17 @@
         function renderGames() {
             const userGamesContainer = document.getElementById('userGames');
             const availableGamesContainer = document.getElementById('availableGames');
-            
+
             const userGames = allGames.filter(game => userGameIds.includes(game.id));
             const availableGames = allGames.filter(game => !userGameIds.includes(game.id));
-            
+
             // Render user games
             if (userGames.length === 0) {
                 userGamesContainer.innerHTML = '<div style="text-align: center; color: #666;">No games joined yet</div>';
             } else {
                 userGamesContainer.innerHTML = userGames.map(game => createGameElement(game, true)).join('');
             }
-            
+
             // Render available games
             if (availableGames.length === 0) {
                 availableGamesContainer.innerHTML = '<div style="text-align: center; color: #666;">No available games</div>';
@@ -132,7 +132,7 @@
             const statusClass = `sf-badge sf-badge-${game.status}`;
             const gameClass = `sf-list-item ${isUserGame ? 'user-game' : (game.status !== 'recruiting' ? 'full' : '')}`;
             const turnBadge = (game.status === 'active' && game.current_turn_number) ? `<span class="sf-badge">Turn ${game.current_turn_number}</span>` : '';
-            
+
             return `
                 <div class="game-item ${gameClass}" onclick="selectGame(${game.id})">
                     <div class="game-title">${game.name}</div>
@@ -148,11 +148,11 @@
         // Select a game to view details
         async function selectGame(gameId) {
             selectedGameId = gameId;
-            
+
             try {
                 const response = await fetch(`/lobby/game/${gameId}`);
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     showGameDetails(data);
                 } else {
@@ -169,15 +169,15 @@
             const isUserGame = userGameIds.includes(game.id);
             const canJoin = !isUserGame && game.status === 'recruiting';
             const canLeave = isUserGame;
-            
+
             // Check if current user is the creator (first player to join)
-            const isCreator = game.players.length > 0 && 
+            const isCreator = game.players.length > 0 &&
                              game.players.reduce((first, player) => {
                                  const joinTime = new Date(player.joined_at);
                                  const firstTime = new Date(first.joined_at);
                                  return joinTime < firstTime ? player : first;
                              }).username === localStorage.getItem('username');
-            
+
             detailsContainer.innerHTML = `
                 <h3>🎮 ${game.name}</h3>
                 <div><strong>Mode:</strong> ${game.mode}</div>
@@ -185,7 +185,7 @@
                 <div><strong>Created:</strong> ${new Date(game.created_at).toLocaleString()}</div>
                 ${game.status === 'active' && game.current_turn_number ? `<div><strong>Current Turn:</strong> ${game.current_turn_number}</div>` : ''}
                 ${typeof game.auto_turn_minutes === 'number' ? `<div><strong>Auto Turn:</strong> ${game.auto_turn_minutes} min</div>` : `<div><strong>Auto Turn:</strong> None</div>`}
-                
+
                 <div class="players-list">
                     <h4>Players (${game.players.length}):</h4>
                     ${game.players.map((player, index) => `
@@ -195,7 +195,7 @@
                         </div>
                     `).join('')}
                 </div>
-                
+
                 <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
                     ${canJoin ? `<button class="sf-btn sf-btn-primary" onclick="joinGame(${game.id})">✅ Join Game</button>` : ''}
                     ${canLeave ? `<button class="sf-btn sf-btn-danger" onclick="leaveGame(${game.id})">❌ Leave Game</button>` : ''}
@@ -205,7 +205,7 @@
                     <button class="sf-btn sf-btn-secondary" onclick="hideGameDetails()">Close</button>
                 </div>
             `;
-            
+
             detailsContainer.style.display = 'block';
         }
 
@@ -223,9 +223,9 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: currentUserId, gameId })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     await loadGames();
                     await selectGame(gameId); // Refresh details
@@ -240,16 +240,16 @@
         // Leave a game
         async function leaveGame(gameId) {
             if (!confirm('Are you sure you want to leave this game?')) return;
-            
+
             try {
                 const response = await fetch('/lobby/leave', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: currentUserId, gameId })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     await loadGames();
                     hideGameDetails();
@@ -264,7 +264,7 @@
         // Delete a game (creators only)
         async function deleteGame(gameId, gameName) {
             const confirmText = `Are you sure you want to PERMANENTLY DELETE the game "${gameName}"?\n\nThis action cannot be undone and will:\n• Remove the game from the lobby\n• Delete all game data (sectors, ships, turns, etc.)\n• Remove all players from the game\n\nType "DELETE" to confirm:`;
-            
+
             const confirmation = prompt(confirmText);
             if (confirmation !== 'DELETE') {
                 if (confirmation !== null) {
@@ -272,16 +272,16 @@
                 }
                 return;
             }
-            
+
             try {
                 const response = await fetch(`/lobby/game/${gameId}`, {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: currentUserId })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     alert(`✅ ${data.message}`);
                     await loadGames();
@@ -381,9 +381,9 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name, mode, creatorId: currentUserId, turnLockMinutes })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     await loadGames();
                     await selectGame(data.gameId);
@@ -432,16 +432,16 @@
         // Start a game
         async function startGame(gameId) {
             if (!confirm('Are you sure you want to start this game? Once started, no new players can join.')) return;
-            
+
             try {
                 const response = await fetch(`/game/start/${gameId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: currentUserId })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     alert('Game started successfully! 🚀');
                     await loadGames();
@@ -460,7 +460,8 @@
         }
 
         // Logout
-        function logout() {
+        async function logout() {
+            await fetch('/auth/logout',{method:'POST'});
             localStorage.removeItem('userId');
             localStorage.removeItem('username');
             // Send users to the legacy login page under /play to avoid SPA 404
@@ -473,4 +474,4 @@
         }
     </script>
 </body>
-</html> 
+</html>

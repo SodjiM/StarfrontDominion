@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { GameWorldManager, getCurrentTurnNumberServer, computePilotStats } = require('../services/game/game-world.service');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router);
 
 // Get game state for player
 router.get('/:gameId/state/:userId', async (req, res) => {

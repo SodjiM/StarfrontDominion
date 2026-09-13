@@ -3,10 +3,11 @@ const { z } = require('zod');
 const db = require('../db');
 const { CargoManager } = require('../services/game/cargo-manager');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router);
 
 // Get object cargo (ships, structures, etc.)
-router.get('/cargo/:objectId', (req, res) => {
-    const { objectId } = req.params;
+router.get('/cargo/:cargoObjectId', (req, res) => {
+    const objectId = req.params.cargoObjectId;
     const { userId } = req.query;
 
     db.get('SELECT type, meta, owner_id FROM sector_objects WHERE id = ?', [objectId], (err, object) => {

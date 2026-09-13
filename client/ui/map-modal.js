@@ -53,7 +53,7 @@ export async function loadGalaxyData(game) {
         const galaxyList = document.getElementById('galaxySystemsList'); if (!galaxyList || !game) return;
         const currentSystem = {
             name: game.gameState?.sector?.name || 'Current System',
-            id: game.gameId,
+            id: game.gameState?.sector?.id,
             players: 1,
             status: 'Active',
             turn: game.gameState?.turn?.number || 1,
@@ -76,10 +76,13 @@ export async function loadGalaxyData(game) {
                     <div style="color: #666; font-size: 0.8em;">Multi-system gameplay will be available in future updates</div>
                 </div>
             </div>`;
-        galaxyList.addEventListener('click', (e) => {
-            const row = e.target.closest('[data-action="select-system"]');
-            if (row) selectGalaxySystem(game, Number(row.dataset.systemId));
-        });
+        if (!galaxyList.__systemClickBound) {
+            galaxyList.addEventListener('click', (e) => {
+                const row = e.target.closest('[data-action="select-system"]');
+                if (row) selectGalaxySystem(game, Number(row.dataset.systemId));
+            });
+            galaxyList.__systemClickBound = true;
+        }
     } catch (error) {
         console.error('Error loading galaxy data:', error);
         const galaxyList = document.getElementById('galaxySystemsList');
@@ -88,7 +91,7 @@ export async function loadGalaxyData(game) {
 }
 
 export function selectGalaxySystem(game, systemId) {
-    if (systemId === game.gameId) {
+    if (Number(systemId) === Number(game.gameState?.sector?.id)) {
         try {
             const root = document.querySelector('.map-modal');
             if (!root) return;
@@ -129,11 +132,15 @@ export function openMapModal() {
                             
                             <!-- Overlay Controls -->
                             <div class="map-overlay-controls">
+                                <button class="map-overlay-btn active" data-map-mode="inspect" title="Inspect map">◉</button>
+                                <button class="map-overlay-btn" data-map-mode="select" title="Select ship">🚀</button>
+                                <button class="map-overlay-btn" data-map-mode="plan" title="Plan movement">➤</button>
                                 <button class="map-overlay-btn active" id="toggleLanes" title="Warp Lanes">🛰️</button>
                                 <button class="map-overlay-btn active" id="toggleRegions" title="Regions">🧭</button>
                                 <button class="map-overlay-btn" id="toggleLabels" title="Labels">🏷️</button>
                                 <button class="map-overlay-btn" id="btnRecenter" title="Recenter">⌖</button>
                             </div>
+                            <div id="mapModeHint" class="map-mode-hint">Inspect mode · choose Plan to plot a route</div>
                         </div>
                     </div>
 
@@ -208,6 +215,9 @@ export function openMapModal() {
                     <div class="map-pane">
                         <div class="map-container">
                             <canvas id="galaxyCanvas" class="full-map-canvas"></canvas>
+                            <div class="map-overlay-controls">
+                                <button class="map-overlay-btn" id="galaxyRecenter" title="Recenter galaxy">⌖</button>
+                            </div>
                         </div>
                     </div>
                     <div class="map-sidebar">
@@ -231,8 +241,10 @@ export function openMapModal() {
                 <div class="footer-route-summary" id="footerSummary">
                     <div class="footer-stat">ETA: <span id="footerEta">--</span></div>
                     <div class="footer-stat">Legs: <span id="footerLegs">--</span></div>
+                    <div class="footer-stat">Status: <span id="footerRouteStatus">No route</span></div>
                 </div>
                 <div class="footer-actions">
+                    <div class="warp-preflight" id="warpPreflight">Select a route to review</div>
                     <button class="footer-btn-primary" id="btnExecuteWarp" disabled>Execute Warp</button>
                     <button class="footer-btn-secondary" id="btnCloseMap">Close</button>
                 </div>
@@ -271,7 +283,15 @@ export function openMapModal() {
         
         // Recenter button
         const recenterBtn = modalContent.querySelector('#btnRecenter');
-        if (recenterBtn) recenterBtn.onclick = () => initializeFullMap();
+        if (recenterBtn) recenterBtn.onclick = () => {
+            const ship = client.selectedUnit;
+            if (ship && Number.isFinite(Number(ship.x)) && Number.isFinite(Number(ship.y))) {
+                client.__mapClickMarker = { x: Number(ship.x), y: Number(ship.y), time: Date.now() };
+            }
+            const canvas = document.getElementById('fullMapCanvas');
+            if (canvas?.__view) { canvas.__view.zoom = 1; canvas.__view.panX = 0; canvas.__view.panY = 0; canvas.style.transform = ''; }
+            redrawMap();
+        };
         
         // POI filter chips
         modalContent.querySelectorAll('.poi-filter').forEach(chip => {
@@ -295,11 +315,16 @@ export function openMapModal() {
         const executeBtn = modalContent.querySelector('#btnExecuteWarp');
         if (executeBtn) {
             executeBtn.onclick = () => {
+                if (executeBtn.dataset.busy === '1') return;
+                if (isRouteStale(client)) { markRouteStale(); return; }
                 const selectedRoute = client.__selectedRoute;
                 if (!selectedRoute || !client.selectedUnit?.id) return;
+                executeBtn.dataset.busy = '1'; executeBtn.disabled = true; executeBtn.textContent = 'Confirming…';
+                const status = document.querySelector('#footerRouteStatus'); if (status) status.textContent = 'Confirming';
                 const legs = selectedRoute.legs;
                 const dest = client.__plannerTarget;
                 client.socket && client.socket.emit('travel:confirm', { 
+                    routeId: selectedRoute.routeId,
                     gameId: client.gameId, 
                     sectorId: client.gameState.sector.id, 
                     shipId: client.selectedUnit.id, 
@@ -307,15 +332,17 @@ export function openMapModal() {
                     destX: dest?.x, 
                     destY: dest?.y 
                 }, (resp) => {
-                    if (!resp?.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
+                    if (!resp?.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); executeBtn.dataset.busy = '0'; executeBtn.disabled = false; executeBtn.textContent = 'Execute Warp'; if (status) status.textContent = 'Rejected'; return; }
+                    if (status) status.textContent = 'Queued'; executeBtn.textContent = 'Starting…';
                     client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
                     client.socket.emit('travel:start', { 
                         gameId: client.gameId, 
                         sectorId: client.gameState.sector?.id, 
                         shipId: client.selectedUnit.id 
                     }, (resp2) => {
-                        if (!resp2?.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); return; }
+                        if (!resp2?.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); executeBtn.dataset.busy = '0'; executeBtn.disabled = false; executeBtn.textContent = 'Execute Warp'; if (status) status.textContent = 'Rejected'; return; }
                         client.addLogEntry('Warp initiated', 'success');
+                        if (status) status.textContent = 'Moving';
                         initializeFullMap();
                     });
                 });
@@ -335,6 +362,18 @@ export function openMapModal() {
         const interval = setInterval(() => {
             if (!document.body.contains(modalContent)) { clearInterval(interval); return; }
             updateFooterOrigin();
+            const executeBtn = modalContent.querySelector('#btnExecuteWarp');
+            if (client.__routeMeta && client.__selectedRoute && isRouteStale(client) && executeBtn?.dataset.busy !== '1') {
+                const now = Date.now();
+                if (client.__routeReplanAt && now - client.__routeReplanAt < 5000) return;
+                client.__routeReplanAt = now;
+                const target = client.__plannerTarget;
+                markRouteStale();
+                if (target) {
+                    const status = modalContent.querySelector('#footerRouteStatus'); if (status) status.textContent = 'Replanning';
+                    planToDestination(target);
+                }
+            }
         }, 1000);
         
         // Initialize
@@ -346,6 +385,18 @@ export function openMapModal() {
                 populateSystemDashboard(modalContent);
             } catch (e) { console.error('map init error', e); } 
         }, 100);
+}
+
+function isRouteStale(client) {
+    const m = client?.__routeMeta, s = client?.selectedUnit;
+    return !m || !s || Number(client.gameState?.turn?.number || 0) !== m.turn || s.id !== m.shipId || Math.hypot(Number(s.x) - m.x, Number(s.y) - m.y) > 0.5;
+}
+
+function markRouteStale() {
+    const client = window.gameClient; client.__selectedRoute = null; client.__routeMeta = null;
+    const list = document.getElementById('routesList'); if (list) list.innerHTML = '<div class="routes-empty">Route expired — recalculate to continue</div>';
+    const btn = document.getElementById('btnExecuteWarp'); if (btn) { btn.disabled = true; btn.dataset.busy = '0'; btn.textContent = 'Execute Warp'; }
+    const status = document.getElementById('footerRouteStatus'); if (status) status.textContent = 'Stale';
 }
 
 function bindTabEvents(root) {
@@ -467,7 +518,7 @@ async function populatePOIBrowser(root) {
                 </div>
                 <div class="poi-group-items">
                     ${group.items.map(it => `
-                        <div class="poi-item" data-x="${it.x}" data-y="${it.y}" data-name="${it.name}">
+                        <div class="poi-item" data-object-id="${typeof it.id === 'number' ? it.id : ''}" data-x="${it.x}" data-y="${it.y}" data-name="${it.name}">
                             ${group.icon} ${it.name}
                         </div>
                     `).join('')}
@@ -491,7 +542,7 @@ async function populatePOIBrowser(root) {
             const x = Number(item.dataset.x);
             const y = Number(item.dataset.y);
             const name = item.dataset.name;
-            selectDestination(root, { x, y, name });
+            selectDestination(root, { x, y, name, id: item.dataset.objectId ? Number(item.dataset.objectId) : undefined });
         };
     });
 }
@@ -560,10 +611,14 @@ function showPlannerRoutes(routes) {
         });
         window.__lastPlannedRoutes = list;
         client.__selectedRoute = list[0] || null;
+        client.__routeReplanAt = 0;
+        client.__routeMeta = list.length ? { turn: Number(client.gameState?.turn?.number || 0), shipId: client.selectedUnit?.id, x: Number(client.selectedUnit?.x), y: Number(client.selectedUnit?.y), plannedAt: Date.now() } : null;
         
         // Update footer
         const footerEta = document.querySelector('#footerEta');
         const footerLegs = document.querySelector('#footerLegs');
+        const footerStatus = document.querySelector('#footerRouteStatus');
+        const preflight = document.querySelector('#warpPreflight');
         const executeBtn = document.querySelector('#btnExecuteWarp');
         
         if (list.length === 0) {
@@ -571,16 +626,28 @@ function showPlannerRoutes(routes) {
             if (footerEta) footerEta.textContent = '--';
             if (footerLegs) footerLegs.textContent = '--';
             if (executeBtn) executeBtn.disabled = true;
+            if (footerStatus) footerStatus.textContent = 'No route';
+            if (preflight) preflight.textContent = 'Select a route to review';
             return;
         }
         
         // Enable execute button
         if (executeBtn) executeBtn.disabled = false;
-        if (footerEta) footerEta.textContent = list[0].eta || '--';
+        if (footerStatus) footerStatus.textContent = 'Planned';
+        const summarize = r => { const b = r.breakdown || {}; const impulse = Number(b.impulse || 0); return `ETA ${r.eta ?? '--'} turns · ${r.legs.length} legs · ${r.legs.map(L => L.entry === 'tap' ? 'tap' : 'wild').join(' → ')} · ρ ${Number(r.rho || 0).toFixed(2)}${impulse > 0 ? ` · impulse ${impulse.toFixed(1)}` : ''}`; };
+        if (preflight) preflight.textContent = summarize(list[0]);
+        if (footerEta) footerEta.textContent = list[0].eta ? `${list[0].eta} turns` : '--';
         if (footerLegs) footerLegs.textContent = String(list[0].legs.length);
         
         container.innerHTML = '';
         
+        const formatBreakdown = (b) => {
+            if (!b) return '';
+            const labels = [['approach','approach'],['queue','queue'],['merge','merge'],['warp','warp'],['transfer','transfer'],['finalApproach','final'],['offRamp','off-ramp'],['impulse','impulse']];
+            return labels.filter(([key]) => Number(b[key] || 0) > 0.01)
+                .map(([key, label]) => `${label} ${Number(b[key]).toFixed(1)}`).join(' · ');
+        };
+
         list.forEach((r, idx) => {
             const rho = Number(r.rho || 0);
             const rhoBadgeClass = rho <= 1.0 ? 'rho-good' : (rho <= 1.5 ? 'rho-warn' : 'rho-bad');
@@ -591,11 +658,12 @@ function showPlannerRoutes(routes) {
             
             card.innerHTML = `
                 <div class="route-info">
-                    <div class="route-name">Option ${idx + 1}</div>
+                    <div class="route-name">Option ${idx + 1}${idx === 0 ? ' <span class="route-recommended">Recommended</span>' : ''}</div>
                     <div class="route-meta">${r.legs.map(L => L.entry === 'tap' ? 'tap' : 'wild').join(' → ')}</div>
+                    ${formatBreakdown(r.breakdown) ? `<div class="route-breakdown">${formatBreakdown(r.breakdown)}</div>` : ''}
                 </div>
                 <div class="route-stats">
-                    <span class="route-badge eta">ETA ${r.eta}</span>
+                    <span class="route-badge eta">ETA ${r.eta} turns</span>
                     <span class="route-badge ${rhoBadgeClass}">ρ ${rho.toFixed(2)}</span>
                 </div>
             `;
@@ -605,8 +673,11 @@ function showPlannerRoutes(routes) {
                 container.querySelectorAll('.route-card').forEach(c => c.classList.remove('selected'));
                 card.classList.add('selected');
                 client.__selectedRoute = r;
-                if (footerEta) footerEta.textContent = r.eta || '--';
+                if (footerEta) footerEta.textContent = r.eta ? `${r.eta} turns` : '--';
                 if (footerLegs) footerLegs.textContent = String(r.legs.length);
+                if (preflight) preflight.textContent = summarize(r);
+                const footerDest = document.querySelector('#footerDest');
+                if (footerDest && client.__plannerTarget) footerDest.textContent = `${Math.round(client.__plannerTarget.x)}, ${Math.round(client.__plannerTarget.y)}`;
             };
             
             // Hover to preview - use lightweight redraw
@@ -640,15 +711,19 @@ function planToDestination(dest) {
         
         client.socket && client.socket.emit('travel:plan', { 
             gameId: client.gameId, 
-            sectorId: client.gameState.sector.id, 
+            sectorId: client.gameState.sector.id,
+            shipId: client.selectedUnit?.id,
+            targetObjectId: typeof dest.id === 'number' ? dest.id : undefined,
             from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, 
             to: { x, y } 
         }, (resp) => {
             if (resp?.success && Array.isArray(resp.routes)) {
                 showPlannerRoutes(resp.routes);
-            } else { 
+            } else {
                 const routesList = document.getElementById('routesList'); 
-                if (routesList) routesList.innerHTML = '<div class="routes-empty">No routes found</div>';
+                const code = String(resp?.error || '');
+                const message = code.includes('fuel') ? 'Insufficient fuel for this route' : code.includes('warp') ? 'This ship cannot use warp travel' : code.includes('lane') ? 'No usable warp lane reaches that destination' : (code || 'No safe routes found');
+                if (routesList) routesList.textContent = message;
             }
         });
     } catch (e) { console.error('planToDestination error', e); }
@@ -754,6 +829,102 @@ function redrawMap() {
     renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
 }
 
+async function handleFullMapClick(canvas, ev) {
+    const client = window.gameClient;
+    if (!client?.gameState?.sector?.id) return;
+    const mode = client.__mapMode || 'inspect';
+    if (mode !== 'plan') {
+        if (mode === 'select' && Array.isArray(client.objects)) {
+            const rect = (canvas.parentElement || canvas).getBoundingClientRect();
+            const view = canvas.__view || { zoom: 1, panX: 0, panY: 0 };
+            const wx = (ev.clientX - rect.left - view.panX) / (canvas.width / 5000 * view.zoom);
+            const wy = (ev.clientY - rect.top - view.panY) / (canvas.height / 5000 * view.zoom);
+            const hit = client.objects.filter(o => o && Number.isFinite(o.x) && Number.isFinite(o.y)).sort((a,b) => Math.hypot(wx-a.x, wy-a.y) - Math.hypot(wx-b.x, wy-b.y))[0];
+            if (hit && Math.hypot(wx-hit.x, wy-hit.y) < 80) { client.selectUnit?.(hit.id); redrawMap(); }
+        }
+        return;
+    }
+    const rect = (canvas.parentElement || canvas).getBoundingClientRect();
+    const view = canvas.__view || { zoom: 1, panX: 0, panY: 0 };
+    const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
+    const click = { x: (ev.clientX - rect.left - view.panX) / (scaleX * view.zoom), y: (ev.clientY - rect.top - view.panY) / (scaleY * view.zoom) };
+    client.__mapClickMarker = { x: click.x, y: click.y, time: Date.now() };
+
+    const destEmpty = document.querySelector('#destEmpty');
+    const destInfo = document.querySelector('#destInfo');
+    const destName = document.querySelector('#destName');
+    const destCoords = document.querySelector('#destCoords');
+    const footerDest = document.querySelector('#footerDest');
+    if (destEmpty) destEmpty.style.display = 'none';
+    if (destInfo) destInfo.style.display = 'block';
+    if (destName) destName.textContent = 'Map Location';
+    if (destCoords) destCoords.textContent = `${Math.round(click.x)}, ${Math.round(click.y)}`;
+    if (footerDest) footerDest.textContent = `${Math.round(click.x)}, ${Math.round(click.y)}`;
+    client.__plannerTarget = click;
+
+    const routesList = document.getElementById('routesList');
+    if (routesList) routesList.innerHTML = '<div class="routes-empty">Planning...</div>';
+    try {
+        const routes = await new Promise(resolve => SFApi.Socket.emit('travel:plan', {
+            gameId: client.gameId,
+            sectorId: client.gameState.sector.id,
+            shipId: client.selectedUnit?.id,
+            from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y },
+            to: click
+        }, resolve));
+        if (routes?.success && Array.isArray(routes.routes)) showPlannerRoutes(routes.routes);
+        else if (routesList) routesList.textContent = routes?.error || 'No routes found';
+    } catch {
+        if (routesList) routesList.textContent = 'Unable to plan route';
+    } finally {
+        redrawMap();
+    }
+}
+
+function handleFullMapHover(canvas, ev) {
+    const tip = canvas.__tipEl;
+    if (!tip) return;
+    const rect = (canvas.parentElement || canvas).getBoundingClientRect();
+    const view = canvas.__view || { zoom: 1, panX: 0, panY: 0 };
+    const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
+    const wx = (ev.clientX - rect.left - view.panX) / (scaleX * view.zoom), wy = (ev.clientY - rect.top - view.panY) / (scaleY * view.zoom);
+    const pxScale = (scaleX + scaleY) / 2;
+    const cache = canvas.__laneCache || { edges: [], taps: [] };
+    let tipText = '';
+    for (const t of cache.taps) {
+        if (Math.hypot(wx - t.x, wy - t.y) * pxScale < 12) { tipText = `Tap queue: ${t.queued} CU`; break; }
+    }
+    if (!tipText) {
+        const projectToSegment = (p, a, b) => {
+            const apx = p.x - a.x, apy = p.y - a.y, abx = b.x - a.x, aby = b.y - a.y;
+            const ab2 = Math.max(1e-6, abx * abx + aby * aby);
+            const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / ab2));
+            return { x: a.x + abx * t, y: a.y + aby * t };
+        };
+        let best = { dpx: Infinity, edge: null };
+        for (const edge of cache.edges) for (let i = 1; i < edge.pts.length; i++) {
+            const point = projectToSegment({ x: wx, y: wy }, edge.pts[i - 1], edge.pts[i]);
+            const dpx = Math.hypot(wx - point.x, wy - point.y) * pxScale;
+            if (dpx < best.dpx) best = { dpx, edge };
+        }
+        if (best.edge && best.dpx < 14) tipText = `ρ ${best.edge.rho.toFixed(2)}  • cap ${best.edge.cap}  • headway ${best.edge.headway}`;
+    }
+    if (!tipText) {
+        const facts = canvas.__facts || window.gameClient.__factsCache?.facts;
+        const regions = Array.isArray(facts?.regions) ? facts.regions : [];
+        const cellW = 5000 / 3, cellH = 5000 / 3;
+        let nearest = { dpx: Infinity, id: null, health: 0 };
+        regions.forEach(region => {
+            let cx = 0, cy = 0, n = 0;
+            (region.cells || []).forEach(c => { cx += c.col * cellW + cellW / 2; cy += c.row * cellH + cellH / 2; n++; });
+            if (n) { cx /= n; cy /= n; const dpx = Math.hypot(wx - cx, wy - cy) * pxScale; if (dpx < nearest.dpx) nearest = { dpx, id: String(region.id || '').toUpperCase(), health: Number(region.health || 0) }; }
+        });
+        if (nearest.id && nearest.dpx < 40) tipText = `Region ${nearest.id} (${nearest.health}%)`;
+    }
+    tip.style.display = tipText ? 'block' : 'none';
+    if (tipText) { tip.textContent = tipText; tip.style.left = `${ev.clientX + 12}px`; tip.style.top = `${ev.clientY - 10}px`; }
+}
+
 function initializeFullMap() {
         const client = window.gameClient; const canvas = document.getElementById('fullMapCanvas');
         if (!client || !canvas) return;
@@ -778,49 +949,42 @@ function initializeFullMap() {
             document.body.appendChild(tip);
         }
         canvas.__tipEl = tip;
+        if (!canvas.__mapInputBound) {
+            canvas.addEventListener('click', ev => handleFullMapClick(canvas, ev));
+            canvas.addEventListener('mousemove', ev => handleFullMapHover(canvas, ev));
+            canvas.addEventListener('mouseleave', () => { if (canvas.__tipEl) canvas.__tipEl.style.display = 'none'; });
+            let savedView = null; try { savedView = JSON.parse(localStorage.getItem('ui.mapView') || 'null'); } catch {}
+            canvas.__view = savedView && Number.isFinite(savedView.zoom) ? savedView : { zoom: 1, panX: 0, panY: 0 };
+            const applyView = () => { const v = canvas.__view; canvas.style.transformOrigin = '0 0'; canvas.style.transform = `translate(${v.panX}px, ${v.panY}px) scale(${v.zoom})`; };
+            canvas.addEventListener('wheel', ev => { ev.preventDefault(); const v = canvas.__view; v.zoom = Math.max(1, Math.min(2.5, v.zoom * (ev.deltaY < 0 ? 1.1 : 0.9))); applyView(); try { localStorage.setItem('ui.mapView', JSON.stringify(v)); } catch {} redrawMap(); }, { passive: false });
+            let drag = null;
+            canvas.addEventListener('pointerdown', ev => { if (ev.button === 1 || ev.shiftKey) { drag = { x: ev.clientX, y: ev.clientY, panX: canvas.__view.panX, panY: canvas.__view.panY }; canvas.setPointerCapture(ev.pointerId); } });
+            canvas.addEventListener('pointermove', ev => { if (drag) { canvas.__view.panX = drag.panX + ev.clientX - drag.x; canvas.__view.panY = drag.panY + ev.clientY - drag.y; applyView(); } });
+            canvas.addEventListener('pointerup', () => { drag = null; try { localStorage.setItem('ui.mapView', JSON.stringify(canvas.__view)); } catch {} redrawMap(); });
+            canvas.__mapInputBound = true;
+        }
         (async ()=>{ try { const sid = client.gameState?.sector?.id; if (sid) { const now=Date.now(); if (!client.__factsCache||client.__factsCache.until<=now){ const facts=await SFApi.State.systemFacts(sid); client.__factsCache={facts,until:now+5000}; } buildLaneCache(canvas, client.__factsCache.facts); } } catch {} renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null); })();
-        canvas.onmousemove = (ev)=>{
-            const r = canvas.getBoundingClientRect();
-            const wx = (ev.clientX - r.left) / scaleX, wy = (ev.clientY - r.top) / scaleY;
-            const pxScale = (scaleX + scaleY) / 2;
-            const cache = canvas.__laneCache || { edges: [], taps: [] };
-            let tipText = '';
-            for (const t of cache.taps) { const dpx = Math.hypot(wx - t.x, wy - t.y) * pxScale; if (dpx < 12) { tipText = `Tap queue: ${t.queued} CU`; break; } }
-            if (!tipText) {
-                let best = { dpx: Infinity, edge: null };
-                const projectToSegment = (p,a,b)=>{ const apx=p.x-a.x, apy=p.y-a.y; const abx=b.x-a.x, aby=b.y-a.y; const ab2=Math.max(1e-6,abx*abx+aby*aby); const t=Math.max(0, Math.min(1, (apx*abx+apy*aby)/ab2)); return { x:a.x+abx*t, y:a.y+aby*t, t }; };
-                for (const e of cache.edges) { const pts=e.pts; if (pts.length<2) continue; for (let i=1;i<pts.length;i++){ const pr=projectToSegment({x:wx,y:wy}, pts[i-1], pts[i]); const dpx=Math.hypot(wx-pr.x, wy-pr.y)*pxScale; if (dpx<best.dpx) best={dpx, edge:e}; } }
-                if (best.edge && best.dpx < 14) tipText = `ρ ${best.edge.rho.toFixed(2)}  • cap ${best.edge.cap}  • headway ${best.edge.headway}`;
-            }
-            // Region hover label near centroid when no lane/tap tip
-            if (!tipText) {
-                try {
-                    const factsCache = client.__factsCache;
-                    const facts = (factsCache && factsCache.until > Date.now()) ? factsCache.facts : factsCache?.facts;
-                    const regions = Array.isArray(facts?.regions) ? facts.regions : [];
-                    if (regions.length) {
-                        const cellW = 5000/3, cellH = 5000/3;
-                        let nearest = { dpx: Infinity, id: null, health: 0 };
-                        regions.forEach(rg => {
-                            let cx=0, cy=0, n=0; (rg.cells||[]).forEach(c=>{ cx += (c.col*cellW + cellW/2); cy += (c.row*cellH + cellH/2); n++; });
-                            if (n>0) {
-                                cx/=n; cy/=n;
-                                const dpx = Math.hypot(wx - cx, wy - cy) * pxScale;
-                                if (dpx < nearest.dpx) nearest = { dpx, id: String(rg.id||'').toUpperCase(), health: Number(rg.health||0) };
-                            }
-                        });
-                        if (nearest.id && nearest.dpx < 40) tipText = `Region ${nearest.id} (${nearest.health}%)`;
-                    }
-                } catch {}
-            }
-            if (tipText) { tip.style.display='block'; tip.textContent = tipText; tip.style.left = `${ev.clientX + 12}px`; tip.style.top = `${ev.clientY - 10}px`; }
-            else tip.style.display='none';
-        };
-        canvas.onmouseleave = ()=>{ if (canvas.__tipEl) canvas.__tipEl.style.display='none'; };
         renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
         ['toggleRegions','toggleBelts','toggleWormholes','toggleLanes'].forEach(id => {
             const el = document.getElementById(id); if (!el) return;
-            el.onchange = () => { if (id==='toggleLanes') { try { localStorage.setItem('ui.showLanes', el.checked ? '1' : '0'); } catch {} } initializeFullMap(); };
+            if (el.__mapToggleBound) return;
+            el.addEventListener('click', () => {
+                el.classList.toggle('active');
+                el.setAttribute('aria-pressed', el.classList.contains('active') ? 'true' : 'false');
+                if (id === 'toggleLanes') { try { localStorage.setItem('ui.showLanes', el.classList.contains('active') ? '1' : '0'); } catch {} }
+                redrawMap();
+            });
+            el.__mapToggleBound = true;
+        });
+        document.querySelectorAll('[data-map-mode]').forEach(el => {
+            if (el.__modeBound) return;
+            el.addEventListener('click', () => {
+                client.__mapMode = el.dataset.mapMode;
+                document.querySelectorAll('[data-map-mode]').forEach(other => other.classList.toggle('active', other === el));
+                const hint = document.getElementById('mapModeHint');
+                if (hint) hint.textContent = el.dataset.mapMode === 'plan' ? 'Plan mode · click a destination to calculate routes' : (el.dataset.mapMode === 'select' ? 'Select mode · click a ship or object' : 'Inspect mode · hover for details');
+            });
+            el.__modeBound = true;
         });
 }
 
@@ -830,19 +994,65 @@ async function initializeGalaxyMap() {
         const rect = canvas.getBoundingClientRect();
         canvas.width = Math.max(200, Math.floor(rect.width));
         canvas.height = Math.max(200, Math.floor(rect.height));
-        const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext('2d');
+            canvas.__galaxyView = canvas.__galaxyView || { zoom: 1, panX: 0, panY: 0 };
+            const applyView = () => { const v = canvas.__galaxyView; canvas.style.transformOrigin = '0 0'; canvas.style.transform = `translate(${v.panX}px, ${v.panY}px) scale(${v.zoom})`; };
+            if (!canvas.__galaxyInputBound) {
+                canvas.addEventListener('wheel', ev => { ev.preventDefault(); const v = canvas.__galaxyView; v.zoom = Math.max(1, Math.min(3, v.zoom * (ev.deltaY < 0 ? 1.1 : 0.9))); applyView(); initializeGalaxyMap(); }, { passive: false });
+                let drag = null;
+                canvas.addEventListener('pointerdown', ev => { if (ev.button === 1 || ev.shiftKey) { drag = { x: ev.clientX, y: ev.clientY, panX: canvas.__galaxyView.panX, panY: canvas.__galaxyView.panY }; canvas.setPointerCapture(ev.pointerId); } });
+                canvas.addEventListener('pointermove', ev => { if (drag) { canvas.__galaxyView.panX = drag.panX + ev.clientX - drag.x; canvas.__galaxyView.panY = drag.panY + ev.clientY - drag.y; applyView(); } });
+                canvas.addEventListener('pointerup', () => { drag = null; });
+                canvas.__galaxyInputBound = true;
+            }
+            applyView();
+            const recenter = document.getElementById('galaxyRecenter');
+            if (recenter && !recenter.__bound) { recenter.addEventListener('click', () => { canvas.__galaxyView = { zoom: 1, panX: 0, panY: 0 }; canvas.style.transform = ''; initializeGalaxyMap(); }); recenter.__bound = true; }
         try {
             const graph = await SFApi.State.galaxyGraph(client.gameId); if (!graph || !Array.isArray(graph.systems)) return;
             const systems = graph.systems; const gates = graph.gates || [];
+            // Use a deterministic grid layout so IDs do not create clustered or overlapping nodes.
+            const columns = Math.max(1, Math.ceil(Math.sqrt(systems.length)));
+            const margin = 36;
+            const position = (id) => {
+                const index = Math.max(0, systems.findIndex(s => s.id === id));
+                const col = index % columns, row = Math.floor(index / columns);
+                const rows = Math.max(1, Math.ceil(systems.length / columns));
+                return {
+                    x: margin + (canvas.width - margin * 2) * (columns === 1 ? 0.5 : col / (columns - 1)),
+                    y: margin + (canvas.height - margin * 2) * (rows === 1 ? 0.5 : row / (rows - 1))
+                };
+            };
+            canvas.__galaxyPositions = new Map(systems.map(s => [s.id, position(s.id)]));
+            if (!canvas.__galaxyInputBound) {
+                canvas.addEventListener('click', ev => {
+                    const rect = (canvas.parentElement || canvas).getBoundingClientRect();
+                    const view = canvas.__galaxyView || { zoom: 1, panX: 0, panY: 0 };
+                    const x = (ev.clientX - rect.left - view.panX) / view.zoom, y = (ev.clientY - rect.top - view.panY) / view.zoom;
+                    let nearest = null, distance = Infinity;
+                    for (const [id, p] of canvas.__galaxyPositions || []) {
+                        const d = Math.hypot(x - p.x, y - p.y);
+                        if (d < distance) { distance = d; nearest = id; }
+                    }
+                    if (nearest != null && distance <= 18) {
+                        canvas.__galaxySelectedId = nearest;
+                        selectGalaxySystem(client, nearest);
+                        initializeGalaxyMap();
+                    }
+                });
+                canvas.__galaxyInputBound = true;
+            }
             ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle = '#0b0f1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
             ctx.strokeStyle = 'rgba(100,181,246,0.35)'; ctx.lineWidth = 1.25;
             gates.forEach(e => {
                 const s = systems.find(x=>x.id===e.source), t = systems.find(x=>x.id===e.target); if (!s||!t) return;
-                ctx.beginPath(); ctx.moveTo((s.id%1000)/1000*canvas.width, (s.id%997)/997*canvas.height);
-                ctx.lineTo((t.id%1000)/1000*canvas.width, (t.id%997)/997*canvas.height); ctx.stroke();
+                const sp = canvas.__galaxyPositions.get(s.id), tp = canvas.__galaxyPositions.get(t.id);
+                if (!sp || !tp) return;
+                ctx.beginPath(); ctx.moveTo(sp.x, sp.y); ctx.lineTo(tp.x, tp.y); ctx.stroke();
             });
             systems.forEach(n => {
-                const x = (n.id%1000)/1000*canvas.width, y = (n.id%997)/997*canvas.height; ctx.fillStyle = '#9ecbff'; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#e3f2fd'; ctx.font='11px Arial'; ctx.textAlign='center'; ctx.fillText(n.name || String(n.id), x, y-10);
+                const p = canvas.__galaxyPositions.get(n.id); if (!p) return;
+                ctx.fillStyle = Number(canvas.__galaxySelectedId) === Number(n.id) ? '#ffffff' : '#9ecbff'; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#e3f2fd'; ctx.font='11px Arial'; ctx.textAlign='center'; ctx.fillText(n.name || String(n.id), p.x, p.y-10);
             });
         } catch (e) { console.error('initializeGalaxyMap error:', e); const el=document.getElementById('galaxyLegend'); if (el) el.innerText='Failed to render galaxy map'; }
 }
@@ -965,47 +1175,6 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 const lanes = facts?.lanes || [];
                 const tapsByEdge = facts?.laneTapsByEdge || {};
                 const healthByRegion = new Map((facts?.regions||[]).map(r=>[String(r.id), Number(r.health||50)]));
-                // Map click: select destination and plan routes
-                canvas.onclick = async (ev) => {
-                    const rect = canvas.getBoundingClientRect();
-                    const click = { x: (ev.clientX-rect.left)/scaleX, y: (ev.clientY-rect.top)/scaleY };
-                    
-                    // Visual feedback for click
-                    client.__mapClickMarker = { x: click.x, y: click.y, time: Date.now() };
-                    
-                    // Update destination zone
-                    const destEmpty = document.querySelector('#destEmpty');
-                    const destInfo = document.querySelector('#destInfo');
-                    const destName = document.querySelector('#destName');
-                    const destCoords = document.querySelector('#destCoords');
-                    const footerDest = document.querySelector('#footerDest');
-                    
-                    if (destEmpty) destEmpty.style.display = 'none';
-                    if (destInfo) destInfo.style.display = 'block';
-                    if (destName) destName.textContent = 'Map Location';
-                    if (destCoords) destCoords.textContent = `${Math.round(click.x)}, ${Math.round(click.y)}`;
-                    if (footerDest) footerDest.textContent = `${Math.round(click.x)}, ${Math.round(click.y)}`;
-                    
-                    client.__plannerTarget = click;
-                    
-                    // Plan routes
-                    const routesList = document.getElementById('routesList');
-                    if (routesList) routesList.innerHTML = '<div class="routes-empty">Planning...</div>';
-                    
-                    try {
-                        const routes = await new Promise((resolve)=>{
-                            SFApi.Socket.emit('travel:plan', { gameId: client.gameId, sectorId: client.gameState.sector.id, from: { x: client.selectedUnit?.x, y: client.selectedUnit?.y }, to: click }, (resp)=>resolve(resp));
-                        });
-                        if (routes?.success && Array.isArray(routes.routes)) {
-                            showPlannerRoutes(routes.routes);
-                        } else {
-                            if (routesList) routesList.innerHTML = '<div class="routes-empty">No routes found</div>';
-                            redrawMap();
-                        }
-                    } catch {
-                        redrawMap();
-                    }
-                };
                 // Draw lanes
                 const highlight = client.__laneHighlight && client.__laneHighlight.until > Date.now() ? (client.__laneHighlight.legs||[]) : [];
                 const highlightEdges = new Set(highlight.map(L=>Number(L.edgeId)));
@@ -1321,6 +1490,23 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
             }
         }
 
+        // Persistent navigation markers remain visible after the click ripple fades.
+        const drawNavMarker = (point, color, label, dashed = false) => {
+            if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return;
+            const x = Number(point.x) * scaleX, y = Number(point.y) * scaleY;
+            ctx.save();
+            ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+            if (dashed) ctx.setLineDash([4, 3]);
+            ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x - 13, y); ctx.lineTo(x + 13, y); ctx.moveTo(x, y - 13); ctx.lineTo(x, y + 13); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.font = '600 11px "Inter", "Segoe UI", Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+            ctx.fillText(label, x + 12, y - 8);
+            ctx.restore();
+        };
+        drawNavMarker(client.selectedUnit, '#64b5f6', client.selectedUnit?.name || 'Ship');
+        drawNavMarker(client.__plannerTarget, '#ffca28', 'Destination', true);
+
         // Base objects with labels
         client.objects.forEach(obj => {
             const x = obj.x * scaleX, y = obj.y * scaleY; 
@@ -1406,7 +1592,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
 async function loadGalaxyDataInternal() {
         try {
             const client = window.gameClient; const list = document.getElementById('galaxySystemsList'); if (!client || !list) return;
-            const currentSystem = { name: client.gameState?.sector?.name || 'Current System', id: client.gameId, players: 1, status: 'Active', turn: client.gameState?.turn?.number || 1, celestialObjects: client.objects ? client.objects.filter(o=>client.isCelestialObject(o)).length : 0 };
+            const currentSystem = { name: client.gameState?.sector?.name || 'Current System', id: client.gameState?.sector?.id, players: 1, status: 'Active', turn: client.gameState?.turn?.number || 1, celestialObjects: client.objects ? client.objects.filter(o=>client.isCelestialObject(o)).length : 0 };
             list.innerHTML = `<div class="galaxy-system-card"><div class="galaxy-system-name">${currentSystem.name}</div><div class="galaxy-system-info"><div>👥 ${currentSystem.players} Player${currentSystem.players!==1?'s':''}</div><div>⏰ Turn ${currentSystem.turn}</div><div>🛰️ ${currentSystem.celestialObjects} Celestial Objects</div><div>📈 Status: <span style="color:#4CAF50;">${currentSystem.status}</span></div></div></div>`;
         } catch {}
 }

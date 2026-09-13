@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const router = express.Router();
+require('../middleware/auth').protectRouter(router);
 const CONFIG = require('../config').loadConfig ? require('../config').loadConfig() : null;
 
 // Galaxy graph: systems and interstellar gates
@@ -56,7 +57,7 @@ router.post('/system/:sectorId/respawn-resources', async (req, res) => {
     const { sectorId } = req.params;
     try {
         const secret = req.header('x-admin-secret') || req.query.adminSecret || req.body?.adminSecret;
-        const adminOk = CONFIG?.adminSecret ? (secret === CONFIG.adminSecret) : true;
+        const adminOk = CONFIG?.adminSecret ? (secret === CONFIG.adminSecret) : false;
         if (!adminOk) return res.status(403).json({ error: 'forbidden' });
         const { spawnNodesForSector } = require('../services/world/resource-node-generator');
         const out = await spawnNodesForSector(Number(sectorId));

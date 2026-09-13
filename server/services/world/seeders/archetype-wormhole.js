@@ -36,7 +36,7 @@ function plan({ sectorId, seed, rng }) {
     // Planets
     const planets = [];
     const nPlanets = choice(rng, [4,5,6,7]);
-    const bands = [[600,1200],[1300,2200],[2300,3800]];
+    const bands = [[600,1200],[1300,1800],[1900,2350]];
     for (let i=0;i<nPlanets;i++) {
         const [rMin, rMax] = choice(rng, bands);
         const r = randInt(rng, rMin, rMax);
@@ -46,7 +46,7 @@ function plan({ sectorId, seed, rng }) {
 
     // Belts (>=1)
     const belts = [{ id:'B0', inner: 1500, width: randInt(rng, 250, 400), sectors: randInt(rng,4,7) }];
-    if (rng() < 0.4) belts.push({ id:'B1', inner: 2400, width: randInt(rng, 300, 500), sectors: randInt(rng,4,7) });
+    if (rng() < 0.4) belts.push({ id:'B1', inner: 2000, width: randInt(rng, 250, 350), sectors: randInt(rng,4,7) });
 
     // Wormhole endpoints and links (simple sketch)
     const hubs = randInt(rng, 3, 5);

@@ -4,6 +4,11 @@ const { Abilities } = require('../registry/abilities');
 const { CargoManager } = require('./cargo-manager');
 const { STRUCTURE_TYPES } = require('../../domain/structures');
 
+const STRUCTURE_BUILD_COSTS = Object.freeze({
+    'storage-box': 1, 'warp-beacon': 2, 'interstellar-gate': 5,
+    'sun-station': 8, 'planet-station': 6, 'moon-station': 4
+});
+
 class BuildService {
     // Skeleton: will encapsulate ship/structure build flows
     async canBuildShip({ gameId, userId, sectorId, blueprintId }) {
@@ -25,7 +30,8 @@ class BuildService {
         if (!station) return { success: false, httpStatus: 404, error: 'Station not found or not owned by player' };
 
         // Consume resources (rock only, as per route)
-        const consumed = await CargoManager.removeResourceFromCargo(stationId, 'rock', cost, false);
+        const serverCost = STRUCTURE_BUILD_COSTS[structureType] ?? 1;
+        const consumed = await CargoManager.removeResourceFromCargo(stationId, 'rock', serverCost, false);
         if (!consumed?.success) {
             return { success: false, httpStatus: 400, error: consumed?.error || 'Insufficient resources' };
         }
@@ -49,6 +55,7 @@ class BuildService {
         // Add the structure item to station cargo
         const addResult = await CargoManager.addResourceToCargo(stationId, structureType, 1, false);
         if (!addResult?.success) {
+            await CargoManager.addResourceToCargo(stationId, 'rock', serverCost, false).catch(() => {});
             return { success: false, httpStatus: 500, error: 'Failed to add structure to cargo' };
         }
         return { success: true, structureName: structureTemplate.name };
@@ -63,10 +70,6 @@ class BuildService {
             db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', [shipId, userId, 'ship'], (err, row) => err ? reject(err) : resolve(row || null));
         });
         if (!ship) return { success: false, httpStatus: 404, error: 'Ship not found or not owned by player' };
-
-        // Remove from ship cargo first
-        const removed = await CargoManager.removeResourceFromCargo(shipId, structureType, 1, true);
-        if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Structure not found in ship cargo' };
 
         // Anchored stations special handling
         if (['sun-station', 'planet-station', 'moon-station'].includes(structureType)) {
@@ -87,6 +90,8 @@ class BuildService {
             let vx = ship.x - candidate.x; let vy = ship.y - candidate.y; if (vx === 0 && vy === 0) vx = 1;
             const len = Math.sqrt(vx*vx + vy*vy) || 1; const ring = (candidate.radius || 1) + 1;
             const deployX = Math.round(candidate.x + vx/len * ring); const deployY = Math.round(candidate.y + vy/len * ring);
+            const removed = await CargoManager.removeResourceFromCargo(shipId, structureType, 1, true);
+            if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Structure not found in ship cargo' };
             const stationMeta = JSON.stringify({
                 name: `${structureTemplate.name} ${Math.floor(Math.random() * 1000)}`,
                 stationClass: structureType,
@@ -98,7 +103,7 @@ class BuildService {
             });
             const newStationId = await new Promise((resolve, reject) => {
                 db.run(`INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, parent_object_id) VALUES (?, 'station', ?, ?, ?, ?, ?)`, [ship.sector_id, deployX, deployY, userId, stationMeta, candidate.id], function(err){ if (err) return reject(err); resolve(this.lastID); });
-            });
+            }).catch(async error => { await CargoManager.addResourceToCargo(shipId, structureType, 1, true).catch(() => {}); throw error; });
             let warning = null;
             try { await CargoManager.initializeObjectCargo(newStationId, structureTemplate.cargoCapacity || 50); } catch (_) { warning = 'Station deployed but cargo initialization failed'; }
             return { success: true, structureName: structureTemplate.name, structureId: newStationId, warning };
@@ -116,9 +121,11 @@ class BuildService {
             publicAccess: structureTemplate.publicAccess || false
         });
         const dbStructureType = structureType === 'warp-beacon' ? 'warp-beacon' : 'storage-structure';
+        const removed = await CargoManager.removeResourceFromCargo(shipId, structureType, 1, true);
+        if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Structure not found in ship cargo' };
         const structureId = await new Promise((resolve, reject) => {
             db.run('INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)', [ship.sector_id, dbStructureType, deployX, deployY, userId, structureMeta], function(err){ if (err) return reject(err); resolve(this.lastID); });
-        });
+        }).catch(async error => { await CargoManager.addResourceToCargo(shipId, structureType, 1, true).catch(() => {}); throw error; });
         let warning = null;
         if (structureTemplate.cargoCapacity > 0) {
             try { await CargoManager.initializeObjectCargo(structureId, structureTemplate.cargoCapacity); } catch(_) { warning = 'Structure deployed but cargo initialization failed'; }
@@ -139,10 +146,6 @@ class BuildService {
         });
         if (!destinationSector) return { success: false, httpStatus: 404, error: 'Destination sector not found' };
 
-        // Remove gate item from ship cargo
-        const removed = await CargoManager.removeResourceFromCargo(shipId, 'interstellar-gate', 1, true);
-        if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Interstellar gate not found in ship cargo' };
-
         const gatePairId = `gate_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
         // Gate slots and duplicate connection check
         const originSector = await new Promise((resolve) => db.get('SELECT gate_slots, gates_used FROM sectors WHERE id = ?', [ship.sector_id], (e, row) => resolve(row || null)));
@@ -153,6 +156,9 @@ class BuildService {
         if ((destSector.gates_used || 0) >= (destSector.gate_slots || 3)) return { success: false, httpStatus: 400, error: 'dest_gate_slots_full' };
         const exists = await new Promise((resolve, reject) => db.get(`SELECT 1 FROM sector_objects WHERE sector_id = ? AND type='interstellar-gate' AND json_extract(meta,'$.destinationSectorId') = ? LIMIT 1`, [ship.sector_id, destinationSectorId], (e, r) => e ? reject(e) : resolve(!!r)));
         if (exists) return { success: false, httpStatus: 400, error: 'connection_already_exists' };
+
+        const removed = await CargoManager.removeResourceFromCargo(shipId, 'interstellar-gate', 1, true);
+        if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Interstellar gate not found in ship cargo' };
 
         // Create origin gate
         const originGateX = ship.x + (Math.random() < 0.5 ? -1 : 1);
@@ -245,6 +251,13 @@ class BuildService {
                     resolve(this.lastID);
                 }
             );
+        }).catch(async error => {
+            if (!allowFree) {
+                for (const [resource, quantity] of Object.entries(resourceMap)) {
+                    await CargoManager.addResourceToCargo(stationId, resource, quantity, false).catch(() => {});
+                }
+            }
+            throw error;
         });
 
         let warning = null;
@@ -316,5 +329,3 @@ async function computePilotStats(gameId, userId, currentTurn) {
     const available = Math.max(0, capacity - active - dead);
     return { capacity, active, dead, available };
 }
-
-

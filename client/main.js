@@ -14,6 +14,7 @@ async function apiRequest(endpoint, options = {}) {
     
     try {
         const response = await fetch(url, { ...defaultOptions, ...options });
+        if(response.status===401 && !endpoint.startsWith('/auth/'))window.location.href='login.html';
         const data = await response.json();
         
         return {
@@ -55,7 +56,8 @@ const Session = {
     },
     
     // Clear user session
-    clearUser() {
+    async clearUser() {
+        await fetch('/auth/logout',{method:'POST'});
         localStorage.removeItem('userId');
         localStorage.removeItem('username');
     },

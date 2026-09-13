@@ -122,12 +122,15 @@ class LaneGraphService {
 					const sTap = LaneGraphService.sAt(tapProj, acc);
 					const laneDist = Math.abs(sDest - sTap);
 					const laneTime = laneDist / Math.max(1, v);
-					const approachTime = nearest.d / 120;
+					// The lane ends at the destination projection. The remaining physical
+					// distance to the actual object must be paid as impulse travel.
+					const finalApproachTime = destProj.d / Math.max(1, Number(opts.impulseSpeed)||1);
+					const approachTime = nearest.d / Math.max(1, Number(opts.impulseSpeed)||1);
 					const slotsPerTurn = Math.max(0, Math.floor(Number(e.lane_speed) / Math.max(1, Number(e.headway||40))));
 					const aheadRow = await new Promise((resolve)=>this.db.get(`SELECT COALESCE(SUM(cu), 0) as cu FROM lane_tap_queue WHERE tap_id = ? AND status = 'queued'`, [nearest.t.id], (er, row)=>resolve(row||{cu:0})));
 					const tapQueueEta = slotsPerTurn>0 ? Math.ceil((Number(aheadRow.cu||0) + defaultCu) / (slotsPerTurn * slotCapacityCU)) : 1;
-					const eta = Math.ceil(approachTime + tapQueueEta + laneTime + 1);
-					routes.push({ edgeId: e.id, entry: 'tap', nearestTapId: nearest.t.id, tapQueueEta, eta, rho, speedMult, risk: (rho>1.5?3:(rho>1?2:1)), sStart: sTap, sEnd: sDest, legs: [{ edgeId: e.id, entry: 'tap', sStart: sTap, sEnd: sDest, tapId: nearest.t.id }] });
+					const eta = Math.ceil(approachTime + tapQueueEta + laneTime + finalApproachTime + 1);
+					routes.push({ edgeId: e.id, entry: 'tap', nearestTapId: nearest.t.id, tapQueueEta, eta, rho, speedMult, risk: (rho>1.5?3:(rho>1?2:1)), breakdown: { approach: approachTime, queue: tapQueueEta, lane: laneTime, finalApproach: finalApproachTime, offRamp: 1 }, sStart: sTap, sEnd: sDest, legs: [{ edgeId: e.id, entry: 'tap', sStart: sTap, sEnd: sDest, tapId: nearest.t.id }] });
 				}
 			}
 			// Wildcat candidate (under light load)
@@ -143,9 +146,10 @@ class LaneGraphService {
 				if (health>=60) mergeTurns *= 0.8; else if (health<=40) mergeTurns *= 1.25;
 				if (rho>1) mergeTurns += Math.max(0.5, (rho-1));
 				const mishap = Math.max(0, Math.min(0.4, 0.05 + 0.10*(dMin/dMax) + (rho>1?0.10:0)));
-				const approachTime = dMin / 120;
-				const eta = Math.ceil(approachTime + mergeTurns + laneTime + 1);
-				routes.push({ edgeId: e.id, entry: 'wildcat', mergeTurns: Math.round(Math.max(1, mergeTurns)), mishapChance: mishap, eta, rho, speedMult, risk: (rho>1.5?3:(rho>1?2:2)), sStart: sFrom, sEnd: sDest, legs: [{ edgeId: e.id, entry: 'wildcat', sStart: sFrom, sEnd: sDest, mergeTurns: Math.round(Math.max(1, mergeTurns)) }] });
+				const approachTime = dMin / Math.max(1, Number(opts.impulseSpeed)||1);
+				const finalApproachTime = destProj.d / Math.max(1, Number(opts.impulseSpeed)||1);
+				const eta = Math.ceil(approachTime + mergeTurns + laneTime + finalApproachTime + 1);
+				routes.push({ edgeId: e.id, entry: 'wildcat', mergeTurns: Math.round(Math.max(1, mergeTurns)), mishapChance: mishap, eta, rho, speedMult, risk: (rho>1.5?3:(rho>1?2:2)), breakdown: { approach: approachTime, merge: mergeTurns, lane: laneTime, finalApproach: finalApproachTime, offRamp: 1 }, sStart: sFrom, sEnd: sDest, legs: [{ edgeId: e.id, entry: 'wildcat', sStart: sFrom, sEnd: sDest, mergeTurns: Math.round(Math.max(1, mergeTurns)) }] });
 			}
 		}
 		return routes.sort((a,b)=>a.eta-b.eta).slice(0,3);
@@ -182,7 +186,7 @@ class LaneGraphService {
 		const queuedByTap = new Map(queueRows.map(r => [Number(r.tap_id), Number(r.cu||0)]));
 
 		// Helper cost functions
-		const impulseSpeed = 120;
+		const impulseSpeed = Math.max(1, Number(opts.impulseSpeed)||1);
 		const slotCapacityCU = 2;
 		const slotsPerTurn = (edge)=> Math.max(0, Math.floor(Number(edge.lane_speed) / Math.max(1, Number(edge.headway||40))));
 		const tapQueueTurns = (edge, tapId) => {
@@ -259,8 +263,8 @@ class LaneGraphService {
 				const a = edgeNodes[i], b = edgeNodes[i+1];
 				const { turns: tAB, rho: rhoAB } = laneTimeTurns(e, a.s, b.s);
 				const { turns: tBA, rho: rhoBA } = laneTimeTurns(e, b.s, a.s);
-				addEdge(a.key, b.key, tAB, { type: 'lane', edgeId: e.id, sStart: a.s, sEnd: b.s, rho: rhoAB });
-				addEdge(b.key, a.key, tBA, { type: 'lane', edgeId: e.id, sStart: b.s, sEnd: a.s, rho: rhoBA });
+				addEdge(a.key, b.key, tAB, { type: 'lane', edgeId: e.id, sStart: a.s, sEnd: b.s, tapId: a.type === 'tap' ? a.key.split(':T')[1] : undefined, rho: rhoAB });
+				addEdge(b.key, a.key, tBA, { type: 'lane', edgeId: e.id, sStart: b.s, sEnd: a.s, tapId: b.type === 'tap' ? b.key.split(':T')[1] : undefined, rho: rhoBA });
 			}
 		}
 
@@ -362,7 +366,10 @@ class LaneGraphService {
 				}
 
 				const d = Math.hypot(nodePos.x - toP.x, nodePos.y - toP.y);
-				addEdge(n, DST, (d / impulseSpeed) + offRampPenalty, { type: 'to_dest', edgeId: e.id, sStart, sEnd: geom.sDest });
+				// A tap is a valid impulse destination directly. It must not be
+				// reconstructed as a lane ride to the destination projection.
+				if (n.includes(':T')) addEdge(n, DST, d / impulseSpeed, { type: 'direct_to_dest' });
+				else addEdge(n, DST, (d / impulseSpeed) + offRampPenalty, { type: 'to_dest', edgeId: e.id, sStart, sEnd: geom.sDest });
 			}
 		}
 
@@ -380,7 +387,7 @@ class LaneGraphService {
 			for (const e of nbrs) {
 				const nd = cur.d + e.cost;
 				if (nd < (dist.get(e.to) ?? Infinity)) {
-					dist.set(e.to, nd); prev.set(e.to, cur.node); prevMeta.set(e.to, e.meta || {}); pq.push({ node:e.to, d: nd });
+					dist.set(e.to, nd); prev.set(e.to, cur.node); prevMeta.set(e.to, { ...(e.meta || {}), _cost: e.cost }); pq.push({ node:e.to, d: nd });
 				}
 			}
 		}
@@ -395,12 +402,31 @@ class LaneGraphService {
 		const legs = [];
 		let currentLeg = null;
 		let rhoMax = 0;
+		const breakdown = { approach: 0, queue: 0, merge: 0, warp: 0, transfer: 0, finalApproach: 0, offRamp: 0, impulse: 0 };
 
 		for (const h of hops) {
 			const m = h.meta;
-			if (m.type === 'lane' || m.type === 'to_dest' || m.type === 'origin_to_wildcat') {
+			const hopCost = Math.max(0, Number(m._cost || 0));
+			if (m.type === 'origin_to_tap') {
+				const tap = edgeGeom.get(m.edgeId)?.taps.find(t => Number(t.id) === Number(m.tapId));
+				const approach = tap ? Math.hypot(fromP.x - tap.x, fromP.y - tap.y) / impulseSpeed : hopCost;
+				breakdown.approach += Math.min(hopCost, approach);
+				breakdown.queue += Math.max(0, hopCost - approach);
+			} else if (m.type === 'origin_to_wildcat') {
+				const merge = Number(m.mergeTurns || 0);
+				breakdown.approach += Math.max(0, hopCost - merge);
+				breakdown.merge += Math.min(hopCost, merge);
+			} else if (m.type === 'lane') breakdown.warp += hopCost;
+			else if (m.type === 'transfer') breakdown.transfer += hopCost;
+			else if (m.type === 'to_dest') { breakdown.finalApproach += Math.max(0, hopCost - offRampPenalty); breakdown.offRamp += Math.min(hopCost, offRampPenalty); }
+			else if (m.type === 'direct_to_dest' || m.type === 'gate_to_dest') breakdown.finalApproach += hopCost;
+			else if (m.type === 'direct_impulse') breakdown.impulse += hopCost;
+			if (m.type === 'origin_to_tap') {
+				if (currentLeg) legs.push(currentLeg);
+				currentLeg = { edgeId: m.edgeId, entry: 'tap', sStart: edgeGeom.get(m.edgeId)?.taps.find(t => Number(t.id) === Number(m.tapId))?.s ?? 0, sEnd: edgeGeom.get(m.edgeId)?.taps.find(t => Number(t.id) === Number(m.tapId))?.s ?? 0, tapId: m.tapId };
+			} else if (m.type === 'lane' || m.type === 'origin_to_wildcat') {
 				const edgeId = m.edgeId;
-				const entry = m.type === 'origin_to_wildcat' ? 'wildcat' : (m.type === 'lane' || m.type === 'to_dest' ? (h.from.includes(':T') ? 'tap' : 'wildcat') : 'wildcat');
+				const entry = m.type === 'origin_to_wildcat' ? 'wildcat' : (h.from.includes(':T') ? 'tap' : 'wildcat');
 				const sStart = m.sStart;
 				const sEnd = m.sEnd ?? m.sStart; // for wildcat entry points, sEnd is sStart
 				const tapId = m.tapId;
@@ -413,7 +439,7 @@ class LaneGraphService {
 					currentLeg = { edgeId, entry, sStart, sEnd, tapId, mergeTurns: m.mergeTurns };
 				}
 				if (typeof m.rho === 'number') rhoMax = Math.max(rhoMax, m.rho);
-			} else {
+			} else if (m.type !== 'direct_to_dest' && m.type !== 'to_dest') {
 				if (currentLeg) { legs.push(currentLeg); currentLeg = null; }
 			}
 		}
@@ -422,8 +448,9 @@ class LaneGraphService {
 		// Drop zero-length legs
 		const filtered = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-6 || L.entry === 'wildcat');
 		const eta = Math.ceil(dist.get(DST));
+		breakdown.total = dist.get(DST);
 		
-		return [{ eta, rho: rhoMax, risk: (rhoMax>1.5?3:(rhoMax>1?2:1)), legs: filtered }];
+		return [{ eta, rho: rhoMax, risk: (rhoMax>1.5?3:(rhoMax>1?2:1)), breakdown, legs: filtered }];
 	}
 
 	// Helper to interpolate world point at arclength s on polyline
@@ -468,7 +495,7 @@ class LaneGraphService {
 				// Estimate costs
 				const { rho: rho1, v: v1 } = this.computeRhoAndSpeed(e1, runtimeByEdge.get(e1.id), healthByRegion.get(String(e1.region_id)) || 50);
 				const { rho: rho2, v: v2 } = this.computeRhoAndSpeed(e2, runtimeByEdge.get(e2.id), healthByRegion.get(String(e2.region_id)) || 50);
-				const approachTime = nearest1.d / 120;
+				const approachTime = nearest1.d / Math.max(1, Number(opts.impulseSpeed)||1);
 				const laneTime1 = 0; // starting at tap
 				const transferPenalty = 1; // turns to transfer between edges
 				const laneTime2 = Math.abs(s2End - s2Start) / Math.max(1, v2);
@@ -489,4 +516,3 @@ class LaneGraphService {
 }
 
 module.exports = { LaneGraphService };
-

@@ -41,6 +41,7 @@ export function confirmRoute(client, route, onRedraw) {
     try { client.__laneHighlight = { until: Date.now()+6000, legs }; redraw && redraw(); } catch {}
     const dest = (client && client.__laneHighlight && client.__plannerTarget) ? client.__plannerTarget : (client && client.__plannerTarget) ? client.__plannerTarget : null;
     client.socket && client.socket.emit('travel:confirm', {
+        routeId: route.routeId,
         gameId: client.gameId,
         sectorId: client.gameState.sector.id,
         shipId: client.selectedUnit.id,

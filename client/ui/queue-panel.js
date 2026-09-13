@@ -9,10 +9,11 @@ export function renderQueueList(game, shipId, orders) {
             const obj = game.objects && game.objects.find(o => o.id === shipId);
             if (obj) {
                 let activeLabel = '';
-                if (obj.movementActive && (obj.plannedDestination || (obj.movementPath && obj.movementPath.length>1))) {
+                if ((obj.movementActive || obj.movementStatus === 'blocked') && (obj.plannedDestination || (obj.movementPath && obj.movementPath.length>1))) {
                     const dest = obj.plannedDestination || (obj.movementPath && obj.movementPath[obj.movementPath.length-1]);
-                    if (dest && typeof dest.x === 'number' && typeof dest.y === 'number') activeLabel = `Active: Move to (${dest.x},${dest.y})`;
-                    else activeLabel = 'Active: Moving';
+                    const prefix = obj.movementStatus === 'blocked' ? 'Blocked; retrying' : 'Active';
+                    if (dest && typeof dest.x === 'number' && typeof dest.y === 'number') activeLabel = `${prefix}: Move to (${dest.x},${dest.y})`;
+                    else activeLabel = `${prefix}: Moving`;
                 }
                 if (activeLabel) {
                     headerItems.push(`<div class=\"log-entry\" style=\"background: rgba(76,175,80,0.15); border-left: 3px solid rgba(76,175,80,0.6);\">\n                        <span>${activeLabel}</span>\n                    </div>`);
@@ -70,5 +71,4 @@ export function clearQueue(game, shipId) {
         Queue.clear(game, shipId);
         loadQueueLog(game, shipId, true);
 }
-
 
