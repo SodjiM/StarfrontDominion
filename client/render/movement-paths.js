@@ -1,5 +1,7 @@
 // Starfront: Dominion - Movement paths renderer (global namespace)
 
+import { calculatePlannedETA } from '../utils/planned-movement.js';
+
 (function(){
     function calculateETA(path, movementSpeed, selectedUnitMeta, currentTurn) {
         if (!path || path.length <= 1) return 0;
@@ -14,10 +16,41 @@
         return Math.ceil(distance / Math.max(1, effectiveSpeed));
     }
 
+    // Movement is still resolved on the full tile path. This only removes
+    // redundant collinear points for drawing, so long routes do not look like
+    // a staircase of tiny line segments or spend needless canvas work on them.
+    function simplifyPath(path) {
+        if (!Array.isArray(path) || path.length < 3) return path || [];
+        const result = [path[0]];
+        let previousDx = Math.sign(path[1].x - path[0].x);
+        let previousDy = Math.sign(path[1].y - path[0].y);
+        for (let i = 1; i < path.length - 1; i++) {
+            const dx = Math.sign(path[i + 1].x - path[i].x);
+            const dy = Math.sign(path[i + 1].y - path[i].y);
+            if (dx !== previousDx || dy !== previousDy) result.push(path[i]);
+            previousDx = dx;
+            previousDy = dy;
+        }
+        result.push(path[path.length - 1]);
+        return result;
+    }
+
+    function drawPolyline(ctx, points, project) {
+        if (!Array.isArray(points) || points.length < 2) return;
+        ctx.beginPath();
+        points.forEach((point, index) => {
+            const screen = project(point);
+            if (index === 0) ctx.moveTo(screen.x, screen.y);
+            else ctx.lineTo(screen.x, screen.y);
+        });
+        ctx.stroke();
+    }
+
     function drawSingleMovementPath(ctx, centerX, centerY, ship, isLingering, camera, tileSize, userId, selectedUnit, gameState) {
         let hasOldPath = ship.movementPath && ship.movementPath.length > 1;
         const hasNewSegments = ship.movementSegments && ship.movementSegments.length > 0;
-        if (!hasOldPath && !hasNewSegments) return;
+        const hasLaneTransit = ship.laneTransit && Array.isArray(ship.laneTransit.polyline) && ship.laneTransit.polyline.length > 1;
+        if (!hasOldPath && !hasNewSegments && !hasLaneTransit) return;
 
         if (isLingering && ship.movementStatus === 'active') return;
         if (!isLingering && ship.movementStatus === 'completed' && !ship.movementActive) return;
@@ -47,6 +80,13 @@
             ctx.setLineDash([5, 5]);
         }
 
+        if (hasLaneTransit && !isLingering) {
+            ctx.strokeStyle = isSelected ? '#e1bee7' : '#b388ff';
+            ctx.lineWidth = isSelected ? 3.5 : 2.5;
+            ctx.globalAlpha = isSelected ? 0.95 : 0.72;
+            ctx.setLineDash([8, 6]);
+        }
+
         // If actively moving but path missing, synthesize a temporary path from current -> plannedDestination
         let synthesizedPath = null;
         if (!hasOldPath && ship.movementActive && ship.plannedDestination && typeof ship.plannedDestination.x === 'number') {
@@ -56,27 +96,31 @@
 
         // Draw active path first if present (real or synthesized)
         if (hasOldPath) {
-            const path = (synthesizedPath && synthesizedPath.length > 1) ? synthesizedPath : ship.movementPath;
-            ctx.beginPath();
-            for (let i = 0; i < path.length; i++) {
-                const tile = path[i];
-                const screenX = centerX + (tile.x - camera.x) * tileSize;
-                const screenY = centerY + (tile.y - camera.y) * tileSize;
-                if (i === 0) ctx.moveTo(screenX, screenY); else ctx.lineTo(screenX, screenY);
-            }
-            ctx.stroke();
+            const path = simplifyPath((synthesizedPath && synthesizedPath.length > 1) ? synthesizedPath : ship.movementPath);
+            drawPolyline(ctx, path, tile => ({
+                x: centerX + (tile.x - camera.x) * tileSize,
+                y: centerY + (tile.y - camera.y) * tileSize
+            }));
+        }
+
+        if (hasLaneTransit && !isLingering) {
+            const lanePath = simplifyPath(ship.laneTransit.polyline);
+            drawPolyline(ctx, lanePath, tile => ({
+                x: centerX + (tile.x - camera.x) * tileSize,
+                y: centerY + (tile.y - camera.y) * tileSize
+            }));
         }
 
         // Then queued future segments (if any), ensuring continuous chain visualization
         if (hasNewSegments) {
             ship.movementSegments.forEach(segment => {
                 ctx.beginPath();
-                const fromScreenX = centerX + (segment.from.x - camera.x) * tileSize;
-                const fromScreenY = centerY + (segment.from.y - camera.y) * tileSize;
-                const toScreenX = centerX + (segment.to.x - camera.x) * tileSize;
-                const toScreenY = centerY + (segment.to.y - camera.y) * tileSize;
-                ctx.moveTo(fromScreenX, fromScreenY);
-                ctx.lineTo(toScreenX, toScreenY);
+                const path = Array.isArray(segment.path) && segment.path.length > 1 ? segment.path : [segment.from, segment.to];
+                path.forEach((tile, index) => {
+                    const screenX = centerX + (tile.x - camera.x) * tileSize;
+                    const screenY = centerY + (tile.y - camera.y) * tileSize;
+                    if (index === 0) ctx.moveTo(screenX, screenY); else ctx.lineTo(screenX, screenY);
+                });
                 ctx.stroke();
             });
         }
@@ -86,7 +130,7 @@
         ctx.setLineDash([]);
         
         // Warp Streak Effect for ships in lanes
-        const isInLane = ship.movementStatus === 'warp' || (this && this.__laneTransitsCache?.rows?.some(r => r.shipId === ship.id));
+        const isInLane = hasLaneTransit || ship.movementStatus === 'warp' || (this && this.__laneTransitsCache?.rows?.some(r => r.shipId === ship.id));
         if (isInLane && !isLingering) {
             ctx.save();
             const streakLen = 20;
@@ -121,7 +165,7 @@
             destinationPoint = path[path.length - 1];
         }
 
-        if (destinationPoint) {
+        if (destinationPoint && !hasLaneTransit) {
             const destScreenX = centerX + (destinationPoint.x - camera.x) * tileSize;
             const destScreenY = centerY + (destinationPoint.y - camera.y) * tileSize;
             if (isLingering) {
@@ -136,16 +180,19 @@
                 ctx.arc(destScreenX, destScreenY, isSelected ? 8 : 6, 0, Math.PI * 2);
                 ctx.fill();
                 if (isSelected || isOwned) {
-                    let eta = ship.movementETA;
-                    let usingServerETA = ship.movementETA !== undefined;
+                    let eta = ship.plannedETA;
+                    let usingPlanETA = ship.plannedETA !== undefined;
+                    if (eta === undefined && (hasNewSegments || hasOldPath)) eta = calculatePlannedETA(ship, selectedUnit);
+                    let usingServerETA = ship.movementETA !== undefined && !hasNewSegments;
+                    if (eta === undefined) eta = ship.movementETA;
                     if (eta === undefined && hasOldPath) {
                         eta = calculateETA(ship.movementPath, ship.meta && ship.meta.movementSpeed || 1, selectedUnit && selectedUnit.meta, gameState && gameState.currentTurn);
-                        usingServerETA = false;
+                        usingPlanETA = false;
                     } else if (eta === undefined) {
                         eta = 0; usingServerETA = false;
                     }
                     if (isSelected && (!this._lastETADebug || this._lastETADebug !== `${ship.id}-${eta}`)) {
-                        if (window.SF_DEV_MODE) console.log(`📊 ETA Display: Ship ${ship.id} showing ${eta}T (${usingServerETA ? 'server-provided' : 'client-calculated'})`);
+                        if (window.SF_DEV_MODE) console.log(`📊 ETA Display: Ship ${ship.id} showing ${eta}T (${usingPlanETA ? 'full-plan' : (usingServerETA ? 'server-provided' : 'client-calculated')})`);
                         this._lastETADebug = `${ship.id}-${eta}`;
                     }
                     if (eta > 0) {
@@ -164,7 +211,7 @@
     function drawMovementPaths(ctx, canvas, objects, userId, camera, tileSize, selectedUnit, gameState, trailBuffer) {
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2;
-        const activeShips = objects.filter(obj => obj.type === 'ship' && obj.movementPath && obj.movementPath.length > 1 && obj.movementActive && obj.movementStatus === 'active' && (obj.visibilityStatus && obj.visibilityStatus.visible || obj.owner_id === userId));
+        const activeShips = objects.filter(obj => obj.type === 'ship' && (obj.movementPath && obj.movementPath.length > 1 && obj.movementActive && obj.movementStatus === 'active' || obj.laneTransit) && (obj.visibilityStatus && obj.visibilityStatus.visible || obj.owner_id === userId));
         const serverLingeringShips = [];
 
         const currentTurn = gameState && gameState.currentTurn && gameState.currentTurn.turn_number || 1;
@@ -175,27 +222,43 @@
             const alpha = Math.max(0.06, 0.28 - age * 0.02);
             ctx.save();
             ctx.strokeStyle = `rgba(100, 181, 246, ${alpha})`;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = age === 0 ? 2.5 : 1.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
             ctx.setLineDash([]);
+
+            // A history row is one turn's displacement, not one visual arrow.
+            // Chain contiguous rows per ship/turn and place a single arrow at
+            // the newest end so trails read as movement direction instead of
+            // a dense row of chevrons.
+            const chains = new Map();
             segs.forEach(seg => {
-                const x1 = centerX + (seg.from.x - camera.x) * tileSize;
-                const y1 = centerY + (seg.from.y - camera.y) * tileSize;
-                const x2 = centerX + (seg.to.x - camera.x) * tileSize;
-                const y2 = centerY + (seg.to.y - camera.y) * tileSize;
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.stroke();
-                const vx = x2 - x1, vy = y2 - y1;
-                const len = Math.hypot(vx, vy) || 1;
-                const ux = vx / len, uy = vy / len;
-                const ah = Math.max(2, tileSize * 0.25);
-                const px = x2 - ux * ah, py = y2 - uy * ah;
+                const key = String(seg.shipId ?? `${seg.from?.x},${seg.from?.y}`);
+                if (!chains.has(key)) chains.set(key, []);
+                const chain = chains.get(key);
+                const last = chain[chain.length - 1];
+                if (last && last.x === seg.from.x && last.y === seg.from.y) chain.push({ x: seg.to.x, y: seg.to.y });
+                else if (!chain.length) chain.push({ x: seg.from.x, y: seg.from.y }, { x: seg.to.x, y: seg.to.y });
+                else chain.push({ x: seg.from.x, y: seg.from.y }, { x: seg.to.x, y: seg.to.y });
+            });
+            chains.forEach(chain => {
+                const points = simplifyPath(chain);
+                drawPolyline(ctx, points, point => ({
+                    x: centerX + (point.x - camera.x) * tileSize,
+                    y: centerY + (point.y - camera.y) * tileSize
+                }));
+                const end = points[points.length - 1], prev = points[points.length - 2];
+                const x2 = centerX + (end.x - camera.x) * tileSize;
+                const y2 = centerY + (end.y - camera.y) * tileSize;
+                const vx = x2 - (centerX + (prev.x - camera.x) * tileSize);
+                const vy = y2 - (centerY + (prev.y - camera.y) * tileSize);
+                const len = Math.hypot(vx, vy) || 1, ux = vx / len, uy = vy / len;
+                const ah = Math.max(3, Math.min(8, tileSize * 0.22));
                 ctx.beginPath();
                 ctx.moveTo(x2, y2);
-                ctx.lineTo(px + (-uy) * ah * 0.4, py + (ux) * ah * 0.4);
+                ctx.lineTo(x2 - ux * ah - uy * ah * 0.55, y2 - uy * ah + ux * ah * 0.55);
                 ctx.moveTo(x2, y2);
-                ctx.lineTo(px + (uy) * ah * 0.4, py + (-ux) * ah * 0.4);
+                ctx.lineTo(x2 - ux * ah + uy * ah * 0.55, y2 - uy * ah - ux * ah * 0.55);
                 ctx.stroke();
             });
             ctx.restore();
@@ -230,5 +293,3 @@
         window.SFRenderers.movement = { drawMovementPaths };
     }
 })();
-
-

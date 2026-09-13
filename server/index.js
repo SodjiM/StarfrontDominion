@@ -81,11 +81,11 @@ protectedApi.get('/game/ability-cooldowns/:shipId', async (req, res) => {
 });
 protectedApi.get('/game/sector/:sectorId/trails', async (req, res) => {
     const { sectorId } = req.params;
-    const { sinceTurn, maxAge = 10 } = req.query;
+        const { sinceTurn, maxAge = 10 } = req.query;
     try {
         const { MovementService } = require('./services/game/movement.service');
         const svc = new MovementService();
-        const result = await svc.getSectorTrails({ sectorId, sinceTurn, maxAge });
+        const result = await svc.getSectorTrails({ sectorId, sinceTurn, maxAge, userId: req.userId });
         if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error });
         res.json({ turn: result.turn, maxAge: result.maxAge, segments: result.segments });
     } catch (e) {
@@ -332,11 +332,12 @@ async function processSingleMovement(order, turnNumber, gameId) {
                             if (fromTile) {
                                 db.run(
                                     `INSERT INTO movement_history 
-                                     (object_id, game_id, turn_number, from_x, from_y, to_x, to_y, movement_speed) 
-                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                                     (object_id, game_id, sector_id, turn_number, from_x, from_y, to_x, to_y, movement_speed)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                                     [
                                         order.object_id, 
                                         gameId, 
+                                        order.sector_id,
                                         turnNumber, 
                                         fromTile.x, 
                                         fromTile.y, 
@@ -402,6 +403,8 @@ async function processSingleMovement(order, turnNumber, gameId) {
 
 // Materialize one queued order per idle ship for the upcoming turn
 async function materializeQueuedOrders(gameId, upcomingTurn) {
+    return new (require('./services/game/queued-action.service').QueuedActionService)(db).materializeForTurn(gameId, upcomingTurn);
+    /* Deprecated implementation retained below only as migration reference.
     // Find ships in this game that are not currently moving/warping or harvesting
     const ships = await new Promise((resolve) => {
         db.all(
@@ -552,6 +555,8 @@ async function materializeQueuedOrders(gameId, upcomingTurn) {
             console.warn('materializeQueuedOrders error for ship', ship.ship_id, e?.message || e);
         }
     }
+}
+    */
 }
 
 // STAGE 3 OPTIMIZATION: Parallel processing for all players visibility updates

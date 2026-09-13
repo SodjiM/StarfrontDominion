@@ -1,6 +1,6 @@
 const db = require('../../../db');
 const { BaseStep } = require('./base-step');
-const { hashString, mulberry32 } = require('../rng');
+const { hashString, createRngStreams } = require('../rng');
 const { resolveKey } = require('../unified-archetype-registry');
 
 class SelectArchetypeStep extends BaseStep {
@@ -15,11 +15,11 @@ class SelectArchetypeStep extends BaseStep {
         }
         const seedBase = Number(options.seedBase ?? 0);
         const seed = seedBase ^ Number(context.sectorId || 0) ^ hashString(String(archetype || ''));
-        context.archetype = archetype; context.seed = seed; context.rng = mulberry32(seed);
+        context.archetype = archetype; context.seed = seed >>> 0; context.rngStreams = createRngStreams(context.seed); context.rng = context.rngStreams.layout;
+        await new Promise((resolve, reject) => db.run('UPDATE sectors SET archetype = ?, generation_seed = ?, generation_completed = 0 WHERE id = ?', [archetype, context.seed, context.sectorId], (e) => e ? reject(e) : resolve()));
         this.result = { archetype, seed };
     }
 }
 
 module.exports = { SelectArchetypeStep };
-
 

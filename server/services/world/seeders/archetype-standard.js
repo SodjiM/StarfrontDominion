@@ -9,7 +9,7 @@ function plan({ sectorId, seed, rng }) {
     const bands = [[800,1400],[1500,2300],[2400,3800]];
     for (let i=0;i<n;i++) { const [rMin,rMax]=choice(rng,bands); const r=randInt(rng,rMin,rMax); const a=randFloat(rng,0,Math.PI*2); planets.push({id:`P${i}`, x:2500+Math.cos(a)*r, y:2500+Math.sin(a)*r}); }
     const belts = [{ id:'B0', inner: 1800, width: 300, sectors: 5 }];
-    return { regions, sun, planets, belts };
+    return { regions, sun, planets, belts, seed };
 }
 
 async function persist({ sectorId, plan, db }) {
@@ -38,13 +38,11 @@ async function persist({ sectorId, plan, db }) {
             [sectorId, Math.round(p.x), Math.round(p.y), meta, sunId],
             function(e){ return e?reject(e):resolve(this.lastID); }
         ));
-        const moonCount = Math.random() < 0.6 ? 1 : 0; // occasional moon
-        for (let m=0;m<moonCount;m++) {
-            const dist = 18 + Math.floor(Math.random()*14);
-            const ang = Math.random()*Math.PI*2;
-            const mx = Math.round(p.x + Math.cos(ang)*dist);
-            const my = Math.round(p.y + Math.sin(ang)*dist);
-            const mMeta = JSON.stringify({ name: `${p.id}-M${m}`, celestial:true, scannable:true, alwaysKnown:1 });
+        for (let m=0;m<(p.moons||[]).length;m++) {
+            const moon = p.moons[m];
+            const mx = Math.round(p.x + Math.cos(moon.angle)*moon.distance);
+            const my = Math.round(p.y + Math.sin(moon.angle)*moon.distance);
+            const mMeta = JSON.stringify({ name: moon.id, celestial:true, scannable:true, alwaysKnown:1, orbitRadius:moon.distance, orbitAngle:moon.angle });
             await new Promise((resolve,reject)=>db.run(
                 `INSERT INTO sector_objects (sector_id, type, celestial_type, x, y, owner_id, meta, radius, parent_object_id)
                  VALUES (?, 'moon', 'moon', ?, ?, NULL, ?, 6, ?)`,
@@ -82,5 +80,3 @@ async function persist({ sectorId, plan, db }) {
 }
 
 module.exports = { plan, persist };
-
-

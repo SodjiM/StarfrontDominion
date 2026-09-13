@@ -249,11 +249,25 @@ const Modal = {
                 // Map generic styles to modern sf-btn variants
                 const styleMap = { primary: 'sf-btn sf-btn-primary', secondary: 'sf-btn sf-btn-secondary', danger: 'sf-btn sf-btn-danger' };
                 btn.className = styleMap[action.style || 'primary'] || 'sf-btn sf-btn-primary';
-                btn.onclick = () => {
+                btn.onclick = async () => {
+                    if (btn.disabled) return;
+
                     const result = action.action ? action.action() : null;
-                    if (result !== false) {
-                        this.close(modal);
+                    if (result && typeof result.then === 'function') {
+                        btn.disabled = true;
+                        try {
+                            const resolvedResult = await result;
+                            if (resolvedResult !== false) this.close(modal);
+                        } catch (error) {
+                            // Keep the modal open when an async action fails.
+                            console.error('Modal action failed:', error);
+                        } finally {
+                            if (btn.isConnected) btn.disabled = false;
+                        }
+                        return;
                     }
+
+                    if (result !== false) this.close(modal);
                 };
                 actionsContainer.appendChild(btn);
             });

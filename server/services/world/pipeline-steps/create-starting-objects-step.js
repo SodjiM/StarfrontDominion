@@ -3,6 +3,7 @@ const { BaseStep } = require('./base-step');
 const { SHIP_BLUEPRINTS } = require('../../registry/blueprints');
 const { Abilities } = require('../../registry/abilities');
 const { CargoManager } = require('../../game/cargo-manager');
+const { randFloat, randInt, choice } = require('../../world/rng');
 
 class CreateStartingObjectsStep extends BaseStep {
     constructor() { super('createStartingObjects'); }
@@ -24,13 +25,15 @@ class CreateStartingObjectsStep extends BaseStep {
             const planet = await new Promise((resolve)=>db.get('SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND celestial_type = "planet" LIMIT 1', [sectorId], (e,r)=>resolve(r||null)));
             let x = 2500, y = 2500, parentId = null;
             if (planet) {
-                const angle = Math.random() * Math.PI * 2; const dist = 22;
+                const rng = context.rngStreams?.startingObjects || Math.random;
+                const angle = randFloat(rng, 0, Math.PI * 2); const dist = 22;
                 x = Math.max(1, Math.min(4999, Math.round(planet.x + Math.cos(angle) * dist)));
                 y = Math.max(1, Math.min(4999, Math.round(planet.y + Math.sin(angle) * dist)));
                 parentId = planet.id;
             } else {
                 const sun = await new Promise((resolve)=>db.get('SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND celestial_type = "star" LIMIT 1', [sectorId], (e,r)=>resolve(r||{id:null,x:2500,y:2500})));
-                const angle = Math.random() * Math.PI * 2; const dist = 28;
+                const rng = context.rngStreams?.startingObjects || Math.random;
+                const angle = randFloat(rng, 0, Math.PI * 2); const dist = 28;
                 x = Math.max(1, Math.min(4999, Math.round(sun.x + Math.cos(angle) * dist)));
                 y = Math.max(1, Math.min(4999, Math.round(sun.y + Math.sin(angle) * dist)));
                 parentId = sun.id || null;
@@ -80,8 +83,9 @@ class CreateStartingObjectsStep extends BaseStep {
                 shipMetaObj.abilities = shipMetaObj.abilities.filter(k => !!Abilities[k]);
 
                 const shipMeta = JSON.stringify(shipMetaObj);
-                const sx = (stationRow?.x ?? 2500) + (Math.random() < 0.5 ? -1 : 1);
-                const sy = (stationRow?.y ?? 2500) + (Math.random() < 0.5 ? -1 : 1);
+                const rng = context.rngStreams?.startingObjects || Math.random;
+                const sx = (stationRow?.x ?? 2500) + (rng() < 0.5 ? -1 : 1);
+                const sy = (stationRow?.y ?? 2500) + (rng() < 0.5 ? -1 : 1);
 
                 const shipId = await new Promise((resolve, reject) => db.run(
                     `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, 'ship', ?, ?, ?, ?, ?, ?, ?)`,
@@ -106,5 +110,4 @@ class CreateStartingObjectsStep extends BaseStep {
 }
 
 module.exports = { CreateStartingObjectsStep };
-
 

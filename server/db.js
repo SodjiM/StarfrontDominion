@@ -307,10 +307,19 @@ const initializeDatabase = async () => {
                     game_id INTEGER NOT NULL,
                     ship_id INTEGER NOT NULL,
                     sequence_index INTEGER NOT NULL,
-                    order_type TEXT NOT NULL, -- 'move' | 'warp' | 'harvest_start' | 'harvest_stop'
+                    order_type TEXT NOT NULL, -- registered action type, e.g. movement.move or harvest.start
+                    action_version INTEGER NOT NULL DEFAULT 1,
                     payload TEXT, -- JSON blob
+                    preview TEXT, -- server-authoritative preview JSON
                     not_before_turn INTEGER,
-                    status TEXT DEFAULT 'queued', -- 'queued','consumed','cancelled','skipped'
+                    status TEXT DEFAULT 'queued', -- queued|waiting|running|completed|failed|cancelled
+                    status_reason TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_turn INTEGER,
+                    client_order_id TEXT,
+                    started_turn INTEGER,
+                    resolved_turn INTEGER,
+                    resolved_at DATETIME,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (game_id) REFERENCES games(id),
                     FOREIGN KEY (ship_id) REFERENCES sector_objects(id)
@@ -324,6 +333,8 @@ const initializeDatabase = async () => {
                     db.run('CREATE INDEX IF NOT EXISTS idx_qorders_ship_status ON queued_orders(ship_id, status)', () => {});
                     db.run('CREATE INDEX IF NOT EXISTS idx_qorders_game_ship_seq ON queued_orders(game_id, ship_id, sequence_index)', () => {});
                     db.run('CREATE INDEX IF NOT EXISTS idx_qorders_notbefore ON queued_orders(game_id, not_before_turn)', () => {});
+                    db.run('CREATE INDEX IF NOT EXISTS idx_qorders_client_id ON queued_orders(ship_id, client_order_id)', () => {});
+                    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_qorders_client_unique ON queued_orders(ship_id, client_order_id) WHERE client_order_id IS NOT NULL', () => {});
                     console.log('✅ queued_orders table ready');
                     resolve();
                 }
@@ -334,32 +345,45 @@ const initializeDatabase = async () => {
         await new Promise((resolve) => {
             const addColumn = (def) => db.run(`ALTER TABLE queued_orders ADD COLUMN ${def}`, () => {});
             try {
+                addColumn('action_version INTEGER NOT NULL DEFAULT 1');
+                addColumn('preview TEXT');
+                addColumn('status_reason TEXT');
+                addColumn('attempt_count INTEGER NOT NULL DEFAULT 0');
+                addColumn('next_attempt_turn INTEGER');
+                addColumn('client_order_id TEXT');
+                addColumn('started_turn INTEGER');
+                addColumn('resolved_turn INTEGER');
+                addColumn('resolved_at DATETIME');
                 addColumn('conditions TEXT');
                 addColumn('itinerary_id INTEGER');
                 addColumn('cancel_cascade INTEGER DEFAULT 1');
                 addColumn('anchor_object_id INTEGER');
                 addColumn('anchor_type TEXT');
                 db.run('CREATE INDEX IF NOT EXISTS idx_qorders_anchor ON queued_orders(anchor_object_id)', () => {});
+                db.run('CREATE INDEX IF NOT EXISTS idx_qorders_client_id ON queued_orders(ship_id, client_order_id)', () => {});
+                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_qorders_client_unique ON queued_orders(ship_id, client_order_id) WHERE client_order_id IS NOT NULL', () => {});
             } catch {}
             resolve();
         });
 
-        // Insert sample games
-        await new Promise((resolve, reject) => {
-            db.run(`INSERT OR IGNORE INTO games (id, name, mode, status) VALUES 
-                (1, 'Galaxy Alpha', 'campaign', 'recruiting'),
-                (2, 'Sector War Beta', 'persistent', 'active'),
-                (3, 'Exploration Gamma', 'campaign', 'recruiting')`, 
-                (err) => {
-                    if (err) {
-                        console.error('Error inserting sample games:', err);
-                        reject(err);
-                    } else {
-                        console.log('✅ Sample games inserted');
-                        resolve();
-                    }
-                }
-            );
+        // Link materialized ability orders back to their durable queued action.
+        await new Promise((resolve) => {
+            db.run('ALTER TABLE ability_orders ADD COLUMN source_queue_order_id INTEGER', () => {
+                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_ability_orders_source_queue ON ability_orders(source_queue_order_id) WHERE source_queue_order_id IS NOT NULL', () => resolve());
+            });
+        });
+
+        // The lobby starts empty. These rows were prototype fixtures and made
+        // every fresh server boot look like it had public games available.
+        // Remove only the original empty fixture rows from existing databases.
+        await new Promise((resolve) => {
+            db.run(`DELETE FROM games
+                    WHERE id IN (1, 2, 3)
+                      AND name IN ('Galaxy Alpha', 'Sector War Beta', 'Exploration Gamma')
+                      AND NOT EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = games.id)`, (err) => {
+                if (err) console.warn('Legacy lobby fixture cleanup skipped:', err.message);
+                resolve();
+            });
         });
         
         // Apply database migrations for new columns
@@ -412,6 +436,15 @@ const initializeDatabase = async () => {
             db.run(`ALTER TABLE movement_orders ADD COLUMN movement_path TEXT`, (err) => {
                 if (err && !err.message.includes('duplicate column')) {
                     console.error('Migration error (movement_path):', err);
+                }
+            });
+
+            // Keep the sector where a movement segment happened. Ships can
+            // later cross a gate, so deriving this from the ship's current
+            // sector makes historical trails disappear from their origin.
+            db.run(`ALTER TABLE movement_history ADD COLUMN sector_id INTEGER`, (err) => {
+                if (err && !err.message.includes('duplicate column')) {
+                    console.error('Migration error (movement_history.sector_id):', err);
                 }
             });
             
@@ -479,4 +512,4 @@ initializeDatabase();
 
 db.ready = dbReady;
 
-module.exports = db; 
+module.exports = db;

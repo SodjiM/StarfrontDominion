@@ -31,7 +31,15 @@ export function renderUnitDetails(game, unit, options = {}) {
             passiveChips.push(`<span class="chip" title="${def.description || ''}">${def.name}</span>`);
         } else {
             const disabled = turnLocked ? 'disabled' : '';
-            abilityButtons.push(`<button class="sf-btn sf-btn-secondary" data-ability="${key}" ${disabled} title="${def.description || ''}">${def.name}${energyText}${cdText}</button>`);
+            const tooltipParts = [
+                def.description,
+                def.energyCost ? `Energy: ${def.energyCost}` : 'Energy: 0',
+                def.cooldown ? `Cooldown: ${def.cooldown} turn${def.cooldown === 1 ? '' : 's'}` : '',
+                def.range ? `Range: ${def.range}` : '',
+                def.target ? `Target: ${def.target}` : ''
+            ].filter(Boolean);
+            const tooltip = escapeAttr(tooltipParts.join(' • '));
+            abilityButtons.push(`<button class="sf-btn sf-btn-secondary ability-action" data-ability="${key}" ${disabled} title="${tooltip}" aria-label="${escapeAttr(`${def.name}: ${tooltipParts.join('. ')}`)}"><span class="ability-name">${def.name}</span><span class="ability-meta">${energyText.replace(/^, /, '')}${energyText && cdText ? ' · ' : ''}${cdText.replace(/^, /, '')}</span></button>`);
         }
     });
 
@@ -39,40 +47,41 @@ export function renderUnitDetails(game, unit, options = {}) {
     const adjacentGate = (unit.type === 'ship') && isAdjacentToInterstellarGate(game, unit);
     detailsContainer.innerHTML = `
         <div class="unit-info">
-            <h3 style="color: #64b5f6; margin-bottom: 15px;">
+            <h3 class="unit-heading">
                 ${iconHtml} ${meta.name || unit.type}
             </h3>
-            <div class="stat-item"><span>Position:</span><span>(${unit.x}, ${unit.y})</span></div>
-            ${meta.movementSpeed ? `<div class=\"stat-item\"><span>Movement:</span><span id=\"movementStat\">${(()=>{ try { if (unit?.meta?.travelMode) { const v = unit?.meta?.warpTPT; return v?`${v} tiles/turn (warp)`: `${game.getEffectiveMovementSpeed({ ...unit, statusEffects: unit.statusEffects || [] })} tiles/turn`; } } catch {} return `${game.getEffectiveMovementSpeed({ ...unit, statusEffects: unit.statusEffects || [] })} tiles/turn`; })()}</span></div>` : ''}
-            ${meta.scanRange ? `<div class=\"stat-item\"><span>Scan Range:</span><span>${game.getEffectiveScanRange(unit)}</span></div>` : ''}
-            ${(typeof meta.hp === 'number' || typeof meta.maxHp === 'number') ? `<div class=\"stat-item\"><span>HP:</span><span>${(typeof meta.hp === 'number' ? meta.hp : (typeof meta.maxHp === 'number' ? meta.maxHp : '?'))}${(typeof meta.maxHp === 'number' ? ` / ${meta.maxHp}` : '')}</span></div>` : ''}
-            ${(typeof meta.energy === 'number' || typeof meta.maxEnergy === 'number') ? `<div class=\"stat-item\"><span>⚡ Energy:</span><span>${(typeof meta.energy === 'number' ? meta.energy : (typeof meta.maxEnergy === 'number' ? meta.maxEnergy : 0))}${(typeof meta.maxEnergy === 'number' ? ` / ${meta.maxEnergy}` : '')} ${meta.energyRegen ? `( +${meta.energyRegen}/turn )` : ''}</span></div>` : ''}
-            ${meta.cargoCapacity ? `<div class=\"stat-item\"><span>📦 Cargo:</span><span id=\"cargoStatus\">Loading...</span></div>` : ''}
+            <div class="unit-stats">
+                <div class="stat-item"><span>Position</span><strong>(${unit.x}, ${unit.y})</strong></div>
+                ${meta.movementSpeed ? `<div class=\"stat-item\"><span>${unit?.meta?.travelMode ? `Warp (${unit.meta.travelMode})` : 'Movement'}</span><strong id=\"movementStat\">${(()=>{ try { if (unit?.meta?.travelMode) { const v = unit?.meta?.warpTPT; return v?`${v} tiles/turn`: `${game.getEffectiveMovementSpeed({ ...unit, statusEffects: unit.statusEffects || [] })} tiles/turn`; } } catch {} return `${game.getEffectiveMovementSpeed({ ...unit, statusEffects: unit.statusEffects || [] })} tiles/turn`; })()}</strong></div>` : ''}
+                ${meta.scanRange ? `<div class=\"stat-item\"><span>Scan range</span><strong>${game.getEffectiveScanRange(unit)}</strong></div>` : ''}
+                ${(typeof meta.hp === 'number' || typeof meta.maxHp === 'number') ? `<div class=\"stat-item\"><span>HP</span><strong>${(typeof meta.hp === 'number' ? meta.hp : (typeof meta.maxHp === 'number' ? meta.maxHp : '?'))}${(typeof meta.maxHp === 'number' ? ` / ${meta.maxHp}` : '')}</strong></div>` : ''}
+                ${(typeof meta.energy === 'number' || typeof meta.maxEnergy === 'number') ? `<div class=\"stat-item\"><span>⚡ Energy</span><strong>${(typeof meta.energy === 'number' ? meta.energy : (typeof meta.maxEnergy === 'number' ? meta.maxEnergy : 0))}${(typeof meta.maxEnergy === 'number' ? ` / ${meta.maxEnergy}` : '')} ${meta.energyRegen ? `( +${meta.energyRegen}/turn )` : ''}</strong></div>` : ''}
+                ${meta.cargoCapacity ? `<div class=\"stat-item\"><span>📦 Cargo</span><strong id=\"cargoStatus\">Loading...</strong></div>` : ''}
+            </div>
             ${renderActiveEffectsChip(game, unit)}
         </div>
-        <div style="margin-top: 20px;">
+        <div class="unit-command-groups">
+            <div class="unit-primary-actions">
             ${unit.type === 'ship' ? `
-                <button class="sf-btn sf-btn-secondary" data-action="set-warp-mode" ${turnLocked ? 'disabled' : ''}>🌌 Warp</button>
-                <button class="sf-btn sf-btn-secondary" data-action="interstellar-travel" ${turnLocked || !adjacentGate ? 'disabled' : ''} title="Use adjacent interstellar gate">🌀 Gate</button>
+                <button class="sf-btn sf-btn-secondary unit-action" data-action="set-warp-mode" ${turnLocked ? 'disabled' : ''}>🌌 Warp</button>
+                <button class="sf-btn sf-btn-secondary unit-action" data-action="interstellar-travel" ${turnLocked || !adjacentGate ? 'disabled' : ''} title="Use adjacent interstellar gate">🌀 Gate</button>
                 
-                <button class="sf-btn sf-btn-secondary" data-action="show-cargo" ${turnLocked ? 'disabled' : ''}>📦 Cargo</button>
+                <button class="sf-btn sf-btn-secondary unit-action" data-action="show-cargo" ${turnLocked ? 'disabled' : ''}>📦 Cargo</button>
             ` : ''}
             ${(unit.type === 'station') ? `
-                <button class="sf-btn sf-btn-secondary" data-action="show-build" ${turnLocked ? 'disabled' : ''}>🏗️ Build</button>
-                <button class="sf-btn sf-btn-secondary" data-action="show-cargo">📦 Cargo</button>
+                <button class="sf-btn sf-btn-secondary unit-action" data-action="show-build" ${turnLocked ? 'disabled' : ''}>🏗️ Build</button>
+                <button class="sf-btn sf-btn-secondary unit-action" data-action="show-cargo">📦 Cargo</button>
             ` : ''}
+            </div>
             ${unit.type === 'ship' ? `
-                <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">
-                    🛠️ Abilities
-                </div>
-                <div id="abilityButtons" style="display:flex; flex-wrap:wrap; gap:8px;">${abilityButtons.join('') || '<span style="color:#888">No abilities</span>'}</div>
-                <div class="panel-title" style="margin:16px 0 0 0; display:flex; align-items:center; gap:6px;">
-                    🧭 Queue
-                    <span style="flex:1"></span>
-                    <button class="sf-btn sf-btn-xs" data-action="queue-refresh" title="Refresh queue">↻</button>
-                    <button class="sf-btn sf-btn-xs" data-action="queue-clear" title="Clear queue">Clear</button>
-                </div>
-                <div id="queueLog" class="activity-log" style="max-height:120px; min-height:60px;"></div>
+                <details class="unit-disclosure" open>
+                    <summary>🛠️ Abilities <span>${abilityButtons.length}</span></summary>
+                    <div id="abilityButtons">${abilityButtons.join('') || '<span style="color:#888">No abilities</span>'}</div>
+                </details>
+                <details class="unit-disclosure" open>
+                    <summary>🧭 Planned actions <span class="unit-disclosure-actions"><button class="sf-btn sf-btn-xs" data-action="queue-refresh" title="Refresh planned actions">↻</button><button class="sf-btn sf-btn-xs" data-action="queue-undo" title="Undo last planned action (Z)">Undo last</button><button class="sf-btn sf-btn-xs" data-action="queue-replace" title="Replace future plan with the next movement click">Replace</button><button class="sf-btn sf-btn-xs" data-action="queue-clear" title="Clear future planned actions (Shift+Backspace)">Clear future</button></span></summary>
+                    <div id="queueLog" class="activity-log"></div>
+                </details>
             ` : ''}
         </div>
     `;
@@ -99,6 +108,7 @@ export function renderUnitDetails(game, unit, options = {}) {
             }
             const btn = e.target.closest('[data-action]');
             if (!btn) return;
+            if (btn.closest('summary')) e.preventDefault();
             const action = btn.dataset.action;
             if (action === 'interstellar-travel') {
                 try { travelThroughInterstellarGate(game); } catch {}

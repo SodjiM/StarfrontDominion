@@ -6,19 +6,8 @@
     <title>Lobby - Starfront: Dominion</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; }
-      .container { max-width: 1220px; margin: 0 auto; }
-      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 22px; padding: 16px; }
-      .title { font-size: 2em; }
-      .games-section { display:grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
-      .games-panel h2 { margin-top:0; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-      .game-item { margin-bottom: 12px; }
-      .actions { display:flex; gap:10px; margin-top: 16px; }
-      @media (max-width: 768px) { .games-section { grid-template-columns: 1fr; } .header { flex-direction:column; gap:10px; } }
-    </style>
 </head>
-<body class="min-h-screen bg-[#070912] text-slate-100 relative overflow-hidden">
+<body class="sf-page sf-lobby-page min-h-screen text-slate-100 relative">
     <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(14,165,233,0.08),transparent_60%),radial-gradient(ellipse_at_bottom_left,rgba(99,102,241,0.08),transparent_55%)]"></div>
     <style>
       :root { --stars1: ""; --stars2: ""; --stars3: ""; }
@@ -31,37 +20,46 @@
     <div class="stars s1 absolute inset-0"></div>
     <div class="stars s2 absolute inset-0"></div>
     <div class="stars s3 absolute inset-0"></div>
-    <div class="container mx-auto px-4 py-6 relative z-10">
-        <div class="header sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4 flex justify-between items-center">
-            <div class="title text-xl font-semibold"><span class="emoji">🌌</span> <span class="sf-title">Starfront: Dominion - Lobby</span></div>
+    <main class="container sf-page-shell mx-auto px-4 py-6 relative z-10">
+        <div class="header sf-card flex justify-between items-center">
+            <div class="title text-xl font-semibold"><span class="title-mark" aria-hidden="true">✦</span> <span class="sf-title">Starfront: Dominion <span class="title-divider">/</span> Lobby</span></div>
             <div class="user-info flex items-center gap-3">
                 <span id="username" class="text-slate-300">Welcome, Commander</span>
-                <button class="sf-btn sf-btn-secondary rounded-xl border border-white/10 bg-white/10 px-3 py-1 hover:bg-white/15" onclick="logout()">Logout</button>
+                <button class="sf-btn sf-btn-secondary" onclick="logout()">Logout</button>
             </div>
         </div>
 
-        <div class="games-section grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-            <div class="games-panel sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4">
-                <h2 class="text-lg font-semibold pb-2 border-b border-white/10">💠 Your Games</h2>
-                <div id="userGames" class="loading text-slate-300">Loading your games...</div>
-            </div>
-
-            <div class="games-panel sf-card rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4">
-                <h2 class="text-lg font-semibold pb-2 border-b border-white/10">🧩 Available Games</h2>
-                <div id="availableGames" class="loading text-slate-300">Loading available games...</div>
-            </div>
+        <div class="actions sf-page-actions">
+            <button class="sf-btn sf-btn-primary" onclick="showCreateGameModal()"><span aria-hidden="true">+</span> Create game</button>
+            <button class="sf-btn sf-btn-secondary" onclick="refreshGames()">Refresh</button>
+            <button class="sf-btn sf-btn-secondary" onclick="window.location.href='/'">Main menu</button>
         </div>
 
-        <div class="actions flex gap-3 mt-4">
-            <button class="sf-btn sf-btn-primary rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-4 py-2 font-semibold shadow-lg shadow-cyan-500/30" onclick="showCreateGameModal()">🚀 Create New Game</button>
-            <button class="sf-btn sf-btn-secondary rounded-2xl border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15" onclick="refreshGames()">🔄 Refresh</button>
-            <button class="sf-btn sf-btn-secondary rounded-2xl border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15" onclick="window.location.href='/'">← Main Menu</button>
+        <section class="lobby-workspace" aria-label="Game lobby">
+            <div class="games-panel your-games-panel">
+                <div class="panel-heading">
+                    <div><p class="panel-kicker">Your games</p><h2>Continue playing</h2></div>
+                    <span id="yourGameCountLabel" class="panel-count">0</span>
+                </div>
+                <div id="userGames" class="game-list loading" aria-live="polite">Loading your games...</div>
+            </div>
 
-        </div>
+            <div class="games-panel available-games-panel">
+                <div class="panel-heading panel-heading-stack">
+                    <div><p class="panel-kicker">Open to join</p><h2>Available games</h2></div>
+                    <span id="availableCountLabel" class="panel-count">0</span>
+                </div>
+                <div class="lobby-tools">
+                    <label class="search-field"><span class="sr-only">Search available games</span><input id="gameSearch" type="search" placeholder="Search title or owner" autocomplete="off"><button id="clearGameSearch" class="search-clear" type="button" aria-label="Clear game search" hidden>×</button></label>
+                    <label class="filter-field"><span class="sr-only">Filter available games</span><select id="gameFilter"><option value="all">All games</option><option value="recruiting">Recruiting</option><option value="active">Active</option></select></label>
+                </div>
+                <div id="availableGames" class="game-list loading" aria-live="polite">Loading available games...</div>
+                <button id="showMoreGames" class="show-more" type="button" hidden>Show more games</button>
+            </div>
+        </section>
 
-        <div id="gameDetails" class="game-details sf-card mt-6 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-4"></div>
-        <div id="error" class="error sf-card mt-4 hidden text-rose-400 text-center"></div>
-    </div>
+        <div id="error" class="error hidden" role="alert"></div>
+    </main>
 
     <script src="main.js"></script>
     <script>
@@ -69,6 +67,8 @@
         let selectedGameId = null;
         let allGames = [];
         let userGameIds = [];
+        let visibleGameLimit = 6;
+        let selectedGameDetails = null;
 
         // Check if user is logged in
         function checkAuth() {
@@ -110,51 +110,99 @@
             const availableGamesContainer = document.getElementById('availableGames');
 
             const userGames = allGames.filter(game => userGameIds.includes(game.id));
+            const query = (document.getElementById('gameSearch')?.value || '').trim().toLowerCase();
+            const filter = document.getElementById('gameFilter')?.value || 'all';
             const availableGames = allGames.filter(game => !userGameIds.includes(game.id));
+            const matchingGames = availableGames.filter(game => {
+                const matchesQuery = !query || `${game.name} ${game.owner_name || ''}`.toLowerCase().includes(query);
+                return matchesQuery && (filter === 'all' || game.status === filter);
+            });
+            const shownGames = matchingGames.slice(0, visibleGameLimit);
 
             // Render user games
             if (userGames.length === 0) {
-                userGamesContainer.innerHTML = '<div style="text-align: center; color: #666;">No games joined yet</div>';
+                userGamesContainer.innerHTML = '<div class="empty-state"><strong>No games yet</strong><span>Create a lobby or join one from the open list.</span></div>';
             } else {
                 userGamesContainer.innerHTML = userGames.map(game => createGameElement(game, true)).join('');
             }
 
             // Render available games
-            if (availableGames.length === 0) {
-                availableGamesContainer.innerHTML = '<div style="text-align: center; color: #666;">No available games</div>';
+            if (matchingGames.length === 0) {
+                availableGamesContainer.innerHTML = `<div class="empty-state"><strong>${availableGames.length ? 'No matches' : 'The lobby is quiet'}</strong><span>${availableGames.length ? 'Try a different title, owner, or status.' : 'Create the first game and invite your crew.'}</span></div>`;
             } else {
-                availableGamesContainer.innerHTML = availableGames.map(game => createGameElement(game, false)).join('');
+                availableGamesContainer.innerHTML = shownGames.map(game => createGameElement(game, false)).join('');
             }
+            document.getElementById('yourGameCountLabel').textContent = userGames.length;
+            document.getElementById('availableCountLabel').textContent = matchingGames.length;
+            const more = document.getElementById('showMoreGames');
+            more.hidden = matchingGames.length <= shownGames.length;
+            more.textContent = `Show more games (${matchingGames.length - shownGames.length})`;
         }
 
         // Create game element HTML
         function createGameElement(game, isUserGame) {
-            const statusClass = `sf-badge sf-badge-${game.status}`;
-            const gameClass = `sf-list-item ${isUserGame ? 'user-game' : (game.status !== 'recruiting' ? 'full' : '')}`;
-            const turnBadge = (game.status === 'active' && game.current_turn_number) ? `<span class="sf-badge">Turn ${game.current_turn_number}</span>` : '';
+            const statusClass = `status-chip status-${game.status}`;
+            const gameClass = `game-item ${isUserGame ? 'user-game' : ''}`;
+            const turnBadge = (game.status === 'active' && game.current_turn_number) ? `<span>Turn ${game.current_turn_number}</span>` : '';
+            const autoTurn = typeof game.auto_turn_minutes === 'number' ? `<span>Auto ${game.auto_turn_minutes}m</span>` : '';
+            const isSelected = selectedGameId === game.id;
+            const details = isSelected && selectedGameDetails?.id === game.id ? createInlineDetails(selectedGameDetails, isUserGame) : '';
 
             return `
-                <div class="game-item ${gameClass}" onclick="selectGame(${game.id})">
-                    <div class="game-title">${game.name}</div>
+                <article class="game-card ${isSelected ? 'is-expanded' : ''}">
+                <button class="${gameClass} ${isSelected ? 'is-selected' : ''}" type="button" onclick="selectGame(${game.id})" aria-expanded="${isSelected}" aria-label="View details for ${escapeHtml(game.name)}">
+                    <span class="game-item-main"><span class="game-title">${escapeHtml(game.name)}</span><span class="game-owner">${isUserGame ? 'In your games' : `Owner: ${escapeHtml(game.owner_name || 'Open lobby')}`}</span></span>
                     <div class="game-meta">
-                        <span>Mode: ${game.mode}</span>
-                        <span class="${statusClass}">${game.status.toUpperCase()}</span>
+                        <span>${escapeHtml(game.mode)}</span>
+                        <span class="${statusClass}">${escapeHtml(game.status)}</span>
                         ${turnBadge}
+                        ${autoTurn}
                     </div>
-                </div>
+                    <span class="game-item-chevron" aria-hidden="true">›</span>
+                </button>
+                ${details}
+                </article>
             `;
+        }
+
+        function createInlineDetails(game, isUserGame) {
+            const canJoin = !isUserGame && game.status === 'recruiting';
+            const isCreator = game.players.length > 0 && game.players.reduce((first, player) => new Date(player.joined_at) < new Date(first.joined_at) ? player : first).username === localStorage.getItem('username');
+            return `<div class="inline-game-details">
+                <div class="inline-players"><span class="inline-label">Players</span><div class="inline-player-list">${game.players.length ? game.players.map((player, index) => `<span>${escapeHtml(player.username)}${index === 0 ? ' <small>Creator</small>' : ''}</span>`).join('') : '<span class="muted-inline">No players yet</span>'}</div></div>
+                <div class="inline-actions">
+                    ${canJoin ? `<button class="sf-btn sf-btn-primary" type="button" onclick="joinGame(${game.id})">Join game</button>` : ''}
+                    ${isUserGame && game.status === 'recruiting' ? `<button class="sf-btn sf-btn-primary" type="button" onclick="startGame(${game.id})">Start game</button>` : ''}
+                    ${game.status === 'active' && isUserGame ? `<button class="sf-btn sf-btn-primary" type="button" onclick="enterGame(${game.id})">Enter game</button>` : ''}
+                    ${isUserGame ? `<button class="sf-btn sf-btn-danger" type="button" onclick="leaveGame(${game.id})">Leave game</button>` : ''}
+                    ${isCreator ? `<button class="sf-btn sf-btn-danger delete-action" type="button" onclick="deleteGame(${game.id})">Delete game</button>` : ''}
+                </div>
+            </div>`;
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
         }
 
         // Select a game to view details
         async function selectGame(gameId) {
+            if (selectedGameId === gameId) {
+                selectedGameId = null;
+                selectedGameDetails = null;
+                renderGames();
+                return;
+            }
             selectedGameId = gameId;
+            selectedGameDetails = null;
+            renderGames();
 
             try {
                 const response = await fetch(`/lobby/game/${gameId}`);
                 const data = await response.json();
 
                 if (response.ok) {
-                    showGameDetails(data);
+                    selectedGameDetails = data;
+                    renderGames();
                 } else {
                     showError(data.error || 'Failed to load game details');
                 }
@@ -163,56 +211,10 @@
             }
         }
 
-        // Show game details
-        function showGameDetails(game) {
-            const detailsContainer = document.getElementById('gameDetails');
-            const isUserGame = userGameIds.includes(game.id);
-            const canJoin = !isUserGame && game.status === 'recruiting';
-            const canLeave = isUserGame;
-
-            // Check if current user is the creator (first player to join)
-            const isCreator = game.players.length > 0 &&
-                             game.players.reduce((first, player) => {
-                                 const joinTime = new Date(player.joined_at);
-                                 const firstTime = new Date(first.joined_at);
-                                 return joinTime < firstTime ? player : first;
-                             }).username === localStorage.getItem('username');
-
-            detailsContainer.innerHTML = `
-                <h3>🎮 ${game.name}</h3>
-                <div><strong>Mode:</strong> ${game.mode}</div>
-                <div><strong>Status:</strong> ${game.status}</div>
-                <div><strong>Created:</strong> ${new Date(game.created_at).toLocaleString()}</div>
-                ${game.status === 'active' && game.current_turn_number ? `<div><strong>Current Turn:</strong> ${game.current_turn_number}</div>` : ''}
-                ${typeof game.auto_turn_minutes === 'number' ? `<div><strong>Auto Turn:</strong> ${game.auto_turn_minutes} min</div>` : `<div><strong>Auto Turn:</strong> None</div>`}
-
-                <div class="players-list">
-                    <h4>Players (${game.players.length}):</h4>
-                    ${game.players.map((player, index) => `
-                        <div class="player-item ${index === 0 ? 'creator' : ''}">
-                            <span>${player.username} ${index === 0 ? '👑 Creator' : ''}</span>
-                            <span>Joined: ${new Date(player.joined_at).toLocaleDateString()}</span>
-                        </div>
-                    `).join('')}
-                </div>
-
-                <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
-                    ${canJoin ? `<button class="sf-btn sf-btn-primary" onclick="joinGame(${game.id})">✅ Join Game</button>` : ''}
-                    ${canLeave ? `<button class="sf-btn sf-btn-danger" onclick="leaveGame(${game.id})">❌ Leave Game</button>` : ''}
-                    ${isUserGame && game.status === 'recruiting' ? `<button class="sf-btn sf-btn-primary" onclick="startGame(${game.id})">🚀 Start Game</button>` : ''}
-                    ${game.status === 'active' && isUserGame ? `<button class="sf-btn sf-btn-primary" onclick="enterGame(${game.id})">🎮 Enter Game</button>` : ''}
-                    ${isCreator ? `<button class="sf-btn sf-btn-danger" onclick="deleteGame(${game.id}, '${game.name}')" style="margin-left: auto;">🗑️ Delete Game</button>` : ''}
-                    <button class="sf-btn sf-btn-secondary" onclick="hideGameDetails()">Close</button>
-                </div>
-            `;
-
-            detailsContainer.style.display = 'block';
-        }
-
-        // Hide game details
         function hideGameDetails() {
-            document.getElementById('gameDetails').style.display = 'none';
             selectedGameId = null;
+            selectedGameDetails = null;
+            renderGames();
         }
 
         // Join a game
@@ -228,6 +230,8 @@
 
                 if (response.ok) {
                     await loadGames();
+                    selectedGameId = null;
+                    selectedGameDetails = null;
                     await selectGame(gameId); // Refresh details
                 } else {
                     showError(data.error || 'Failed to join game');
@@ -239,7 +243,7 @@
 
         // Leave a game
         async function leaveGame(gameId) {
-            if (!confirm('Are you sure you want to leave this game?')) return;
+            if (!await new Promise(resolve => UI.confirmAction('Leave this game? You can join it again while it is recruiting.', () => resolve(true), () => resolve(false)))) return;
 
             try {
                 const response = await fetch('/lobby/leave', {
@@ -262,7 +266,8 @@
         }
 
         // Delete a game (creators only)
-        async function deleteGame(gameId, gameName) {
+        async function deleteGame(gameId) {
+            const gameName = allGames.find(game => game.id === gameId)?.name || 'this game';
             const confirmText = `Are you sure you want to PERMANENTLY DELETE the game "${gameName}"?\n\nThis action cannot be undone and will:\n• Remove the game from the lobby\n• Delete all game data (sectors, ships, turns, etc.)\n• Remove all players from the game\n\nType "DELETE" to confirm:`;
 
             const confirmation = prompt(confirmText);
@@ -299,6 +304,27 @@
             await loadGames();
             hideGameDetails();
         }
+
+        document.getElementById('gameSearch').addEventListener('input', () => {
+            visibleGameLimit = 6;
+            document.getElementById('clearGameSearch').hidden = !document.getElementById('gameSearch').value;
+            renderGames();
+        });
+        document.getElementById('clearGameSearch').addEventListener('click', () => {
+            const input = document.getElementById('gameSearch');
+            input.value = '';
+            document.getElementById('clearGameSearch').hidden = true;
+            input.focus();
+            renderGames();
+        });
+        document.getElementById('gameFilter').addEventListener('change', () => {
+            visibleGameLimit = 6;
+            renderGames();
+        });
+        document.getElementById('showMoreGames').addEventListener('click', () => {
+            visibleGameLimit += 6;
+            renderGames();
+        });
 
         // Show create game modal (enhanced)
         function showCreateGameModal() {
@@ -431,7 +457,7 @@
 
         // Start a game
         async function startGame(gameId) {
-            if (!confirm('Are you sure you want to start this game? Once started, no new players can join.')) return;
+            if (!await new Promise(resolve => UI.confirmAction('Start this game? Once started, it will no longer accept new players.', () => resolve(true), () => resolve(false)))) return;
 
             try {
                 const response = await fetch(`/game/start/${gameId}`, {
@@ -443,8 +469,10 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    alert('Game started successfully! 🚀');
+                    UI.showAlert('Game started successfully.', 'Game started');
                     await loadGames();
+                    selectedGameId = null;
+                    selectedGameDetails = null;
                     await selectGame(gameId); // Refresh details
                 } else {
                     showError(data.error || 'Failed to start game');

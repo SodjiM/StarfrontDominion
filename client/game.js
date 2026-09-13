@@ -6,6 +6,7 @@ import { normalizeGameState, getEffectiveMovementSpeed as coreGetEffectiveMoveme
 import { calculateMovementPath as coreCalculateMovementPath, calculateETA as coreCalculateETA, getAdjacentTileNear as coreGetAdjacentTileNear } from './core/Movement.js';
 import * as MoveCtl from './features/movement-controller.js';
 import * as QueueCtl from './features/queue-controller.js';
+import { calculatePlannedETA } from './utils/planned-movement.js';
 import { loadGameState as stateLoadGameState } from './services/state.js';
 import * as SenateUI from './ui/senate.js';
 import * as SelectionSvc from './services/selection.js';
@@ -72,7 +73,8 @@ export class GameClient {
         this.lastFleet = null;
         this.senateProgress = 0;
         this.turnCountdownTimer = null;
-        this.queueMode = false; // Shift to queue orders
+        this.queueMode = true; // Planning is the default; Shift remains a compatibility modifier.
+        this.queueReplaceMode = false;
         this._queuedByShipId = new Map();
         this._els = {}; // simple DOM cache
     }
@@ -176,6 +178,47 @@ export class GameClient {
 
     connectSocket() { netConnectSocket(this); }
     async loadGameState() { return stateLoadGameState(this); }
+    async restoreActiveLaneRoutes() {
+        const sectorId = this.gameState?.sector?.id;
+        if (!sectorId || !this.gameId || !this.userId) return;
+        try {
+            const [itineraryResponse, facts] = await Promise.all([
+                SFApi.State.itineraries(this.gameId, this.userId, sectorId),
+                SFApi.State.systemFacts(sectorId)
+            ]);
+            const active = Array.isArray(itineraryResponse?.itineraries)
+                ? itineraryResponse.itineraries.filter(it => it.status === 'active')
+                : [];
+            this.__activeItineraries = new Map(active.map(it => [Number(it.shipId || it.ship_id), it]));
+            if (facts) this.__factsCache = { facts, until: Date.now() + 5000 };
+            if (!active.length) {
+                this.__laneHighlight = null;
+                this.__plannerTarget = null;
+                return;
+            }
+
+            const selectedId = Number(this.selectedUnit?.id);
+            const chosen = active.find(it => Number(it.shipId || it.ship_id) === selectedId)
+                || active.find(it => this.objects?.find(obj => Number(obj.id) === Number(it.shipId || it.ship_id))?.laneTransit)
+                || active[0];
+            const legs = (chosen.legs || []).map(L => {
+                const edgeId = Number(L?.edgeId ?? L?.edge_id);
+                const entry = String(L?.entry ?? L?.entry_type ?? 'wildcat') === 'tap' ? 'tap' : 'wildcat';
+                const sStart = Number(L?.sStart ?? L?.s_start ?? 0);
+                const sEnd = Number(L?.sEnd ?? L?.s_end ?? sStart);
+                return Number.isFinite(edgeId) ? { edgeId, entry, sStart, sEnd } : null;
+            }).filter(Boolean);
+            if (legs.length) {
+                this.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs, shipId: Number(chosen.shipId || chosen.ship_id) };
+                const destination = chosen.meta?.dest;
+                if (destination && Number.isFinite(Number(destination.x)) && Number.isFinite(Number(destination.y))) {
+                    this.__plannerTarget = { x: Number(destination.x), y: Number(destination.y) };
+                }
+            }
+        } catch (error) {
+            if (window.SF_DEV_MODE) console.warn('Failed to restore active lane route', error);
+        }
+    }
     async fetchMovementHistory(shipId = null, turns = 10) { const mod = await import('./services/history.js'); return mod.fetchMovementHistory(this, shipId, turns); }
 
     // Render & UI update
@@ -203,28 +246,8 @@ export class GameClient {
             console.log(`🚢 Found ${movingShips.length} ships with active movement paths:`, movingShips.map(s => ({ id: s.id, name: s.meta.name, pathLength: s.movementPath?.length, destination: s.plannedDestination, active: s.movementActive, status: s.movementStatus })));
         }
         SelectionSvc.applySelectionPersistence(this, playerObjects);
-        // Persist lane highlight across refresh: if selected has an active itinerary, restore highlight
-        try {
-            const sel = this.selectedUnit;
-            const sectorId = this.gameState?.sector?.id;
-            if (sel && sectorId && (!this.__laneHighlight || !(this.__laneHighlight.until > Date.now()))) {
-                const resp = await SFApi.State.itineraries(this.gameId, this.userId, sectorId);
-                const items = Array.isArray(resp?.itineraries) ? resp.itineraries.filter(it => it.status === 'active') : [];
-                const it = items.find(r => Number(r.shipId||r.ship_id) === Number(sel.id));
-                if (it) {
-                    const legs = (it.legs||[]).map(L => {
-                        try {
-                            const edgeId = Number(L?.edgeId ?? L?.edge_id);
-                            const entryRaw = (L?.entry ?? L?.entry_type ?? 'tap');
-                            const sStart = Number(L?.sStart ?? L?.s_start ?? 0);
-                            const sEnd = Number(L?.sEnd ?? L?.s_end ?? sStart);
-                            return { edgeId, entry: (String(entryRaw)==='tap'?'tap':'wildcat'), sStart, sEnd };
-                        } catch { return null; }
-                    }).filter(Boolean);
-                    if (legs.length) this.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
-                }
-            }
-        } catch {}
+        // Restore active lane geometry, target, and lane facts after reloads.
+        await this.restoreActiveLaneRoutes();
     });
     }
 
@@ -259,7 +282,16 @@ export class GameClient {
                     const segments = [];
                     let cursor = { x: start.x, y: start.y };
                     for (const q of orders) {
-                        if (String(q.order_type) !== 'move') continue;
+                        if (!['movement.move', 'move'].includes(String(q.order_type))) continue;
+                        try {
+                            const preview = q.preview ? JSON.parse(q.preview) : null;
+                            if (Array.isArray(preview?.path) && preview.path.length > 1) {
+                                const path = preview.path.map(p => ({ x: Number(p.x), y: Number(p.y) }));
+                                segments.push({ from: path[0], to: path[path.length - 1], path, estimatedTurns: Number(preview.estimatedTurns) });
+                                cursor = path[path.length - 1];
+                                continue;
+                            }
+                        } catch {}
                         let dest = null; try { const p = q.payload ? JSON.parse(q.payload) : {}; dest = p?.destination || p; } catch { dest = null; }
                         if (!dest || typeof dest.x !== 'number' || typeof dest.y !== 'number') continue;
                         segments.push({ from: { x: cursor.x, y: cursor.y }, to: { x: Number(dest.x), y: Number(dest.y) } });
@@ -267,6 +299,8 @@ export class GameClient {
                     }
                     if (segments.length) { obj.movementSegments = segments; this.selectedUnit.movementSegments = segments; }
                     else { try { delete obj.movementSegments; delete this.selectedUnit.movementSegments; } catch {} }
+                    obj.plannedETA = calculatePlannedETA(obj, this.selectedUnit);
+                    this.selectedUnit.plannedETA = obj.plannedETA;
                     this.render && this.render();
                 } catch {}
             })();
@@ -316,6 +350,8 @@ export class GameClient {
                 if (action === 'show-build') { build_showBuildModal(); return; }
                 if (action === 'queue-refresh' && unit?.type === 'ship') { this.loadQueueLog && this.loadQueueLog(unit.id, true); return; }
                 if (action === 'queue-clear' && unit?.type === 'ship') { this.clearQueue && this.clearQueue(unit.id); return; }
+                if (action === 'queue-undo' && unit?.type === 'ship') { this.undoQueue && this.undoQueue(unit.id); return; }
+                if (action === 'queue-replace' && unit?.type === 'ship') { this.queueReplaceMode = true; this.addLogEntry('Next movement click will replace future planned actions', 'info'); return; }
             }
         });
         if (unit && unit.meta && unit.meta.cargoCapacity) { try { UICargo.updateCargoStatus(this, unit.id); } catch {} }
@@ -419,13 +455,14 @@ export class GameClient {
         if (this.miniCanvas) {
             this.miniCanvas._mainWidth = canvas.width;
             this.miniCanvas._mainHeight = canvas.height;
-            SFMinimap.renderer.renderMiniMap(this.miniCtx, this.miniCanvas, this.objects, this.userId, this.camera, this.tileSize, this.gameState);
+            SFMinimap.renderer.renderMiniMap(this.miniCtx, this.miniCanvas, this.objects, this.userId, this.camera, this.tileSize, this.gameState, this.__factsCache?.facts?.orbitalRings || []);
         }
     }
 
     queueAbility(abilityKey) { if (window.SFAbilities) return SFAbilities.queueAbility(this, abilityKey); }
     async loadQueueLog(shipId, force) { try { const mod = await import('./ui/queue-panel.js'); return mod.loadQueueLog(this, shipId, force); } catch {} }
     clearQueue(shipId) { try { const modp = import('./ui/queue-panel.js'); modp.then(mod => mod.clearQueue(this, shipId)); } catch {} }
+    undoQueue(shipId) { try { const modp = import('./ui/queue-panel.js'); modp.then(mod => mod.undoQueue(this, shipId)); } catch {} }
 
     bindMiniMapInteractions() {
         if (!this.miniCanvas || this._miniBound) return;
@@ -485,6 +522,32 @@ export class GameClient {
                 this.addLogEntry('Failed to switch sectors', 'error');
             }
         }
+    }
+
+    async focusFirstFleetShip() {
+        const ship = (this.lastFleet || []).find(unit => unit.type === 'ship') || this.lastFleet?.[0];
+        if (!ship) {
+            this.addLogEntry('No fleet units are available to locate', 'warning');
+            return;
+        }
+        const inCurrentSector = Number(ship.sector_id) === Number(this.gameState?.sector?.id);
+        await this.selectRemoteUnit(Number(ship.id), Number(ship.sector_id), ship.sector_name || 'this sector', inCurrentSector);
+    }
+
+    centerOnActiveShip() {
+        const currentSectorId = Number(this.gameState?.sector?.id);
+        const selectedShip = this.selectedUnit?.type === 'ship' ? this.selectedUnit : null;
+        const currentShips = (this.objects || []).filter(obj => obj.type === 'ship' && Number(obj.sector_id) === currentSectorId && (obj.owner_id == null || Number(obj.owner_id) === Number(this.userId)));
+        const movingShip = currentShips.find(ship => ship.movementActive || ship.movementStatus === 'blocked' || ship.laneTransit);
+        const ship = selectedShip || movingShip || currentShips[0];
+        if (!ship) {
+            this.addLogEntry('No active ship is available in this sector', 'warning');
+            return false;
+        }
+        this.camera.x = Number(ship.x);
+        this.camera.y = Number(ship.y);
+        this.render && this.render();
+        return true;
     }
 
     getUnitStatus(meta, unit) { return coreGetUnitStatus(meta, unit); }

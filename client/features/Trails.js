@@ -7,8 +7,18 @@ export async function fetchSectorTrails(game) {
         if (!sectorId) return;
         const data = await SFApi.State.sectorTrails(sectorId, currentTurn, 10);
         if (!data || !Array.isArray(data.segments)) return;
+        if (game.trailBuffer.sectorId !== sectorId) {
+            game.trailBuffer.byTurn.clear();
+            game.trailBuffer.sectorId = sectorId;
+        }
         const byTurn = game.trailBuffer.byTurn;
         const minTurn = currentTurn - 9;
+
+        // The endpoint returns a complete window. Replace that window instead
+        // of appending to it: turn-resolved can refresh trails more than once
+        // (reconnects, tab focus, and manual state reloads), and appending here
+        // made the same trail grow brighter/thicker on every refresh.
+        for (let t = minTurn; t <= currentTurn; t++) byTurn.delete(t);
         data.segments.forEach(seg => {
             const t = seg.turn;
             if (t < minTurn || t > currentTurn) return;
@@ -78,5 +88,3 @@ export function applyTurnTrails(game) {
     } catch {}
     handleLingeringTrailsOnTurn(game);
 }
-
-

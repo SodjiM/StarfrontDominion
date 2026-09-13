@@ -2,12 +2,19 @@
 
 export function showSetupModal(game) {
         const setupForm = createSetupForm(game);
-        UI.showModal({
+        const validationMessage = document.createElement('p');
+        validationMessage.className = 'setup-validation-message';
+        validationMessage.setAttribute('role', 'alert');
+        validationMessage.setAttribute('aria-live', 'assertive');
+        validationMessage.hidden = true;
+
+        const modal = UI.showModal({
             title: '🚀 Initialize Your Solar System',
             content: setupForm,
             allowClose: false,
-            actions: [ { text: 'Complete Setup', style: 'primary', action: () => submit(game) } ]
+            actions: [ { text: 'Complete Setup', style: 'primary', action: () => submit(game, validationMessage) } ]
         });
+        modal.querySelector('.game-modal-actions')?.prepend(validationMessage);
 }
 
     function createSetupForm(game) {
@@ -68,17 +75,22 @@ function createAvatarSelector() {
             { id: 'diplomat', name: 'Diplomat' }
         ];
         return avatars.map(avatar => `
-            <div class="avatar-option" data-avatar="${avatar.id}">
+            <button type="button" class="avatar-option" data-avatar="${avatar.id}" aria-pressed="false">
                 <img src="assets/avatars/${avatar.id}.png" alt="${avatar.name}" data-avatar-img="1">
                 <span>${avatar.name}</span>
-            </div>`).join('');
+            </button>`).join('');
 }
 
 function attachSetupEventListeners() {
         document.querySelectorAll('.avatar-option').forEach(option => {
             option.addEventListener('click', () => {
-                document.querySelectorAll('.avatar-option').forEach(o => o.classList.remove('selected'));
+                document.querySelectorAll('.avatar-option').forEach(o => {
+                    o.classList.remove('selected');
+                    o.setAttribute('aria-pressed', 'false');
+                });
                 option.classList.add('selected');
+                option.setAttribute('aria-pressed', 'true');
+                option.removeAttribute('aria-invalid');
             });
         });
         document.querySelectorAll('img[data-avatar-img]').forEach(img => {
@@ -88,15 +100,31 @@ function attachSetupEventListeners() {
         if (systemNameInput) systemNameInput.focus();
 }
 
-async function submit(game) {
+async function submit(game, validationMessage) {
         const selectedAvatar = document.querySelector('.avatar-option.selected')?.dataset.avatar;
         const primaryColor = document.getElementById('primaryColor')?.value;
         const secondaryColor = document.getElementById('secondaryColor')?.value;
         const archetypeKey = document.getElementById('archetypeSelect')?.value || 'STANDARD';
         const systemName = document.getElementById('systemName')?.value?.trim();
-        if (!selectedAvatar) { UI.showAlert('Please select an avatar'); return false; }
-        if (!systemName) { UI.showAlert('Please enter a system name'); return false; }
-        if (systemName.length > 30) { UI.showAlert('System name too long (max 30 characters)'); return false; }
+        const showValidationError = (message, target) => {
+            if (validationMessage) {
+                validationMessage.textContent = message;
+                validationMessage.hidden = false;
+            }
+            target?.setAttribute('aria-invalid', 'true');
+            target?.focus();
+            return false;
+        };
+
+        if (validationMessage) {
+            validationMessage.textContent = '';
+            validationMessage.hidden = true;
+        }
+        document.querySelectorAll('[aria-invalid="true"]').forEach(element => element.removeAttribute('aria-invalid'));
+
+        if (!selectedAvatar) return showValidationError("Please make sure that you've selected an avatar.", document.querySelector('.avatar-option'));
+        if (!systemName) return showValidationError("Please make sure that you've named your solar system.", document.getElementById('systemName'));
+        if (systemName.length > 30) return showValidationError('Your solar system name must be 30 characters or fewer.', document.getElementById('systemName'));
         try {
             const response = await fetch(`/game/setup/${game.gameId}`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -115,17 +143,13 @@ async function submit(game) {
                     const text = await response.text();
                     try { errorMessage = (JSON.parse(text).error) || errorMessage; } catch { errorMessage = text || errorMessage; }
                 } catch {}
-                UI.showAlert(`Setup failed: ${errorMessage}`);
-                return false;
+                return showValidationError(`Setup failed: ${errorMessage}`, document.getElementById('systemName'));
             }
             await response.json();
             game.addLogEntry('System setup completed successfully!', 'success');
             await game.loadGameState();
             return true;
         } catch (error) {
-            UI.showAlert(`Connection failed: ${error.message}. Please try again.`);
-            return false;
+            return showValidationError(`Connection failed: ${error.message}. Please try again.`);
         }
 }
-
-

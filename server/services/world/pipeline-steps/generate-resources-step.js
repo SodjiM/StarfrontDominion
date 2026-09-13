@@ -4,11 +4,10 @@ class GenerateResourceNodesStep extends BaseStep {
     constructor() { super('generateResources'); }
     async execute(context) {
         const { spawnNodesForSector } = require('../resource-node-generator');
-        await spawnNodesForSector(context.sectorId);
+        await spawnNodesForSector(context.sectorId, { seed: context.seed, rng: context.rngStreams.resources });
         this.result = { resourcesGenerated: true };
     }
 }
 
 module.exports = { GenerateResourceNodesStep };
-
 

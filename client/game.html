@@ -340,6 +340,11 @@
         }
 
         .avatar-option {
+            appearance: none;
+            background: transparent;
+            width: 100%;
+            color: inherit;
+            font: inherit;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -1600,19 +1605,29 @@
                     <button class="sf-btn sf-btn-secondary" id="playersStatusBtn" title="Show Players">
                         👥 Players
                     </button>
+                    <div class="workspace-launcher" aria-label="Open workspace panels">
+                        <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="fleet">Fleet</button>
+                        <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="details">Selected unit</button>
+                        <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="command">Command</button>
+                    </div>
                 </div>
             </div>
-            <div>
-                <button class="map-btn sf-btn sf-btn-secondary" id="openEncyclopediaBtn" title="Encyclopedia">📖</button>
-                <button class="map-btn sf-btn sf-btn-secondary" id="settingsBtn">⚙️</button>
-                <button class="map-btn sf-btn sf-btn-danger" id="exitGameBtn">❌</button>
+            <div class="topbar-utilities" aria-label="Game utilities">
+                <button class="map-btn sf-btn sf-btn-secondary" id="centerActiveShipBtn" title="Center on active ship" aria-label="Center on active ship">⌖</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="floatingMiniBtn" title="Toggle minimap" aria-label="Toggle minimap">🎯</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="openMapBtn" title="Open strategic map" aria-label="Open strategic map">🗺️</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="openEncyclopediaBtn" title="Encyclopedia" aria-label="Open encyclopedia">📖</button>
+                <button class="map-btn sf-btn sf-btn-secondary" id="settingsBtn" title="Settings" aria-label="Open settings">⚙️</button>
+                <button class="map-btn sf-btn sf-btn-danger" id="exitGameBtn" title="Quit game" aria-label="Quit game">❌</button>
             </div>
         </div>
         
         <!-- Left Panel - Units -->
-        <div class="left-panel sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
+        <aside class="left-panel sf-card rounded-2xl border border-white/10 backdrop-blur-xl" data-mobile-panel="fleet" aria-label="Your fleet">
             <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <span>🚢 Your Fleet</span>
+                <span>Your Fleet <span id="fleetCount" class="panel-count" aria-live="polite"></span></span>
+                <button class="sf-btn sf-btn-xs sf-btn-secondary" type="button" data-focus-first-ship>Locate ship</button>
+                <button class="panel-dismiss" type="button" data-close-panel="fleet" aria-label="Close fleet panel">×</button>
             </div>
             <div class="fleet-toolbar" style="padding:0 2px; width:100%; box-sizing:border-box;">
                 <input id="fleetSearch" class="sf-input" placeholder="Search name or tag" />
@@ -1639,7 +1654,7 @@
                 <button id="fleetFavoritesToggle" class="sf-btn sf-btn-secondary" title="Show favorites only">⭐</button>
             </div>
             <div id="unitsList" class="loading" style="min-height:0; overflow:auto; overflow-x:hidden; scrollbar-gutter: stable both-edges;">Loading units...</div>
-        </div>
+        </aside>
         
         <!-- Center Map -->
         <div class="map-container sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
@@ -1647,23 +1662,22 @@
             <div class="map-controls">
                 <button class="map-btn sf-btn sf-btn-secondary" id="zoomInBtn">🔍+</button>
                 <button class="map-btn sf-btn sf-btn-secondary" id="zoomOutBtn">🔍-</button>
-                <button class="map-btn sf-btn sf-btn-secondary" id="floatingMiniBtn">🎯</button>
-                <button class="map-btn sf-btn sf-btn-secondary" id="openMapBtn" title="Open Full Map">🗺️</button>
             </div>
         </div>
         
         <!-- Right Panel - Selected Unit Info -->
-        <div class="right-panel sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
-            <div class="panel-title">📊 Unit Details</div>
+        <aside class="right-panel sf-card rounded-2xl border border-white/10 backdrop-blur-xl" data-mobile-panel="details" aria-label="Unit details">
+            <div class="panel-title panel-title-row"><span>📊 Unit Details</span><button class="panel-dismiss" type="button" data-close-panel="details" aria-label="Close unit details">×</button></div>
             <div id="unitDetails">
                 <div style="text-align: center; color: #666; padding: 20px;">
                     Select a unit to view details
                 </div>
             </div>
-        </div>
+        </aside>
         
         <!-- PlayerInformation panel at bottom-left, outside ChatNotification -->
-        <div id="playerInformation" class="sf-card player-card rounded-2xl border border-white/10 backdrop-blur-xl" style="grid-area: minimap;">
+        <section id="playerInformation" class="sf-card player-card rounded-2xl border border-white/10 backdrop-blur-xl" data-mobile-panel="command" aria-label="Commander information">
+            <div class="panel-title panel-title-row"><span>Commander</span><button class="panel-dismiss" type="button" data-close-panel="command" aria-label="Close commander panel">×</button></div>
             <div class="player-identity">
                 <div class="avatar-wrap">
                     <img id="playerAvatarMini" src="assets/avatars/explorer.png" alt="avatar">
@@ -1696,14 +1710,18 @@
                 <button class="sf-btn sf-btn-secondary" id="playerAssetsBtn">Player Assets</button>
                 <button class="sf-btn sf-btn-secondary" id="senateBtn">Senate</button>
             </div>
-        </div>
+        </section>
         
         <!-- Chat/Notification panel to the right -->
-        <div class="chat-notification sf-card rounded-2xl border border-white/10 backdrop-blur-xl" style="grid-area:auto; grid-column: 2 / span 1; min-height:0;">
+        <section class="chat-notification game-comms sf-card rounded-2xl border border-white/10 backdrop-blur-xl" data-mobile-panel="comms" aria-label="Communications">
+            <div class="comms-tabs" role="tablist" aria-label="Communications panels">
+                <button class="comms-tab is-active" type="button" role="tab" aria-selected="true" data-comms-tab="chat">Chat</button>
+                <button class="comms-tab" type="button" role="tab" aria-selected="false" data-comms-tab="activity">Activity</button>
+            </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 100%; min-height: 0;">
-                <div style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
+                <div class="comms-chat-pane" style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
                         <div class="panel-title" style="margin:0;">💬 Chat</div>
-                        <div id="chatMessages" style="overflow:auto; min-height:0; background:#0b0f1a; border:1px solid #243b55; border-radius:6px; padding:8px; color:#cfe4ff;"></div>
+                        <div id="chatMessages" class="chat-history" role="log" aria-live="polite" aria-label="Chat history"><p class="chat-empty">No messages yet. Start the channel.</p></div>
                     <div style="display:grid; grid-template-columns: 160px 1fr auto; gap:6px; align-items:center;" onsubmit="return false;">
                             <select id="chatRecipient" class="sf-select">
                                 <option value="public">Public</option>
@@ -1712,16 +1730,21 @@
                         <button class="sf-btn sf-btn-secondary" id="chatSendBtn">Send</button>
                         </div>
                     </div>
-                    <div style="display:grid; grid-template-rows: auto 1fr; gap:6px; min-height:0;">
+                    <div class="comms-activity-pane" style="display:grid; grid-template-rows: auto 1fr; gap:6px; min-height:0;">
                         <div class="panel-title" style="margin:0;">📜 Activity Log</div>
                         <div id="activityLog" style="overflow:auto; min-height:0;">
                             <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
+        </section>
     </div>
+    <nav class="mobile-command-dock" aria-label="Game panels">
+        <button type="button" data-open-panel="fleet">Fleet</button>
+        <button type="button" data-open-panel="details">Details</button>
+        <button type="button" data-open-panel="comms">Comms</button>
+        <button type="button" data-open-panel="command">Command</button>
+    </nav>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
@@ -1757,8 +1780,9 @@
         function appendChat(msg) {
             const box = document.getElementById('chatMessages');
             if (!box) return;
+            box.querySelector('.chat-empty')?.remove();
             const line = document.createElement('div');
-            line.style.margin = '2px 0';
+            line.className = 'chat-line';
 
             const resolveName = (userId) => {
                 const id = Number(userId);
@@ -1793,7 +1817,14 @@
                 : (msg.toUserId ? `(DM→${msg.toUsername || resolveName(msg.toUserId)})` : '(Public)');
 
             const fromName = msg.fromUsername || resolveName(msg.fromUserId);
-            line.textContent = `[${new Date(msg.timestamp).toLocaleTimeString()}] ${scope} ${fromName}: ${msg.text}`;
+            const time = document.createElement('time');
+            time.dateTime = msg.timestamp;
+            time.textContent = new Date(msg.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            const sender = document.createElement('strong');
+            sender.textContent = fromName;
+            const body = document.createElement('span');
+            body.textContent = msg.text;
+            line.append(time, sender, document.createTextNode(` ${scope} `), body);
             box.appendChild(line);
             box.scrollTop = box.scrollHeight;
         }
@@ -1833,6 +1864,7 @@
                 const box = document.getElementById('chatMessages');
                 if (!box) return;
                 box.innerHTML = '';
+                if (!resp.messages.length) box.innerHTML = '<p class="chat-empty">No messages yet. Start the channel.</p>';
                 for (const m of resp.messages) appendChat(m);
             });
         }
@@ -1844,15 +1876,19 @@
             if (recipient && recipient.startsWith('user:')) payload.toUserId = Number(recipient.split(':')[1]);
             // Clear immediately for responsive UX
             document.getElementById('chatInput').value = '';
-            // Try to send if socket is available; otherwise retry once after a short delay
+            const restoreFailedMessage = () => {
+                document.getElementById('chatInput').value = text;
+                document.getElementById('chatInput').focus();
+            };
             try {
-                if (gameClient && gameClient.socket) {
-                    gameClient.socket.emit('chat:send', payload);
+                if (gameClient?.socket?.connected) {
+                    gameClient.socket.timeout(4000).emit('chat:send', payload, (err, response) => {
+                        if (err || !response?.success) restoreFailedMessage();
+                    });
                 } else {
-                    setTimeout(() => { try { gameClient?.socket?.emit('chat:send', payload); } catch {} }, 500);
+                    restoreFailedMessage();
                 }
-            } catch {}
-            // Rely on server echo to display; no optimistic append to avoid duplicates
+            } catch { restoreFailedMessage(); }
         }
         // Enter to send
         document.addEventListener('keydown', (e) => {
@@ -1864,7 +1900,16 @@
 
         // Populate chat recipients on load and when socket connects
         document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(() => { populateChatRecipients(); requestChatHistory(); }, 600);
+            let chatBootstrapAttempts = 0;
+            const bootstrapChat = () => {
+                if (!window.gameClient?.socket) {
+                    if (chatBootstrapAttempts++ < 20) setTimeout(bootstrapChat, 150);
+                    return;
+                }
+                populateChatRecipients();
+                requestChatHistory();
+            };
+            setTimeout(bootstrapChat, 300);
             // Seed chat name cache with our commanderName if available
             try {
                 if (window.gameClient) {
@@ -1875,6 +1920,56 @@
                     }
                 }
             } catch {}
+
+            const shell = document.querySelector('.game-container');
+            const closePanel = () => {
+                document.querySelectorAll('[data-mobile-panel].is-mobile-open').forEach(panel => panel.classList.remove('is-mobile-open'));
+                document.querySelectorAll('[data-open-panel]').forEach(button => button.setAttribute('aria-expanded', 'false'));
+                document.body.classList.remove('mobile-panel-open');
+            };
+            document.querySelectorAll('[data-close-panel]').forEach(button => button.addEventListener('click', closePanel));
+            document.querySelectorAll('[data-open-panel]').forEach(button => {
+                button.addEventListener('click', () => {
+                    const panel = document.querySelector(`[data-mobile-panel="${button.dataset.openPanel}"]`);
+                    if (!panel) return;
+                    const alreadyOpen = panel.classList.contains('is-mobile-open');
+                    closePanel();
+                    if (!alreadyOpen) {
+                        panel.classList.add('is-mobile-open');
+                        button.setAttribute('aria-expanded', 'true');
+                        document.body.classList.add('mobile-panel-open');
+                        if (button.dataset.openPanel === 'fleet') window.gameClient?.updateMultiSectorFleet?.();
+                    }
+                });
+            });
+            document.querySelectorAll('[data-open-panel]').forEach(button => button.setAttribute('aria-expanded', 'false'));
+            document.querySelector('[data-focus-first-ship]')?.addEventListener('click', () => window.gameClient?.focusFirstFleetShip?.());
+            document.querySelectorAll('[data-comms-tab]').forEach(button => {
+                button.addEventListener('click', () => {
+                    const tab = button.dataset.commsTab;
+                    const comms = button.closest('.game-comms');
+                    if (!comms) return;
+                    comms.dataset.activeCommsTab = tab;
+                    comms.querySelectorAll('[data-comms-tab]').forEach(tabButton => {
+                        const active = tabButton === button;
+                        tabButton.classList.toggle('is-active', active);
+                        tabButton.setAttribute('aria-selected', String(active));
+                    });
+                });
+            });
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && document.body.classList.contains('mobile-panel-open')) closePanel();
+            });
+            const chatSendButton = document.getElementById('chatSendBtn');
+            if (chatSendButton) chatSendButton.addEventListener('click', sendChat);
+            if (window.gameClient?.socket) {
+                gameClient.socket.on('connect', () => {
+                    setTimeout(() => { populateChatRecipients(); requestChatHistory(); }, 100);
+                });
+            }
+            if (shell) shell.addEventListener('click', (event) => {
+                if (event.target === shell && document.body.classList.contains('mobile-panel-open')) closePanel();
+            });
         });
         // When selection changes, load appropriate history
         document.addEventListener('change', (e) => {
@@ -1884,4 +1979,4 @@
         });
     </script>
 </body>
-</html> 
+</html>

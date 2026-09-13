@@ -20,6 +20,16 @@ export function attachToolbarHandlers(game) {
 
 import { getStatusClass, getStatusLabel } from './UnitDetails.js';
 
+function closeFleetPanel() {
+    const panel = document.querySelector('[data-mobile-panel="fleet"]');
+    if (!panel) return;
+    panel.classList.remove('is-mobile-open');
+    document.body.classList.remove('mobile-panel-open');
+    document.querySelectorAll('[data-open-panel="fleet"]').forEach(button => {
+        button.setAttribute('aria-expanded', 'false');
+    });
+}
+
 export async function updateFleetList(game) {
     if (!game || !game.gameState) return;
     const unitsList = document.getElementById('unitsList');
@@ -31,6 +41,8 @@ export async function updateFleetList(game) {
         if (!fleet || fleet.length === 0) {
             unitsList.classList.remove('loading');
             unitsList.innerHTML = '<div class="no-units">No units found</div>';
+            const fleetCount = document.getElementById('fleetCount');
+            if (fleetCount) fleetCount.textContent = '(0)';
             game.lastFleet = [];
             try { const mod = await import('./player-panel.js'); mod.updatePlayerPanel(game); } catch {}
             return;
@@ -39,6 +51,12 @@ export async function updateFleetList(game) {
         game.lastFleet = fleet;
         try { const mod = await import('./player-panel.js'); mod.updatePlayerPanel(game); } catch {}
 
+        const parseMeta = (unit) => {
+            try { return unit.meta ? JSON.parse(unit.meta) : {}; }
+            catch { return {}; }
+        };
+        const fleetCount = document.getElementById('fleetCount');
+        if (fleetCount) fleetCount.textContent = `(${fleet.length})`;
         const unitsBySector = {};
         fleet.forEach(unit => {
             const sectorName = unit.sector_name || 'Unknown Sector';
@@ -79,7 +97,7 @@ export async function updateFleetList(game) {
             `;
 
             const filtered = units.filter(unit => {
-                const meta = unit.meta ? JSON.parse(unit.meta) : {};
+                const meta = parseMeta(unit);
                 if (onlyFav && !game.isFavoriteUnit(unit.id)) return false;
                 if (typeFilter !== 'all') {
                     const t = unit.type === 'ship' ? 'ship' : (unit.type === 'station' ? 'station' : 'structure');
@@ -91,8 +109,8 @@ export async function updateFleetList(game) {
                 if (q && !name.includes(q)) return false;
                 return true;
             }).sort((a,b)=>{
-                const ma = a.meta ? JSON.parse(a.meta) : {};
-                const mb = b.meta ? JSON.parse(b.meta) : {};
+                const ma = parseMeta(a);
+                const mb = parseMeta(b);
                 if (sortBy === 'name') return (ma.name||a.type).localeCompare(mb.name||b.type);
                 if (sortBy === 'status') return game.getUnitStatus(ma,a).localeCompare(game.getUnitStatus(mb,b));
                 if (sortBy === 'cargo') return (game.getCargoFill(b)-game.getCargoFill(a));
@@ -101,7 +119,7 @@ export async function updateFleetList(game) {
             });
 
             filtered.forEach(unit => {
-                const meta = unit.meta ? JSON.parse(unit.meta) : {};
+                const meta = parseMeta(unit);
                 const isSelected = game.selectedUnit && game.selectedUnit.id === unit.id;
                 const inCurrentSector = isCurrentSector;
                 const status = game.getUnitStatus(meta, unit);
@@ -118,7 +136,7 @@ export async function updateFleetList(game) {
                             ${!inCurrentSector ? '<span class="remote-indicator">📡</span>' : ''}
                         </div>
                         <div class="unit-meta">
-                            <span class="chip">${sectorName}</span>
+                            <span class="chip">${inCurrentSector ? `(${unit.x}, ${unit.y})` : sectorName}</span>
                             <span class="chip ${getStatusClass(status)}">${getStatusLabel(status)}</span>
                             ${eta ? `<span class="chip">⏱️ ETA ${eta}</span>` : ''}
                             <span class="favorite ${game.isFavoriteUnit(unit.id)?'active':''}" data-action="toggle-favorite" data-unit-id="${unit.id}">⭐</span>
@@ -147,6 +165,7 @@ export async function updateFleetList(game) {
                 const sectorName = row.dataset.sectorName;
                 const inCurrent = String(row.dataset.inCurrent) === 'true';
                 game.selectRemoteUnit(unitId, sectorId, sectorName, inCurrent);
+                closeFleetPanel();
                 return;
             }
         });
@@ -165,5 +184,3 @@ export async function updateFleetList(game) {
         unitsList.innerHTML = '<div class="no-units">Error loading fleet</div>';
     }
 }
-
-

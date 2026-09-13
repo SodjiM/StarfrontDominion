@@ -31,6 +31,12 @@
         return { x: worldX, y: worldY, valid, inRange, free };
     }
 
+    function queueAbilityAction(client, abilityKey, payload = {}) {
+        import('../queue-controller.js').then(Queue => Queue.addAbility(client, client.selectedUnit?.id, abilityKey, payload, (resp) => {
+            if (!resp?.success) client.addLogEntry(`Failed to plan ${abilityKey}: ${resp?.error || 'error'}`, 'error');
+        }));
+    }
+
     async function queueAbility(client, abilityKey) {
         if (client._lastQueuedAbilityAt && Date.now() - client._lastQueuedAbilityAt < 200) return; // debounce rapid clicks
         client._lastQueuedAbilityAt = Date.now();
@@ -43,7 +49,7 @@
                 const ship = client.selectedUnit;
                 const isMining = ship.harvestingStatus === 'active';
                 if (isMining) {
-                    client.socket.emit('activate-ability', { gameId: client.gameId, casterId: ship.id, abilityKey, params: { stop: true } });
+                    queueAbilityAction(client, abilityKey, { params: { stop: true } });
                     client.addLogEntry(`Queued: Stop ${def.name}`, 'info');
                 } else {
                     try {
@@ -55,7 +61,7 @@
                             return;
                         }
                         if (nodes.length === 1) {
-                            client.socket.emit('activate-ability', { gameId: client.gameId, casterId: ship.id, abilityKey, targetObjectId: nodes[0].id });
+                            queueAbilityAction(client, abilityKey, { targetObjectId: nodes[0].id });
                             client.addLogEntry(`Queued ${def.name} on ${nodes[0].resource_name}`, 'info');
                         } else {
                             // Use existing mining modal for selection
@@ -71,7 +77,7 @@
                                         </div>
                                         <div class="resource-action"><button class="mine-select-btn">Mine</button></div>`;
                                     option.querySelector('.mine-select-btn').addEventListener('click', () => {
-                                        client.socket.emit('activate-ability', { gameId: client.gameId, casterId: ship.id, abilityKey, targetObjectId: node.id });
+                                        queueAbilityAction(client, abilityKey, { targetObjectId: node.id });
                                         client.addLogEntry(`Queued ${def.name} on ${node.resource_name}`, 'info');
                                         window.UI.closeModal();
                                     });
@@ -91,7 +97,7 @@
                 return;
             }
 
-            client.socket.emit('activate-ability', { gameId: client.gameId, casterId: client.selectedUnit.id, abilityKey });
+            queueAbilityAction(client, abilityKey);
             client.addLogEntry(`Queued ${def.name}`, 'info');
             // Optimistic UI: show Microthruster Shift effect immediately on the current turn
             if (abilityKey === 'microthruster_shift') {
@@ -148,5 +154,4 @@
         refreshAbilityCooldowns
     };
 })();
-
 

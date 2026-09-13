@@ -12,43 +12,54 @@ export async function list(game, shipId) {
     });
 }
 
-export function clear(game, shipId) {
-    try { game.socket.emit('queue:clear', { gameId: game.gameId, shipId }); } catch {}
+export async function actions(game, shipId) {
+    return new Promise((resolve) => {
+        try {
+            game.socket.timeout(3000).emit('queue:actions', { gameId: game.gameId, shipId }, (err, data) => {
+                if (err || !data?.success) resolve([]); else resolve(data.actions || []);
+            });
+        } catch { resolve([]); }
+    });
+}
+
+export function clear(game, shipId, cb) {
+    try { game.socket.emit('queue:clear', { gameId: game.gameId, shipId }, cb); } catch { cb?.({ success: false }); }
+}
+
+function orderId() {
+    try { return crypto.randomUUID(); } catch { return `order-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 }
 
 export function remove(game, shipId, id, cb) {
     try { game.socket.emit('queue:remove', { gameId: game.gameId, shipId, id }, cb); } catch { if (cb) cb(); }
 }
 
+export function popLast(game, shipId, cb) {
+    try { game.socket.emit('queue:pop-last', { gameId: game.gameId, shipId }, cb); } catch { cb?.({ success: false }); }
+}
+
 export function addMove(game, shipId, x, y, cb) {
     try {
-        // Optimistic local preview: extend queued segments immediately
-        try {
-            const obj = game.objects && game.objects.find(o => o.id === shipId);
-            if (obj) {
-                let start = null;
-                if (obj.movementSegments && obj.movementSegments.length > 0) {
-                    const last = obj.movementSegments[obj.movementSegments.length - 1];
-                    start = { x: last.to.x, y: last.to.y };
-                } else if (obj.movementPath && obj.movementPath.length > 1 && obj.movementActive) {
-                    start = obj.movementPath[obj.movementPath.length - 1];
-                } else if (obj.plannedDestination && typeof obj.plannedDestination.x === 'number') {
-                    start = { x: obj.plannedDestination.x, y: obj.plannedDestination.y };
-                } else {
-                    start = { x: obj.x, y: obj.y };
-                }
-                const seg = { from: { x: start.x, y: start.y }, to: { x: Number(x), y: Number(y) } };
-                const segs = (obj.movementSegments ? obj.movementSegments.slice() : []);
-                segs.push(seg);
-                obj.movementSegments = segs;
-                if (game.selectedUnit && game.selectedUnit.id === shipId) game.selectedUnit.movementSegments = segs;
-                if (typeof game.render === 'function') game.render();
-            }
-        } catch {}
         game.socket.emit('queue-order', {
             gameId: game.gameId,
             shipId,
-            orderType: 'move',
+            actionType: 'movement.move',
+            clientOrderId: orderId(),
+            payload: { destination: { x, y } }
+        }, (resp) => {
+            if (resp?.success && game.selectedUnit?.id === shipId) game.loadQueueLog?.(shipId, true);
+            cb?.(resp);
+        });
+    } catch { if (cb) cb({ success: false }); }
+}
+
+export function replaceMove(game, shipId, x, y, cb) {
+    try {
+        game.socket.emit('queue:replace', {
+            gameId: game.gameId,
+            shipId,
+            actionType: 'movement.move',
+            clientOrderId: orderId(),
             payload: { destination: { x, y } }
         }, cb);
     } catch { if (cb) cb({ success: false }); }
@@ -59,7 +70,8 @@ export function addHarvestStart(game, shipId, nodeId, cb) {
         game.socket.emit('queue-order', {
             gameId: game.gameId,
             shipId,
-            orderType: 'harvest_start',
+            actionType: 'harvest.start',
+            clientOrderId: orderId(),
             payload: { nodeId }
         }, cb);
     } catch { if (cb) cb({ success: false }); }
@@ -70,10 +82,21 @@ export function addAbility(game, casterId, abilityKey, payload, cb) {
         game.socket.emit('queue-order', {
             gameId: game.gameId,
             shipId: casterId,
-            orderType: 'ability',
+            actionType: 'combat.ability',
+            clientOrderId: orderId(),
             payload: { abilityKey, ...payload }
         }, cb);
     } catch { if (cb) cb({ success: false }); }
 }
 
-
+export function addHarvestStop(game, shipId, cb) {
+    try {
+        game.socket.emit('queue-order', {
+            gameId: game.gameId,
+            shipId,
+            actionType: 'harvest.stop',
+            clientOrderId: orderId(),
+            payload: {}
+        }, cb);
+    } catch { if (cb) cb({ success: false }); }
+}

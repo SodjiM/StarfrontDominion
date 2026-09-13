@@ -69,5 +69,3 @@
 
   window.SFApi = { getJson, postJson, Cargo, Resources, Abilities, Players, Build, State };
 })();
-
-

@@ -30,7 +30,18 @@ class NavigationService {
   const results=[];const seen=new Set();
   for(const o of orders){if(seen.has(o.ship_id))continue;seen.add(o.ship_id);
    if(await this.get('SELECT id FROM lane_transits WHERE ship_id=?',[o.ship_id]))continue;
-   const ship={...o,id:o.ship_id};const path=await this.route(ship,{x:o.destination_x,y:o.destination_y});
+   const ship={...o,id:o.ship_id};
+   let path = null;
+   try {
+    const stored = JSON.parse(o.movement_path || '[]');
+    if (Array.isArray(stored) && stored.length > 1 && stored[0]?.x === o.x && stored[0]?.y === o.y) {
+     const objects = await this.all('SELECT id,type,x,y,radius FROM sector_objects WHERE sector_id=?',[o.sector_id]);
+     const blocked = nav.occupancy(objects,o.ship_id);
+     const validRemaining = !blocked(stored[stored.length - 1]) && stored.slice(1).every((p,i)=>nav.canStep(stored[i],p,blocked));
+     if (validRemaining) path = stored;
+    }
+   } catch {}
+   if (!path) path=await this.route(ship,{x:o.destination_x,y:o.destination_y});
    if(!path){
     const blockedBy={reason:'no_route',turn,nextRetryTurn:turn+1,retrying:true};
     await this.run("UPDATE movement_orders SET status='blocked',blocked_by=? WHERE id=?",[JSON.stringify(blockedBy),o.id]);
@@ -41,9 +52,10 @@ class NavigationService {
    let mult=1,flat=0;for(const e of effects){const d=JSON.parse(e.effect_data||'{}');mult+=Number(d.movementBonus)||0;flat=Math.max(flat,Number(d.movementFlatBonus)||0);}
    const speed=Math.max(1,Math.floor((Number(JSON.parse(o.meta||'{}').movementSpeed)||1)*mult)+flat);
    const step=Math.min(speed,path.length-1),p=path[step],status=step===path.length-1?'completed':'active';
+   const remainingPath=path.slice(step);
    await this.run('UPDATE sector_objects SET x=?,y=?,updated_at=? WHERE id=?',[p.x,p.y,new Date().toISOString(),o.ship_id]);
-   if(step)await this.run('INSERT INTO movement_history(object_id,game_id,turn_number,from_x,from_y,to_x,to_y,movement_speed) VALUES(?,?,?,?,?,?,?,?)',[o.ship_id,gameId,turn,o.x,o.y,p.x,p.y,speed]);
-   await this.run('UPDATE movement_orders SET movement_path=?,current_step=?,status=?,eta_turns=?,blocked_by=NULL WHERE id=?',[JSON.stringify(path),step,status,Math.ceil((path.length-1-step)/speed),o.id]);
+   if(step)await this.run('INSERT INTO movement_history(object_id,game_id,sector_id,turn_number,from_x,from_y,to_x,to_y,movement_speed) VALUES(?,?,?,?,?,?,?,?,?)',[o.ship_id,gameId,o.sector_id,turn,o.x,o.y,p.x,p.y,speed]);
+   await this.run('UPDATE movement_orders SET movement_path=?,current_step=?,status=?,eta_turns=?,blocked_by=NULL WHERE id=?',[JSON.stringify(remainingPath),0,status,Math.ceil((remainingPath.length-1)/speed),o.id]);
    results.push({objectId:o.ship_id,status,newPosition:p,retried:o.status==='blocked'});
   }return results;
  }

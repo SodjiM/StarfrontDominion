@@ -1,10 +1,8 @@
 const { AbilitiesService } = require('../services/game/abilities.service');
 const { HarvestingService } = require('../services/game/harvesting.service');
 const { MovementService } = require('../services/game/movement.service');
+const { QueuedActionService } = require('../services/game/queued-action.service');
 const { z } = require('zod');
-
-// Queue size policy removed; rely on rate limits and compaction
-const MAX_QUEUED_ORDERS_PER_SHIP = Infinity;
 
 function registerGameChannel({ io, db, resolveTurn }) {
     if (!io || !db) throw new Error('registerGameChannel requires io and db');
@@ -34,6 +32,7 @@ function registerGameChannel({ io, db, resolveTurn }) {
 
     // Basic metrics
     const metrics = { moves: 0, warps: 0, abilities: 0, queued: 0, travels: 0 };
+    const queuedActions = new QueuedActionService(db);
 
     io.on('connection', (socket) => {
         require('../middleware/auth').guardSocket(socket, db);
@@ -89,6 +88,22 @@ function registerGameChannel({ io, db, resolveTurn }) {
             if(!plan || Date.now()-plan.at>300000 || Number(payload.shipId)!==Number(plan.shipId) || Number(payload.sectorId)!==Number(plan.sectorId) || Number(payload.gameId)!==Number(plan.gameId))return cb?.({success:false,error:'route_expired_replan'});
             const current=await laneService.get('SELECT turn_number FROM turns WHERE game_id=? ORDER BY turn_number DESC LIMIT 1',[plan.gameId]);
             if(current?.turn_number!==plan.turn)return cb?.({success:false,error:'route_expired_replan'});
+            if (payload?.queue) {
+                try {
+                    const queued = await queuedActions.enqueue({
+                        gameId: plan.gameId,
+                        shipId: plan.shipId,
+                        actionType: 'warp.lane',
+                        payload: { sectorId: plan.sectorId, legs: plan.legs, destination: plan.dest },
+                        clientOrderId: payload.clientOrderId || null
+                    });
+                    plannedRoutes.delete(payload.routeId);
+                    if (!queued.duplicate) io.to(`game-${plan.gameId}`).emit('queue:updated', { shipId: plan.shipId });
+                    return cb?.({ success: true, queued: true, duplicate: queued.duplicate, order: queued.order });
+                } catch (e) {
+                    return cb?.({ success: false, error: e?.message || 'queue_warp_failed' });
+                }
+            }
             const result=await laneService.confirm(plan.shipId,plan.sectorId,plan.legs,plan.dest,plan.turn);
             plannedRoutes.delete(payload.routeId);cb?.(result);
         });
@@ -103,7 +118,7 @@ function registerGameChannel({ io, db, resolveTurn }) {
         });
 
         // Basic chat: game-wide, direct messages, and group channels (with persistence)
-        socket.on('chat:send', async (msg) => {
+        socket.on('chat:send', async (msg, callback) => {
             try {
                 const gameId = Number(msg.gameId);
                 const fromUserId = Number(msg.fromUserId || socket.userId);
@@ -111,7 +126,8 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 const channelId = msg.channelId != null ? Number(msg.channelId) : null;
                 const text = String(msg.text || '').slice(0, 500);
                 if (!gameId || !fromUserId || !text) {
-                    return socket.emit('chat:error', { message: 'Invalid chat payload' });
+                    socket.emit('chat:error', { message: 'Invalid chat payload' });
+                    return callback && callback({ success: false, error: 'invalid_chat_payload' });
                 }
 
                 const fromUsername = await new Promise((resolve) => {
@@ -147,9 +163,11 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 } else {
                     io.to(`game-${gameId}`).emit('chat:game', payload);
                 }
+                callback && callback({ success: true, message: payload });
             } catch (e) {
                 console.error('chat:send error:', e);
                 socket.emit('chat:error', { message: 'Failed to send message' });
+                callback && callback({ success: false, error: 'chat_send_failed' });
             }
         });
 
@@ -339,18 +357,23 @@ function registerGameChannel({ io, db, resolveTurn }) {
         const queueOrderSchema = z.object({
             gameId: z.coerce.number().int().positive(),
             shipId: z.coerce.number().int().positive(),
-            orderType: z.enum(['move','harvest_start','harvest_stop','ability']),
+            actionType: z.string().min(1).optional(),
+            // Kept temporarily so older clients can migrate without losing commands.
+            orderType: z.string().min(1).optional(),
             payload: z.any().nullable().optional(),
-            notBeforeTurn: z.number().int().nullable().optional()
+            notBeforeTurn: z.coerce.number().int().nullable().optional(),
+            clientOrderId: z.string().min(1).max(100).optional()
         });
         socket.on('queue-order', async (data, callback) => {
             if (!allow(socket, 'queue')) return callback && callback({ success: false, error: 'rate_limited' });
             const parsed = queueOrderSchema.safeParse(data);
             if (!parsed.success) return callback && callback({ success: false, error: 'invalid_queue_payload', issues: parsed.error.issues });
             try {
-                const { gameId, shipId, orderType, payload, notBeforeTurn } = parsed.data;
-                if(orderType==='move' && !require('../utils/navigation').validPoint(payload?.destination || payload))return callback?.({success:false,error:'invalid_destination'});
-                if (!gameId || !shipId || !orderType) return callback && callback({ success: false, error: 'missing_fields' });
+                const { gameId, shipId, payload, notBeforeTurn, clientOrderId } = parsed.data;
+                const requestedType = parsed.data.actionType || parsed.data.orderType;
+                const aliases = { move: 'movement.move', harvest_start: 'harvest.start', harvest_stop: 'harvest.stop', ability: 'combat.ability' };
+                const actionType = aliases[requestedType] || requestedType;
+                if (!gameId || !shipId || !actionType) return callback && callback({ success: false, error: 'missing_fields' });
                 const ship = await new Promise((resolve) => db.get(
                     `SELECT so.owner_id, s.game_id
                      FROM sector_objects so JOIN sectors s ON s.id = so.sector_id
@@ -359,37 +382,23 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 ));
                 if (!ship || Number(ship.owner_id) !== Number(socket.userId)) return callback && callback({ success: false, error: 'not_owner' });
                 if (Number(ship.game_id) !== Number(gameId)) return callback && callback({ success: false, error: 'wrong_game' });
-                // No hard cap; soft protection via rate limiting
-                const seqRow = await new Promise((resolve) => db.get('SELECT COALESCE(MAX(sequence_index), 0) as maxSeq FROM queued_orders WHERE ship_id = ?', [shipId], (e, r) => resolve(r)));
-                const nextSeq = Number(seqRow?.maxSeq || 0) + 1;
-                await new Promise((resolve, reject) => db.run(
-                    `INSERT INTO queued_orders (game_id, ship_id, sequence_index, order_type, payload, not_before_turn, status, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
-                    [gameId, shipId, nextSeq, String(orderType), payload ? JSON.stringify(payload) : null, (typeof notBeforeTurn === 'number' ? notBeforeTurn : null), new Date().toISOString()],
-                    (err) => err ? reject(err) : resolve()
-                ));
+                const result = await queuedActions.enqueue({ gameId, shipId, actionType, payload, notBeforeTurn, clientOrderId });
                 metrics.queued++;
-                callback && callback({ success: true });
-                io.to(`game-${gameId}`).emit('queue:updated', { shipId });
+                callback && callback({ success: true, duplicate: result.duplicate, order: result.order });
+                if (!result.duplicate) io.to(`game-${gameId}`).emit('queue:updated', { shipId });
             } catch (e) {
-                callback && callback({ success: false, error: 'server_error' });
+                callback && callback({ success: false, error: e?.message || 'server_error' });
             }
         });
 
-        const queueListSchema = z.object({ gameId: z.coerce.number().int().positive(), shipId: z.coerce.number().int().positive() });
+        const queueListSchema = z.object({ gameId: z.coerce.number().int().positive(), shipId: z.coerce.number().int().positive(), history: z.boolean().optional() });
         socket.on('queue:list', async (data, callback) => {
             const parsed = queueListSchema.safeParse(data || {});
             if (!parsed.success) return callback && callback({ success: false, error: 'invalid_queue_list', issues: parsed.error.issues });
             try {
-                const { gameId, shipId } = parsed.data;
+                const { gameId, shipId, history } = parsed.data;
                 if (!gameId || !shipId) return callback && callback({ success: false, error: 'missing_fields' });
-                const rows = await new Promise((resolve) => db.all(
-                    `SELECT id, sequence_index, order_type, payload, not_before_turn, status
-                     FROM queued_orders WHERE game_id = ? AND ship_id = ? AND status = 'queued'
-                     ORDER BY sequence_index ASC, id ASC`,
-                    [gameId, shipId],
-                    (e, r) => resolve(r || [])
-                ));
+                const rows = await queuedActions.list(gameId, shipId, { history: Boolean(history) });
                 callback && callback({ success: true, orders: rows });
             } catch {
                 callback && callback({ success: false, error: 'server_error' });
@@ -402,33 +411,26 @@ function registerGameChannel({ io, db, resolveTurn }) {
             try {
                 const { gameId, shipId } = parsed.data;
                 if (!gameId || !shipId) return callback && callback({ success: false, error: 'missing_fields' });
-                // Cancel queued orders
-                await new Promise((resolve) => db.run(`UPDATE queued_orders SET status = 'cancelled' WHERE game_id = ? AND ship_id = ? AND status = 'queued'`, [gameId, shipId], () => resolve()));
-                // Cancel any active/scheduled lane itinerary for this ship
-                try { await new Promise((resolve)=>db.run(`UPDATE lane_itineraries SET status = 'cancelled' WHERE ship_id = ? AND status = 'active'`, [shipId], ()=>resolve())); } catch {}
-                // Cancel any queued tap entries
-                try { await new Promise((resolve)=>db.run(`UPDATE lane_tap_queue SET status = 'cancelled' WHERE ship_id = ? AND status = 'queued'`, [shipId], ()=>resolve())); } catch {}
-                // Remove any active transits and decrement load
-                try {
-                    const transits = await new Promise((resolve)=>db.all(`SELECT id, edge_id, cu FROM lane_transits WHERE ship_id = ?`, [shipId], (e,r)=>resolve(r||[])));
-                    for (const tr of transits) {
-                        try { await new Promise((resolve)=>db.run('DELETE FROM lane_transits WHERE id = ?', [tr.id], ()=>resolve())); } catch {}
-                        try { await new Promise((resolve)=>db.run('UPDATE lane_edges_runtime SET load_cu = MAX(0, load_cu - ?) WHERE edge_id = ?', [tr.cu || 1, tr.edge_id], ()=>resolve())); } catch {}
-                    }
-                    if (transits.length) { try { io.to(`game-${gameId}`).emit('travel:cancelled', { shipId }); } catch {} }
-                } catch {}
-                // Cancel any current movement order (approach to lane or otherwise)
-                let cancelledMove = false;
-                try {
-                    await new Promise((resolve)=>db.run(`DELETE FROM movement_orders WHERE object_id = ? AND status IN ('active','blocked','warp_preparing')`, [shipId], function(){ resolve(); }));
-                    cancelledMove = true;
-                } catch {}
-                callback && callback({ success: true });
+                const result = await queuedActions.cancel({ gameId, shipId });
+                callback && callback({ success: true, changed: result.changed });
                 io.to(`game-${gameId}`).emit('queue:updated', { shipId });
-                if (cancelledMove) { try { io.to(`game-${gameId}`).emit('movement:cancelled', { shipId }); } catch {} }
             } catch {
                 callback && callback({ success: false, error: 'server_error' });
             }
+        });
+
+        socket.on('queue:replace', async (data, callback) => {
+            const parsed = queueOrderSchema.safeParse(data || {});
+            if (!parsed.success) return callback?.({ success: false, error: 'invalid_queue_replace', issues: parsed.error.issues });
+            try {
+                const { gameId, shipId, payload, clientOrderId } = parsed.data;
+                const requestedType = parsed.data.actionType || parsed.data.orderType;
+                const aliases = { move: 'movement.move', harvest_start: 'harvest.start', harvest_stop: 'harvest.stop', ability: 'combat.ability' };
+                const actionType = aliases[requestedType] || requestedType;
+                const result = await queuedActions.replace({ gameId, shipId, actionType, payload, clientOrderId });
+                callback?.({ success: true, duplicate: result.duplicate, order: result.order });
+                if (!result.duplicate) io.to(`game-${gameId}`).emit('queue:updated', { shipId });
+            } catch (e) { callback?.({ success: false, error: e?.message || 'server_error' }); }
         });
 
         // Remove the last queued item (highest sequence_index) for a ship
@@ -439,10 +441,10 @@ function registerGameChannel({ io, db, resolveTurn }) {
             try {
                 const { gameId, shipId } = parsed.data;
                 const row = await new Promise((resolve)=>db.get(
-                    `SELECT id FROM queued_orders WHERE game_id = ? AND ship_id = ? AND status = 'queued' ORDER BY sequence_index DESC, id DESC LIMIT 1`,
+                    `SELECT id FROM queued_orders WHERE game_id = ? AND ship_id = ? AND status IN ('queued','waiting') ORDER BY sequence_index DESC, id DESC LIMIT 1`,
                     [gameId, shipId], (e, r)=>resolve(r||null)));
                 if (!row) return callback && callback({ success: true, popped: false });
-                await new Promise((resolve)=>db.run(`UPDATE queued_orders SET status = 'cancelled' WHERE id = ?`, [row.id], ()=>resolve()));
+                await queuedActions.cancel({ gameId, shipId, id: row.id });
                 callback && callback({ success: true, popped: true, id: row.id });
                 io.to(`game-${gameId}`).emit('queue:updated', { shipId });
             } catch {
@@ -457,12 +459,25 @@ function registerGameChannel({ io, db, resolveTurn }) {
             try {
                 const { gameId, shipId, id } = parsed.data;
                 if (!gameId || !shipId || !id) return callback && callback({ success: false, error: 'missing_fields' });
-                await new Promise((resolve) => db.run(`UPDATE queued_orders SET status = 'cancelled' WHERE id = ? AND game_id = ? AND ship_id = ? AND status = 'queued'`, [id, gameId, shipId], () => resolve()));
+                const result = await queuedActions.cancel({ gameId, shipId, id });
                 callback && callback({ success: true });
                 io.to(`game-${gameId}`).emit('queue:updated', { shipId });
             } catch {
                 callback && callback({ success: false, error: 'server_error' });
             }
+        });
+
+        socket.on('queue:actions', async (data, callback) => {
+            try {
+                const gameId = Number(data?.gameId || socket.gameId);
+                const shipId = Number(data?.shipId);
+                const ship = await new Promise((resolve) => db.get(
+                    `SELECT so.* FROM sector_objects so JOIN sectors s ON s.id = so.sector_id WHERE so.id = ? AND s.game_id = ? AND so.type = 'ship'`,
+                    [shipId, gameId], (e, r) => resolve(r || null)
+                ));
+                if (!ship) return callback?.({ success: false, error: 'ship_not_found' });
+                callback?.({ success: true, actions: await queuedActions.registry.listForShip(ship) });
+            } catch (e) { callback?.({ success: false, error: e?.message || 'server_error' }); }
         });
 
         socket.on('attack-target', async () => {

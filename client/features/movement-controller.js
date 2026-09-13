@@ -26,17 +26,15 @@ export function handleMoveCommand(game, worldX, worldY) {
 
     if (!Number.isInteger(worldX) || !Number.isInteger(worldY)) { game.addLogEntry('Invalid movement destination', 'warning'); return; }
 
-    if (game.queueMode) {
-        return queueMove(game, unit.id, worldX, worldY);
+    // Movement is always planned through the action system. A second click
+    // naturally appends another movement action behind the current plan.
+    if (game.queueReplaceMode) {
+        game.queueReplaceMode = false;
+        Queue.replaceMove(game, unit.id, worldX, worldY, (resp) => {
+            if (resp?.success) game.addLogEntry(`Replaced future plan with Move to (${worldX}, ${worldY})`, 'info');
+            else game.addLogEntry(`Failed to replace plan: ${resp?.error || 'error'}`, 'error');
+        });
+        return;
     }
-
-    game.socket.emit('move-ship', {
-        gameId: game.gameId, shipId: unit.id, destinationX: worldX, destinationY: worldY
-    }, (result)=>{
-        if(!result?.success){game.addLogEntry(result?.error || 'Movement request failed','error');return;}
-        unit.movementPath=result.movementPath;
-        unit.plannedDestination={x:result.destinationX,y:result.destinationY};
-        unit.movementETA=result.estimatedTurns;unit.movementActive=true;unit.movementStatus='active';
-        game.render();game.addLogEntry(`Movement confirmed, ETA: ${result.estimatedTurns} turns`,'success');
-    });
+    return queueMove(game, unit.id, worldX, worldY);
 }

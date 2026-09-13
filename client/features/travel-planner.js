@@ -42,6 +42,8 @@ export function confirmRoute(client, route, onRedraw) {
     const dest = (client && client.__laneHighlight && client.__plannerTarget) ? client.__plannerTarget : (client && client.__plannerTarget) ? client.__plannerTarget : null;
     client.socket && client.socket.emit('travel:confirm', {
         routeId: route.routeId,
+        queue: true,
+        clientOrderId: `warp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         gameId: client.gameId,
         sectorId: client.gameState.sector.id,
         shipId: client.selectedUnit.id,
@@ -61,5 +63,4 @@ export function confirmRoute(client, route, onRedraw) {
         } catch {}
     });
 }
-
 

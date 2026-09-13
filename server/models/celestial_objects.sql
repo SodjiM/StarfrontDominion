@@ -74,3 +74,30 @@ CREATE TABLE IF NOT EXISTS generation_history (
 
 -- Create index for generation history queries
 CREATE INDEX IF NOT EXISTS idx_generation_history_sector ON generation_history(sector_id, generation_time);
+
+CREATE TABLE IF NOT EXISTS orbital_rings (
+    sector_id INTEGER NOT NULL,
+    ring_index INTEGER NOT NULL,
+    center_x INTEGER NOT NULL,
+    center_y INTEGER NOT NULL,
+    radius INTEGER NOT NULL,
+    width INTEGER NOT NULL DEFAULT 32,
+    planet_object_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (sector_id, ring_index),
+    FOREIGN KEY (sector_id) REFERENCES sectors(id),
+    FOREIGN KEY (planet_object_id) REFERENCES sector_objects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_orbital_rings_sector ON orbital_rings(sector_id, ring_index);
+
+CREATE TABLE IF NOT EXISTS generation_manifests (
+    sector_id INTEGER PRIMARY KEY,
+    generation_seed INTEGER NOT NULL,
+    generator_version TEXT NOT NULL,
+    archetype TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sector_id) REFERENCES sectors(id)
+);

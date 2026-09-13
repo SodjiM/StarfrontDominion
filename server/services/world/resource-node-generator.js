@@ -1,5 +1,6 @@
 // Resource node generation with belt wedge density, mineral gating, and centroid clustering
 const db = require('../../db');
+const { createRngStreams, randFloat, randInt, choice } = require('./rng');
 
 // Core minerals are always available; two primaries are emphasized
 const CORE_MINERALS = ['Ferrite Alloy', 'Crytite', 'Ardanium', 'Vornite', 'Zerothium'];
@@ -7,9 +8,12 @@ const DEFAULT_PRIMARIES = ['Fluxium', 'Auralite'];
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 
-async function spawnNodesForSector(sectorId) {
-    const sectorRow = await new Promise((resolve) => db.get('SELECT id, archetype FROM sectors WHERE id = ?', [sectorId], (e, r) => resolve(r || null)));
+async function spawnNodesForSector(sectorId, options = {}) {
+    const sectorRow = await new Promise((resolve) => db.get('SELECT id, archetype, generation_seed FROM sectors WHERE id = ?', [sectorId], (e, r) => resolve(r || null)));
     const archetypeKey = sectorRow?.archetype || 'standard';
+    const rng = options.rng || createRngStreams(options.seed ?? sectorRow?.generation_seed ?? sectorId).resources;
+    const sun = await new Promise((resolve) => db.get('SELECT x, y FROM sector_objects WHERE sector_id = ? AND celestial_type = "star" ORDER BY id LIMIT 1', [sectorId], (e, r) => resolve(r || { x: 2500, y: 2500 })));
+    const center = { x: Number(sun.x || 2500), y: Number(sun.y || 2500) };
 
     // Load region health for gating
     const regionHealth = new Map();
@@ -102,20 +106,22 @@ async function spawnNodesForSector(sectorId) {
         const a0 = Number(s.arc_start), a1 = Number(s.arc_end);
         const amid = (a0 + a1) / 2;
         const rmid = Number(s.inner_radius) + Number(s.width) / 2;
-        const clusterCount = Math.max(5, Math.floor(nodeCount * 0.5));
+        const clusterCount = Math.max(3, Math.floor(nodeCount * 0.4));
         const remainder = Math.max(0, nodeCount - clusterCount);
+        const pocketAngle = randFloat(rng, -0.18, 0.18);
+        const pocketRadius = randFloat(rng, -Math.min(80, Number(s.width) * 0.2), Math.min(80, Number(s.width) * 0.2));
 
         // Spawn helper
         const spawnAtPolar = async (radius, angle, mineralName, asCluster = false) => {
             const resTypeId = await getTypeId(mineralName);
             if (!resTypeId) return;
-            const x = 2500 + Math.round(Math.cos(angle) * radius);
-            const y = 2500 + Math.round(Math.sin(angle) * radius);
-            const size = 1 + Math.floor(Math.random() * 2);
-            const amt = 160 + Math.floor(Math.random() * 220);
+            const x = Math.max(1, Math.min(4999, Math.round(center.x + Math.cos(angle) * radius)));
+            const y = Math.max(1, Math.min(4999, Math.round(center.y + Math.sin(angle) * radius)));
+            const size = randInt(rng, 1, 2);
+            const amt = randInt(rng, 160, 379);
             const parentKey = `${s.belt_key}-${s.sector_index}`;
-            const parentId = asCluster && beltCentroids.has(parentKey) ? beltCentroids.get(parentKey) : null;
-            const meta = JSON.stringify({ mineral: mineralName, resourceType: mineralName, category: 'mineral' });
+            const parentId = beltCentroids.get(parentKey) || null;
+            const meta = JSON.stringify({ mineral: mineralName, resourceType: mineralName, category: 'mineral', fieldType: 'asteroid-hub', belt: s.belt_key, sectorIndex: s.sector_index });
             await new Promise((resolve, reject) => db.run(
                 `INSERT INTO resource_nodes (sector_id, parent_object_id, resource_type_id, x, y, size, resource_amount, max_resource, harvest_difficulty, is_depleted, meta)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1.0, 0, ?)`,
@@ -127,7 +133,7 @@ async function spawnNodesForSector(sectorId) {
         const pickMineral = () => {
             // Weighted pick
             const total = entries.reduce((acc, [, w]) => acc + w, 0);
-            let r = Math.random() * total;
+            let r = rng() * total;
             for (const [name, w] of entries) { r -= w; if (r <= 0) return name; }
             return entries[entries.length - 1][0];
         };
@@ -135,33 +141,59 @@ async function spawnNodesForSector(sectorId) {
         // Cluster around centroid (tight angular and radial jitter)
         for (let i = 0; i < clusterCount; i++) {
             // Tight jitter: ensure many fall within ±25 tiles of centroid
-            const dr = (Math.random() - 0.5) * 30; // ±15 tiles
-            const da = (Math.random() - 0.5) * (a1 - a0) * 0.08; // tighter sector
+            const dr = pocketRadius + (rng() - 0.5) * 70;
+            const da = pocketAngle + (rng() - 0.5) * (a1 - a0) * 0.18;
             const rr = clamp(rmid + dr, Number(s.inner_radius), Number(s.inner_radius) + Number(s.width));
             const aa = clamp(amid + da, a0, a1);
             // First few: guarantee mix of core + primary for immediate visibility
             let mineralName;
-            if (i === 0 && primaryMinerals.length > 0) mineralName = primaryMinerals[Math.floor(Math.random() * primaryMinerals.length)];
-            else if (i === 1) mineralName = CORE_MINERALS[Math.floor(Math.random() * CORE_MINERALS.length)];
+            if (i === 0 && primaryMinerals.length > 0) mineralName = choice(rng, primaryMinerals);
+            else if (i === 1) mineralName = choice(rng, CORE_MINERALS);
             else mineralName = pickMineral();
             await spawnAtPolar(rr, aa, mineralName, true);
         }
 
-        // Guaranteed test nodes within ±25 tiles of centroid
-        for (let g = 0; g < 4; g++) {
-            const dr = (Math.random() - 0.5) * 50; // ±25 tiles
-            const da = (Math.random() - 0.5) * (a1 - a0) * 0.04;
+        // Guarantee a small primary/core foothold without making every pocket identical.
+        for (let g = 0; g < 2; g++) {
+            const dr = pocketRadius + (rng() - 0.5) * 100;
+            const da = pocketAngle + (rng() - 0.5) * (a1 - a0) * 0.12;
             const rr = clamp(rmid + dr, Number(s.inner_radius), Number(s.inner_radius) + Number(s.width));
             const aa = clamp(amid + da, a0, a1);
-            const mn = g % 2 === 0 ? (primaryMinerals[Math.floor(Math.random() * primaryMinerals.length)] || CORE_MINERALS[0]) : CORE_MINERALS[Math.floor(Math.random() * CORE_MINERALS.length)];
+            const mn = g % 2 === 0 ? (choice(rng, primaryMinerals) || CORE_MINERALS[0]) : choice(rng, CORE_MINERALS);
             await spawnAtPolar(rr, aa, mn, true);
         }
 
         // Spread the rest across the wedge bounds
         for (let i = 0; i < remainder; i++) {
-            const rr = Number(s.inner_radius) + Math.floor(Math.random() * Math.max(1, Number(s.width)));
-            const aa = a0 + Math.random() * Math.max(0.0001, (a1 - a0));
+            const rr = Number(s.inner_radius) + randFloat(rng, 0, Math.max(1, Number(s.width)));
+            const aa = randFloat(rng, a0, a1);
             await spawnAtPolar(rr, aa, pickMineral());
+        }
+    }
+
+    // Asteroid-heavy systems also carry a light background of small pockets
+    // throughout the orbital scaffold. Dense, parented nodes above remain the
+    // recognizable mining hubs; these are low-yield exploration finds.
+    if (archetypeKey === 'asteroid-heavy') {
+        const rings = await new Promise((resolve) => db.all('SELECT radius FROM orbital_rings WHERE sector_id = ? ORDER BY ring_index', [sectorId], (e, rows) => resolve(rows || [])));
+        const diffuseCount = randInt(rng, 12, 22);
+        const diffuseMinerals = [...CORE_MINERALS, ...primaryMinerals, ...primaryMinerals];
+        for (let i = 0; i < diffuseCount; i++) {
+            const baseRadius = rings.length ? Number(choice(rng, rings).radius) : randInt(rng, 500, 2300);
+            const radius = clamp(baseRadius + randFloat(rng, -180, 180), 350, 2380);
+            const angle = randFloat(rng, 0, Math.PI * 2);
+            const mineral = choice(rng, diffuseMinerals);
+            const typeId = await getTypeId(mineral);
+            if (!typeId) continue;
+            const x = Math.max(1, Math.min(4999, Math.round(center.x + Math.cos(angle) * radius)));
+            const y = Math.max(1, Math.min(4999, Math.round(center.y + Math.sin(angle) * radius)));
+            const amount = randInt(rng, 55, 145);
+            const meta = JSON.stringify({ mineral, resourceType: mineral, category: 'mineral', fieldType: 'diffuse-pocket' });
+            await new Promise((resolve, reject) => db.run(
+                `INSERT INTO resource_nodes (sector_id, parent_object_id, resource_type_id, x, y, size, resource_amount, max_resource, harvest_difficulty, is_depleted, meta)
+                 VALUES (?, NULL, ?, ?, ?, 1, ?, ?, 1.0, 0, ?)`,
+                [sectorId, typeId, x, y, amount, amount, meta], (e) => e ? reject(e) : resolve()
+            ));
         }
     }
 
@@ -169,4 +201,3 @@ async function spawnNodesForSector(sectorId) {
 }
 
 module.exports = { spawnNodesForSector };
-

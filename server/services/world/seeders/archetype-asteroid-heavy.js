@@ -1,4 +1,5 @@
 const { randInt, randFloat, choice } = require('../rng');
+const { placeWithRetries, samplePolar } = require('../placement');
 
 // Minerals for Asteroid-Heavy Belt — “Rubble & Riches”
 // Primary: Quarzon, Mythrion; Secondary: Magnetrine, Starforged Carbon, Fluxium, Heliox Ore, Aetherium
@@ -12,7 +13,7 @@ const DISPLAY = {
     description: 'Dense rubble fields and foundry riches along the belts.'
 };
 
-function plan({ sectorId, seed, rng }) {
+function plan({ sectorId, seed, rng, streams = {} }) {
     // Regions AAB / AC B / ABB pattern
     const base = [['A','A','B'], ['A','C','B'], ['A','B','B']];
     const turns = randInt(rng, 0, 3);
@@ -26,19 +27,28 @@ function plan({ sectorId, seed, rng }) {
 
     const sun = { type:'sun', x:2500, y:2500 };
     const nPlanets = choice(rng, [5,6,7]);
+    const planetRng = streams.planets || rng;
+    const moonRng = streams.moons || rng;
     const planets = [];
-    const bands = [[700,1200],[1400,2200],[2400,3800]];
+    const bands = [[700,1200],[1400,2100],[2300,2400]];
+    const planetTypes = ['rocky', 'rocky', 'superEarth', 'gasGiant', 'iceWorld'];
+    const placed = placeWithRetries({ rng: planetRng, count: nPlanets, existing: [{x:2500,y:2500}], minDistance: 260,
+        sample: () => { const [rMin, rMax] = choice(planetRng, bands); return samplePolar(planetRng, {x:2500,y:2500}, rMin, rMax); } });
     for (let i=0;i<nPlanets;i++) {
-        const [rMin, rMax] = choice(rng, bands);
-        const r = randInt(rng, rMin, rMax); const a = randFloat(rng, 0, Math.PI*2);
-        planets.push({ id:`P${i}`, x:2500+Math.cos(a)*r, y:2500+Math.sin(a)*r, moons:[] });
+        const type = choice(planetRng, planetTypes);
+        const moonMax = type === 'gasGiant' ? 4 : 2;
+        const moonCount = type === 'gasGiant' ? randInt(moonRng, 2, 4) : randInt(moonRng, 0, moonMax);
+        const moons = Array.from({length: moonCount}, (_, m) => ({ distance: randInt(moonRng, 24, 48), angle: randFloat(moonRng, 0, Math.PI * 2), id: `P${i}-M${m}` }));
+        planets.push({ id:`P${i}`, ...placed[i], type, moons });
     }
     // Belts 2..3
-    const belts = []; const count = randInt(rng,2,3);
+    const beltRng = streams.belts || rng;
+    const belts = []; const count = randInt(beltRng,2,4);
     for (let i=0;i<count;i++) {
-        const width = randInt(rng,220,420);
-        const sectors = width>320 ? randInt(rng,6,9) : randInt(rng,4,7);
-        belts.push({ id:`B${i}`, inner: randInt(rng,1300,2200), width, sectors });
+        const width = randInt(beltRng,220,420);
+        const fullRing = beltRng() < 0.18;
+        const sectors = fullRing ? randInt(beltRng,6,9) : randInt(beltRng,2,5);
+        belts.push({ id:`B${i}`, inner: randInt(beltRng,900,2150), width, sectors, angleOffset: randFloat(beltRng, 0, Math.PI * 2), arcSpan: fullRing ? Math.PI * 2 : randFloat(beltRng, 0.55, 1.65), fullRing });
     }
     // Lanes sketch: trunk along densest belt
     const lanes = [{ cls:'trunk', width_core:190, width_shoulder:260, lane_speed:4.2, cap_base:6, headway:40, mass_limit:'heavy' }];
@@ -64,21 +74,18 @@ async function persist({ sectorId, plan, db }) {
         [sectorId, plan.sun.x, plan.sun.y, sunMeta], function(err){ return err?reject(err):resolve(this.lastID); }
     ));
     for (const p of plan.planets) {
-        const meta = JSON.stringify({ name:p.id, celestial:true, scannable:true, alwaysKnown:1 });
+        const meta = JSON.stringify({ name:p.id, celestial:true, scannable:true, alwaysKnown:1, planetType:p.type });
         const planetId = await new Promise((resolve,reject)=>db.run(
             `INSERT INTO sector_objects (sector_id, type, celestial_type, x, y, owner_id, meta, radius, parent_object_id)
              VALUES (?, 'planet', 'planet', ?, ?, NULL, ?, 12, ?)`,
             [sectorId, Math.round(p.x), Math.round(p.y), meta, sunId],
             function(e){ return e?reject(e):resolve(this.lastID); }
         ));
-        // Moons 0..2
-        const moonCount = randInt(Math.random, 0, 3);
-        for (let m=0;m<moonCount;m++) {
-            const dist = randInt(Math.random, 18, 35);
-            const ang = randFloat(Math.random, 0, Math.PI*2);
-            const mx = Math.round(p.x + Math.cos(ang)*dist);
-            const my = Math.round(p.y + Math.sin(ang)*dist);
-            const mMeta = JSON.stringify({ name: `${p.id}-M${m}`, celestial:true, scannable:true, alwaysKnown:1 });
+        for (let m=0;m<(p.moons||[]).length;m++) {
+            const moon = p.moons[m];
+            const mx = Math.round(p.x + Math.cos(moon.angle)*moon.distance);
+            const my = Math.round(p.y + Math.sin(moon.angle)*moon.distance);
+            const mMeta = JSON.stringify({ name: moon.id, celestial:true, scannable:true, alwaysKnown:1 });
             await new Promise((resolve,reject)=>db.run(
                 `INSERT INTO sector_objects (sector_id, type, celestial_type, x, y, owner_id, meta, radius, parent_object_id)
                  VALUES (?, 'moon', 'moon', ?, ?, NULL, ?, 6, ?)`,
@@ -98,7 +105,7 @@ async function persist({ sectorId, plan, db }) {
     for (const b of plan.belts) {
         const sectors = b.sectors; const inner=b.inner; const width=b.width;
         for (let i=0;i<sectors;i++) {
-            const a0 = (i/sectors)*Math.PI*2; const a1 = ((i+1)/sectors)*Math.PI*2;
+            const phase = Number(b.angleOffset || 0), span = Number(b.arcSpan || Math.PI * 2); const a0 = phase + (i/sectors)*span; const a1 = phase + ((i+1)/sectors)*span;
             const amid = (a0+a1)/2; const rmid = inner + width/2;
             const x = 2500 + Math.cos(amid)*rmid; const y = 2500 + Math.sin(amid)*rmid;
             const regionId = labelAt(x,y, plan.regions.grid);
@@ -166,7 +173,8 @@ async function persist({ sectorId, plan, db }) {
             });
         const sampleEvery = Math.max(1, Math.floor(trunkPOIs.length / 12));
         for (let i=0;i<trunkPOIs.length;i+=sampleEvery) trunkPoints.push({ x: trunkPOIs[i].x, y: trunkPOIs[i].y });
-        if (trunkPoints.length >= 3) {
+        const trunkBelt = plan.belts.find(b => b.id === trunkBeltId);
+        if (trunkBelt?.fullRing && trunkPoints.length >= 3) {
             // Close minor gaps by ensuring last != first
             if (Math.hypot(trunkPoints[0].x - trunkPoints[trunkPoints.length-1].x, trunkPoints[0].y - trunkPoints[trunkPoints.length-1].y) > 400) {
                 trunkPoints.push({ x: trunkPoints[0].x, y: trunkPoints[0].y });
@@ -234,5 +242,3 @@ async function persist({ sectorId, plan, db }) {
 }
 
 module.exports = { plan, persist, MINERALS, DISPLAY };
-
-

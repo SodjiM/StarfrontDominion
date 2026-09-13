@@ -11,7 +11,10 @@ function bindUI() {
         if (!client || !client.selectedUnit) { client?.addLogEntry('No ship selected', 'warning'); return; }
         const ship = client.selectedUnit;
         if (ship.harvestingStatus === 'active') {
-            client.socket.emit('stop-harvesting', { gameId: client.gameId, shipId: ship.id });
+            import('./queue-controller.js').then(Queue => Queue.addHarvestStop(client, ship.id, (resp) => {
+                if (!resp?.success) client.addLogEntry(`Failed to plan stop mining: ${resp?.error || 'error'}`, 'error');
+            }));
+            client.addLogEntry('Planned: Stop mining', 'info');
         } else {
             await showResourceSelection(ship.id);
         }
@@ -44,18 +47,11 @@ function bindUI() {
 
     export function startMining(shipId, resourceNodeId, resourceName) {
         const client = window.gameClient;
-        if (client.queueMode) {
-            client.socket.emit('queue-order', { gameId: client.gameId, shipId, orderType: 'harvest_start', payload: { nodeId: resourceNodeId } }, (resp) => {
-                if (resp && resp.success) client.addLogEntry(`Queued: Start mining ${resourceName}`, 'info');
-                else client.addLogEntry(`Failed to queue mining: ${resp?.error || 'error'}`, 'error');
-            });
-        } else {
-            client.socket.emit('start-harvesting', { gameId: client.gameId, shipId, resourceNodeId });
-            client.addLogEntry(`Starting to mine ${resourceName}...`, 'info');
-        }
+        import('./queue-controller.js').then(Queue => Queue.addHarvestStart(client, shipId, resourceNodeId, (resp) => {
+            if (resp && resp.success) client.addLogEntry(`Planned: Start mining ${resourceName}`, 'info');
+            else client.addLogEntry(`Failed to plan mining: ${resp?.error || 'error'}`, 'error');
+        }));
     }
 
 bindUI();
-
-
 

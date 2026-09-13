@@ -57,7 +57,7 @@ function plan({ sectorId, seed, rng }) {
     for (let i=0;i<fringes;i++) links.push({ type:'fringe', stability: randInt(rng,35,70) });
     for (let i=0;i<microholes;i++) links.push({ type:'micro', stability: randInt(rng,10,40) });
 
-    return { regions, sun, planets, belts, wormholes: links };
+    return { regions, sun, planets, belts, wormholes: links, seed };
 }
 
 async function persist({ sectorId, plan, db }) {
@@ -90,13 +90,11 @@ async function persist({ sectorId, plan, db }) {
             [sectorId, Math.round(p.x), Math.round(p.y), meta, sunId],
             function(e){ return e?reject(e):resolve(this.lastID); }
         ));
-        const moonCount = Math.random() < 0.5 ? 1 : 0;
-        for (let m=0;m<moonCount;m++) {
-            const dist = 18 + Math.floor(Math.random()*16);
-            const ang = Math.random()*Math.PI*2;
-            const mx = Math.round(p.x + Math.cos(ang)*dist);
-            const my = Math.round(p.y + Math.sin(ang)*dist);
-            const mMeta = JSON.stringify({ name: `${p.id}-M${m}`, celestial:true, scannable:true, alwaysKnown:1 });
+        for (let m=0;m<(p.moons||[]).length;m++) {
+            const moon = p.moons[m];
+            const mx = Math.round(p.x + Math.cos(moon.angle)*moon.distance);
+            const my = Math.round(p.y + Math.sin(moon.angle)*moon.distance);
+            const mMeta = JSON.stringify({ name: moon.id, celestial:true, scannable:true, alwaysKnown:1, orbitRadius:moon.distance, orbitAngle:moon.angle });
             await new Promise((resolve,reject)=>db.run(
                 `INSERT INTO sector_objects (sector_id, type, celestial_type, x, y, owner_id, meta, radius, parent_object_id)
                  VALUES (?, 'moon', 'moon', ?, ?, NULL, ?, 6, ?)`,
@@ -210,5 +208,3 @@ async function persist({ sectorId, plan, db }) {
 }
 
 module.exports = { plan, persist, MINERALS, DISPLAY };
-
-

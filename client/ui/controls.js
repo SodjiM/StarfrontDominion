@@ -5,6 +5,7 @@ export function bindControls(game) {
         const byId = (id) => document.getElementById(id);
         const on = (id, fn) => { const el = byId(id); if (el) el.addEventListener('click', fn); };
         on('lockTurnBtn', () => game.lockCurrentTurn && game.lockCurrentTurn());
+        on('centerActiveShipBtn', () => game.centerOnActiveShip && game.centerOnActiveShip());
         on('playersStatusBtn', async () => { try { const mod = await import('./players-modal.js'); mod.showPlayers(); } catch {} });
         on('openEncyclopediaBtn', () => { try { if (typeof window.openEncyclopedia === 'function') window.openEncyclopedia(); else UI.showAlert('Encyclopedia coming soon'); } catch {} });
         on('settingsBtn', async () => { try { const mod = await import('./settings-modal.js'); mod.showSettingsModal && mod.showSettingsModal(); } catch {} });
@@ -30,5 +31,4 @@ export function bindControls(game) {
         });
     } catch {}
 }
-
 

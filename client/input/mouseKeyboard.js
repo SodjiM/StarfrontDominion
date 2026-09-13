@@ -20,6 +20,16 @@
 		if (!doc || !game || doc._kbBound) return;
 		doc._kbBound = true;
 		doc.addEventListener('keydown', (e) => {
+			const active = document.activeElement;
+			const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+			if (!typing && e.key.toLowerCase() === 'z' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+				if (game.selectedUnit?.type === 'ship') { e.preventDefault(); game.undoQueue && game.undoQueue(game.selectedUnit.id); }
+				return;
+			}
+			if (!typing && e.key === 'Backspace' && e.shiftKey) {
+				if (game.selectedUnit?.type === 'ship') { e.preventDefault(); game.clearQueue && game.clearQueue(game.selectedUnit.id); }
+				return;
+			}
 			switch(e.key) {
 				case 'Escape': break;
 				case 'Shift': game.queueMode = true; break;
@@ -38,5 +48,4 @@
 		window.SFInput.keyboard = { bind: bindKeyboard };
 	}
 })();
-
 

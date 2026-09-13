@@ -21,6 +21,12 @@ function randInt(rng, min, max) { return Math.floor(rng() * (max - min + 1)) + m
 function randFloat(rng, min, max) { return rng() * (max - min) + min; }
 function choice(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
 
-module.exports = { mulberry32, hashString, randInt, randFloat, choice };
+// Derive independent deterministic streams from one world seed. Keeping
+// stages separate means adding a moon cannot reshuffle resource placement.
+function createRngStreams(seed) {
+    const base = Number(seed) >>> 0;
+    const salts = ['layout', 'stars', 'orbits', 'planets', 'moons', 'belts', 'resources', 'lanes', 'startingObjects'];
+    return Object.fromEntries(salts.map((salt) => [salt, mulberry32((base ^ hashString(salt)) >>> 0)]));
+}
 
-
+module.exports = { mulberry32, hashString, randInt, randFloat, choice, createRngStreams };

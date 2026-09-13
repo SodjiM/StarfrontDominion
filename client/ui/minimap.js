@@ -1,7 +1,7 @@
 // Starfront: Dominion - Minimap (renderer + interactions, global namespace)
 
 (function(){
-	function renderMiniMap(ctx, canvas, objects, userId, camera, tileSize, gameState) {
+	function renderMiniMap(ctx, canvas, objects, userId, camera, tileSize, gameState, orbitalRings = []) {
 		if (!ctx || !canvas || !objects) return;
 		ctx.fillStyle = '#0a0a1a';
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -12,6 +12,29 @@
 
 		const scaleX = canvas.width / 5000;
 		const scaleY = canvas.height / 5000;
+
+		if (Array.isArray(orbitalRings) && orbitalRings.length) {
+			ctx.save();
+			ctx.setLineDash([1, 4]);
+			ctx.strokeStyle = 'rgba(158, 203, 255, 0.2)';
+			ctx.lineWidth = 0.75;
+			orbitalRings.forEach((ring) => {
+				const radius = Number(ring.radius || 0);
+				if (!(radius > 0)) return;
+				ctx.beginPath();
+				ctx.ellipse(
+					Number(ring.centerX || 2500) * scaleX,
+					Number(ring.centerY || 2500) * scaleY,
+					radius * scaleX,
+					radius * scaleY,
+					0,
+					0,
+					Math.PI * 2,
+				);
+				ctx.stroke();
+			});
+			ctx.restore();
+		}
 
 		const isCelestialObject = (obj) => {
 			const t = obj.celestial_type || obj.type;
@@ -298,6 +321,16 @@ export function renderFloatingMini(game) {
             );
         }
     }
+    if (window.SFMinimap?.renderer?.renderMiniMap) {
+        window.SFMinimap.renderer.renderMiniMap(
+            ctx,
+            canvas,
+            game.objects,
+            game.userId,
+            game.camera,
+            game.tileSize,
+            game.gameState,
+            game.__factsCache?.facts?.orbitalRings || [],
+        );
+    }
 }
-
-

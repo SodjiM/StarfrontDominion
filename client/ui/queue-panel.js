@@ -18,6 +18,11 @@ export function renderQueueList(game, shipId, orders) {
                 if (activeLabel) {
                     headerItems.push(`<div class=\"log-entry\" style=\"background: rgba(76,175,80,0.15); border-left: 3px solid rgba(76,175,80,0.6);\">\n                        <span>${activeLabel}</span>\n                    </div>`);
                 }
+                const planETA = Number(obj.plannedETA);
+                if (Number.isFinite(planETA) && planETA > 0) {
+                    const turns = Math.ceil(planETA);
+                    headerItems.push(`<div class=\"log-entry\" style=\"background: rgba(255,235,59,0.10); border-left: 3px solid rgba(255,235,59,0.55);\"><span>Full plan ETA: ${turns} turn${turns === 1 ? '' : 's'}</span></div>`);
+                }
             }
         } catch {}
         if (!orders || orders.length === 0) {
@@ -29,14 +34,17 @@ export function renderQueueList(game, shipId, orders) {
             let label = o.order_type;
             try {
                 const p = o.payload ? JSON.parse(o.payload) : {};
-                if (o.order_type === 'move' && p?.destination) label = `#${idx+1} Move to (${p.destination.x},${p.destination.y})`;
-                else if (o.order_type === 'warp' && p?.destination) label = `#${idx+1} Warp to (${p.destination.x},${p.destination.y})`;
-                else if (o.order_type === 'harvest_start') label = `#${idx+1} Start mining (node ${p?.nodeId || '?'})`;
-                else if (o.order_type === 'harvest_stop') label = `#${idx+1} Stop mining`;
+                if ((o.order_type === 'movement.move' || o.order_type === 'move') && p?.destination) label = `Move to (${p.destination.x},${p.destination.y})`;
+                else if ((o.order_type === 'warp' || o.order_type === 'warp.lane') && p?.destination) label = `Warp to (${p.destination.x},${p.destination.y})`;
+                else if (o.order_type === 'harvest.start' || o.order_type === 'harvest_start') label = `Start mining (node ${p?.nodeId || '?'})`;
+                else if (o.order_type === 'harvest.stop' || o.order_type === 'harvest_stop') label = 'Stop mining';
+                else if (o.order_type === 'combat.ability' || o.order_type === 'ability') label = `Use ${p?.abilityKey || 'ability'}`;
             } catch {}
+            const state = o.status && !['queued'].includes(o.status) ? ` <small>${o.status}${o.status_reason ? `: ${o.status_reason}` : ''}</small>` : '';
+            const button = ['queued', 'waiting'].includes(o.status) ? `<button class="sf-btn sf-btn-xs" aria-label="Remove queued action" data-remove="${o.id}">✖</button>` : '';
             return `<div class="log-entry" data-qid="${o.id}">
-                <span>${label}</span>
-                <button class="sf-btn sf-btn-xs" data-remove="${o.id}">✖</button>
+                <span>#${idx+1} ${label}${state}</span>
+                ${button}
             </div>`;
         }).join('');
         el.innerHTML = headerItems.join('') + items;
@@ -68,7 +76,12 @@ export async function loadQueueLog(game, shipId, force) {
 }
 
 export function clearQueue(game, shipId) {
-        Queue.clear(game, shipId);
-        loadQueueLog(game, shipId, true);
+        Queue.clear(game, shipId, () => loadQueueLog(game, shipId, true));
 }
 
+export function undoQueue(game, shipId) {
+        Queue.popLast(game, shipId, (result) => {
+            if (result?.success && result.popped) game.addLogEntry('Removed the last planned action', 'info');
+            loadQueueLog(game, shipId, true);
+        });
+}

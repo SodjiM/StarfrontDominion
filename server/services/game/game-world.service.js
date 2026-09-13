@@ -354,10 +354,14 @@ class GameWorldManager {
                         const visibleIds = Array.from(visibleMap.keys());
                         const ownedQuery = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
                                                     mo.destination_x, mo.destination_y, mo.movement_path, mo.current_step, mo.movement_speed, mo.eta_turns, mo.status as movement_status,
-                                mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
+                                                    mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
+                                                    lt.edge_id AS lane_edge_id, lt.progress AS lane_progress, lt.direction AS lane_direction,
+                                                    lt.mode AS lane_mode, lt.merge_turns AS lane_merge_turns, le.polyline_json AS lane_polyline_json,
                                                     ht.id as harvesting_task_id, ht.status as harvesting_status, ht.harvest_rate, ht.total_harvested, rt.resource_name as harvesting_resource
                          FROM sector_objects so
                                                LEFT JOIN movement_orders mo ON (so.id = mo.object_id AND mo.status IN ('active','blocked','completed','warp_preparing'))
+                                               LEFT JOIN lane_transits lt ON lt.ship_id = so.id
+                                               LEFT JOIN lane_edges le ON le.id = lt.edge_id
                                                LEFT JOIN harvesting_tasks ht ON (so.id = ht.ship_id AND ht.status IN ('active','paused'))
                          LEFT JOIN resource_nodes rn ON ht.resource_node_id = rn.id
                          LEFT JOIN resource_types rt ON rn.resource_type_id = rt.id
@@ -365,9 +369,13 @@ class GameWorldManager {
                         const nonOwnedVisibleQueryBase = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
                                                     mo.destination_x, mo.destination_y, mo.movement_path, mo.current_step, mo.movement_speed, mo.eta_turns, mo.status as movement_status,
                                                     mo.warp_phase, mo.warp_preparation_turns, mo.warp_destination_x, mo.warp_destination_y,
+                                                    lt.edge_id AS lane_edge_id, lt.progress AS lane_progress, lt.direction AS lane_direction,
+                                                    lt.mode AS lane_mode, lt.merge_turns AS lane_merge_turns, le.polyline_json AS lane_polyline_json,
                                                     ht.id as harvesting_task_id, ht.status as harvesting_status, ht.harvest_rate, ht.total_harvested, rt.resource_name as harvesting_resource
                                                FROM sector_objects so
                                                LEFT JOIN movement_orders mo ON (so.id = mo.object_id AND mo.status IN ('active','blocked','completed','warp_preparing'))
+                                               LEFT JOIN lane_transits lt ON lt.ship_id = so.id
+                                               LEFT JOIN lane_edges le ON le.id = lt.edge_id
                                                LEFT JOIN harvesting_tasks ht ON (so.id = ht.ship_id AND ht.status IN ('active','paused'))
                                                LEFT JOIN resource_nodes rn ON ht.resource_node_id = rn.id
                                                LEFT JOIN resource_types rt ON rn.resource_type_id = rt.id
@@ -506,6 +514,20 @@ class GameWorldManager {
                                                                 };
                                                             }
 
+                                                            let laneTransit = null;
+                                                            if (obj.lane_edge_id != null && obj.lane_polyline_json) {
+                                                                try {
+                                                                    laneTransit = {
+                                                                        edgeId: Number(obj.lane_edge_id),
+                                                                        progress: Number(obj.lane_progress || 0),
+                                                                        direction: Number(obj.lane_direction || 1),
+                                                                        mode: obj.lane_mode || 'core',
+                                                                        mergeTurns: Number(obj.lane_merge_turns || 0),
+                                                                        polyline: JSON.parse(obj.lane_polyline_json)
+                                                                    };
+                                                                } catch {}
+                                                            }
+
                                                             let harvestingData = null;
                                                             if (obj.harvesting_task_id) {
                                                                 harvestingData = {
@@ -523,6 +545,7 @@ class GameWorldManager {
                                                                 statusEffects: effectsByShipId.get(obj.id) || [],
                                                                 ...movementData,
                                                                 ...warpData,
+                                                                laneTransit,
                                                                 ...harvestingData,
                                                                 queuedOrders: null,
                                                                 sectorInfo: { name: sector.name, archetype: sector.archetype, id: sector.id },
@@ -647,4 +670,3 @@ async function computePilotStats(gameId, userId, currentTurn) {
 }
 
 module.exports = { GameWorldManager, getCurrentTurnNumberServer, computePilotStats };
-

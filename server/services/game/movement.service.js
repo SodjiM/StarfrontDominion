@@ -81,21 +81,29 @@ class MovementService {
         return { success: true, currentTurn, rawHistory, objectIdToSector };
     }
 
-    async getSectorTrails({ sectorId, sinceTurn, maxAge = 10 }) {
+    async getSectorTrails({ sectorId, sinceTurn, maxAge = 10, userId }) {
         // Determine game_id
         const sector = await new Promise((resolve, reject) => db.get('SELECT game_id FROM sectors WHERE id = ?', [sectorId], (e, r) => e ? reject(e) : resolve(r || null)));
         if (!sector) return { success: false, httpStatus: 404, error: 'sector_not_found' };
         const currentTurn = await new Promise((resolve, reject) => db.get('SELECT turn_number FROM turns WHERE game_id = ? ORDER BY turn_number DESC LIMIT 1', [sector.game_id], (e, r) => e ? reject(e) : resolve(r?.turn_number || 1)));
         const since = Number(sinceTurn || currentTurn);
         const minTurn = Math.max(1, since - (Number(maxAge) - 1));
+        if (!Number.isSafeInteger(Number(userId))) return { success: false, httpStatus: 403, error: 'user_required' };
         const rows = await new Promise((resolve, reject) => db.all(
             `SELECT mh.object_id as shipId, so.owner_id as ownerId, mh.turn_number as turn,
                     mh.from_x as fromX, mh.from_y as fromY, mh.to_x as toX, mh.to_y as toY
              FROM movement_history mh
              JOIN sector_objects so ON so.id = mh.object_id
-             WHERE so.sector_id = ? AND mh.game_id = ? AND mh.turn_number BETWEEN ? AND ?
+             WHERE mh.sector_id = ? AND mh.game_id = ? AND mh.turn_number BETWEEN ? AND ?
+               AND (so.owner_id = ? OR EXISTS (
+                    SELECT 1 FROM object_visibility ov
+                    WHERE ov.game_id = mh.game_id AND ov.user_id = ?
+                      AND ov.sector_id = mh.sector_id AND ov.object_id = mh.object_id
+                      AND ov.best_visibility_level > 0
+                      AND ov.last_seen_turn >= ?
+               ))
              ORDER BY mh.turn_number ASC, mh.id ASC`,
-            [sectorId, sector.game_id, minTurn, since],
+            [sectorId, sector.game_id, minTurn, since, Number(userId), Number(userId), minTurn],
             (e, r) => e ? reject(e) : resolve(r || [])
         ));
         const segments = rows.map(r => ({ shipId: r.shipId, ownerId: r.ownerId, turn: r.turn, type: 'move', from: { x: r.fromX, y: r.fromY }, to: { x: r.toX, y: r.toY } }));
@@ -104,5 +112,3 @@ class MovementService {
 }
 
 module.exports = { MovementService };
-
-

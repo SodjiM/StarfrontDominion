@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS movement_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     object_id INTEGER,
     game_id INTEGER,
+    sector_id INTEGER,
     turn_number INTEGER,
     from_x INTEGER,
     from_y INTEGER,

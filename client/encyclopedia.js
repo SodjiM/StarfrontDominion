@@ -2358,11 +2358,7 @@
     return {
       title: '📖 Game Encyclopedia',
       content: createModalContent(),
-      actions: [
-        { text: 'Close', style: 'secondary' }
-      ],
-      width: 1400,
-      height: 900
+      className: 'encyclopedia-wide'
     };
   }
 
@@ -2408,9 +2404,11 @@
     tabs.innerHTML = '';
 
     data.categories.forEach((category, index) => {
-      const tab = document.createElement('div');
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.setAttribute('aria-pressed', String(activeCategoryId === category.id));
       tab.className = `encyclopedia-tab ${activeCategoryId === category.id ? 'active' : ''}`;
-      tab.innerHTML = `${category.icon} ${category.name}`;
+      tab.innerHTML = `<span class="category-icon" aria-hidden="true">${category.icon}</span><span>${category.name}</span><small>${category.entries.length}</small>`;
       tab.onclick = () => {
         activeCategoryId = category.id;
         activeEntryId = null;
@@ -2460,7 +2458,9 @@
 
     // Render entries with highlighting
     entries.forEach(entry => {
-      const item = document.createElement('div');
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.setAttribute('aria-pressed', String(activeEntryId === entry.id));
       item.className = `encyclopedia-item ${activeEntryId === entry.id ? 'active' : ''}`;
 
       const titleHtml = entry.highlightedTitle || entry.title;

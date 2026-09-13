@@ -3,7 +3,12 @@ const db = require('../db');
 class GamesRepository {
     async listAllGames() {
         return new Promise((resolve, reject) => {
-            db.all('SELECT * FROM games ORDER BY created_at DESC', [], (err, rows) => err ? reject(err) : resolve(rows || []));
+            db.all(`SELECT g.*,
+                           (SELECT u.username FROM users u JOIN game_players gp_owner ON gp_owner.user_id = u.id
+                            WHERE gp_owner.game_id = g.id ORDER BY gp_owner.joined_at ASC, gp_owner.id ASC LIMIT 1) AS owner_name,
+                           (SELECT COUNT(*) FROM game_players gp2 WHERE gp2.game_id = g.id) AS player_count
+                    FROM games g
+                    ORDER BY g.created_at DESC`, [], (err, rows) => err ? reject(err) : resolve(rows || []));
         });
     }
 
@@ -110,6 +115,8 @@ class GamesRepository {
             await run(`DELETE FROM generation_history WHERE sector_id IN (
                 SELECT id FROM sectors WHERE game_id = ?
             )`, [gameId]);
+            await run(`DELETE FROM generation_manifests WHERE sector_id IN (SELECT id FROM sectors WHERE game_id = ?)`, [gameId]);
+            await run(`DELETE FROM orbital_rings WHERE sector_id IN (SELECT id FROM sectors WHERE game_id = ?)`, [gameId]);
             await run('DELETE FROM turn_locks WHERE game_id = ?', [gameId]);
             await run('DELETE FROM turns WHERE game_id = ?', [gameId]);
             await run('DELETE FROM sectors WHERE game_id = ?', [gameId]);
@@ -165,6 +172,8 @@ class GamesRepository {
                     await run(`DELETE FROM generation_history WHERE sector_id IN (
                         SELECT id FROM sectors WHERE game_id = ?
                     )`, [gameId]);
+                    await run(`DELETE FROM generation_manifests WHERE sector_id IN (SELECT id FROM sectors WHERE game_id = ?)`, [gameId]);
+                    await run(`DELETE FROM orbital_rings WHERE sector_id IN (SELECT id FROM sectors WHERE game_id = ?)`, [gameId]);
                     await run('DELETE FROM turn_locks WHERE game_id = ?', [gameId]);
                     await run('DELETE FROM turns WHERE game_id = ?', [gameId]);
                     await run('DELETE FROM sectors WHERE game_id = ?', [gameId]);
@@ -185,5 +194,3 @@ class GamesRepository {
 }
 
 module.exports = { GamesRepository };
-
-

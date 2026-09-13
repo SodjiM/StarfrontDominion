@@ -1,4 +1,5 @@
 // Socket wiring with event map
+import { calculatePlannedETA } from '../utils/planned-movement.js';
 
 export function connectSocket(game) {
     const socket = io();
@@ -51,7 +52,16 @@ function buildHandlers(game) {
             const segments = [];
             let cursor = { x: start.x, y: start.y };
             for (const q of orders) {
-                if (String(q.order_type) !== 'move') continue;
+                if (!['movement.move', 'move'].includes(String(q.order_type))) continue;
+                try {
+                    const preview = q.preview ? JSON.parse(q.preview) : null;
+                    if (Array.isArray(preview?.path) && preview.path.length > 1) {
+                        const path = preview.path.map(p => ({ x: Number(p.x), y: Number(p.y) }));
+                        segments.push({ from: path[0], to: path[path.length - 1], path, estimatedTurns: Number(preview.estimatedTurns) });
+                        cursor = path[path.length - 1];
+                        continue;
+                    }
+                } catch {}
                 let dest = null;
                 try { const p = q.payload ? JSON.parse(q.payload) : {}; dest = p?.destination || p; } catch { dest = null; }
                 if (!dest || typeof dest.x !== 'number' || typeof dest.y !== 'number') continue;
@@ -63,8 +73,10 @@ function buildHandlers(game) {
             } else if (obj.movementSegments) {
                 delete obj.movementSegments;
             }
+            obj.plannedETA = calculatePlannedETA(obj, game.selectedUnit?.id === shipId ? game.selectedUnit : obj);
             if (game.selectedUnit && game.selectedUnit.id === shipId) {
                 game.selectedUnit.movementSegments = obj.movementSegments;
+                game.selectedUnit.plannedETA = obj.plannedETA;
             }
             game.render && game.render();
             return { orders, segments };
@@ -162,14 +174,18 @@ function buildHandlers(game) {
         'travel:cancelled': (data) => {
             try {
                 // Clear planned lane highlight when a transit is cancelled mid-edge
-                if (game.__laneHighlight) game.__laneHighlight.until = 0;
+                game.__activeItineraries?.delete(Number(data?.shipId));
+                if (game.__laneHighlight && Number(game.__laneHighlight.shipId) === Number(data?.shipId)) game.__laneHighlight = null;
+                if (game.selectedUnit?.id === Number(data?.shipId)) game.__plannerTarget = null;
                 game.render && game.render();
             } catch {}
         },
         'travel:arrived': (data) => {
             try {
                 // On arrival, clear the persistent planner overlay so UI doesn't show stale itinerary
-                if (game.__laneHighlight) game.__laneHighlight.until = 0;
+                game.__activeItineraries?.delete(Number(data?.shipId));
+                if (game.__laneHighlight && Number(game.__laneHighlight.shipId) === Number(data?.shipId)) game.__laneHighlight = null;
+                if (game.selectedUnit?.id === Number(data?.shipId)) game.__plannerTarget = null;
                 game.render && game.render();
             } catch {}
         },
@@ -229,7 +245,11 @@ function buildHandlers(game) {
                     try { game.updateUnitDetails && game.updateUnitDetails(); } catch {}
                 }
                 // Clear planned lane highlight when transit completes
-                try { if (game.__laneHighlight) game.__laneHighlight.until = 0; } catch {}
+                try {
+                    game.__activeItineraries?.delete(Number(data?.shipId));
+                    if (game.__laneHighlight && Number(game.__laneHighlight.shipId) === Number(data?.shipId)) game.__laneHighlight = null;
+                    if (game.selectedUnit?.id === Number(data?.shipId)) game.__plannerTarget = null;
+                } catch {}
                 try { game.addLogEntry('🚀 Exited lane', 'info'); } catch {}
                 game.render && game.render();
             } catch {}
@@ -268,10 +288,10 @@ function buildHandlers(game) {
                         try {
                             const obj = game.objects.find(o => o.id === shipId);
                             if (obj) {
-                                delete obj.movementSegments; delete obj.movementPath; obj.movementActive = false; delete obj.plannedDestination;
+                                delete obj.movementSegments;
                             }
                             if (game.selectedUnit) {
-                                delete game.selectedUnit.movementSegments; delete game.selectedUnit.movementPath; game.selectedUnit.movementActive = false; delete game.selectedUnit.plannedDestination;
+                                delete game.selectedUnit.movementSegments;
                             }
                             game.render && game.render();
                         } catch {}

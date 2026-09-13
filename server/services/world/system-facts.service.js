@@ -16,6 +16,7 @@ class SystemFactsService {
         const regions = await new Promise((resolve) => db.all('SELECT region_id as id, health, cells_json as cells FROM regions WHERE sector_id = ?', [sectorId], (e, rows) => resolve(rows || [])));
         // Belts (sector metadata only)
         const beltSectors = await new Promise((resolve) => db.all('SELECT belt_key, sector_index, region_id, inner_radius, width, arc_start, arc_end, density, hazard FROM belt_sectors WHERE sector_id = ?', [sectorId], (e, rows) => resolve(rows || [])));
+        const orbitalRings = await new Promise((resolve) => db.all('SELECT ring_index, center_x, center_y, radius, width, planet_object_id FROM orbital_rings WHERE sector_id = ? ORDER BY ring_index', [sectorId], (e, rows) => resolve(rows || [])));
         // Wormholes (links summary)
         const wormholes = await new Promise((resolve) => db.all('SELECT id, a_object_id, b_object_id, external_sector_id, stability, mass_limit, cooldown FROM wormhole_links WHERE sector_id = ?', [sectorId], (e, rows) => resolve(rows || [])));
         // Wormhole endpoints (objects)
@@ -68,6 +69,7 @@ class SystemFactsService {
             name: archetypeInfo.name,
             regions: regions.map(r => ({ id: r.id, health: r.health, cells: safeJson(r.cells) })),
             belts: beltSectors,
+            orbitalRings: orbitalRings.map(r => ({ index: r.ring_index, centerX: r.center_x, centerY: r.center_y, radius: r.radius, width: r.width, planetObjectId: r.planet_object_id })),
             wormholes,
             wormholeEndpoints: (wormholeEndpoints || []).map(w => ({ id: w.id, x: w.x, y: w.y, meta: safeJson(w.meta) })),
             lanes: (laneEdges || []).map(e => ({
@@ -100,5 +102,4 @@ class SystemFactsService {
 module.exports = { SystemFactsService };
 function safeJson(s) { try { return JSON.parse(s || '[]'); } catch { return []; } }
 function safeJsonObject(s, def=null) { try { return s ? JSON.parse(s) : def; } catch { return def; } }
-
 

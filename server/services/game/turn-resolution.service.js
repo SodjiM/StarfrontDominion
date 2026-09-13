@@ -69,8 +69,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             const { tickRegionHealth } = require('../world/region-health.tick');
             await tickRegionHealth(gameId, turnNumber);
 
-            // 6.5. Materialize next queued orders for idle ships into upcoming turn
-            await materializeQueuedOrders(gameId, turnNumber + 1);
+            // 6.5. Materialize the next generic action for each eligible ship.
+            const { QueuedActionService } = require('./queued-action.service');
+            const queueResult = await new QueuedActionService(db).materializeForTurn(gameId, turnNumber + 1);
 
             // Lane tick (Phase 1)
             await tickLanes(gameId, turnNumber);
@@ -95,6 +96,10 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
 
             await new Promise((resolve,reject)=>db.run('COMMIT',e=>e?reject(e):resolve()));
             transactionActive=false;
+
+            for (const shipId of queueResult?.changedShipIds || []) {
+                io.to(`game-${gameId}`).emit('queue:updated', { shipId });
+            }
 
             const resolutionDurationMs = Date.now() - resolutionStartedAt;
             console.log(`✅ Turn ${turnNumber} atomically resolved in ${resolutionDurationMs}ms, starting turn ${nextTurn}`);
@@ -329,6 +334,4 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
 }
 
 module.exports = { createTurnResolver };
-
-
 

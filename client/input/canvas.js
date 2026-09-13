@@ -145,7 +145,7 @@ export function handleLeftClick(game, e) {
         if (def.target === 'position') {
             const hover = game.computePositionAbilityHover(key, worldX, worldY);
             if (!hover || !hover.valid) { game.addLogEntry('Invalid destination for ability', 'warning'); return; }
-            game.socket.emit('activate-ability', { gameId: game.gameId, casterId: game.selectedUnit?.id, abilityKey: key, targetX: worldX, targetY: worldY });
+            import('../features/queue-controller.js').then(Queue => Queue.addAbility(game, game.selectedUnit?.id, key, { target: { x: worldX, y: worldY } }));
             game.addLogEntry(`Queued ${def.name} at (${worldX},${worldY})`, 'info');
             game.pendingAbility = null; game.abilityPreview = null; game.abilityHover = null; game.updateUnitDetails && game.updateUnitDetails();
             return;
@@ -155,7 +155,7 @@ export function handleLeftClick(game, e) {
                 const dx = clickedObject.x - game.selectedUnit.x; const dy = clickedObject.y - game.selectedUnit.y; const d = Math.hypot(dx, dy);
                 if (d > def.range) game.addLogEntry('Target currently out of range; will fire if in range after utility phase.', 'warning');
             }
-            game.socket.emit('activate-ability', { gameId: game.gameId, casterId: game.selectedUnit?.id, abilityKey: key, targetObjectId: clickedObject.id });
+            import('../features/queue-controller.js').then(Queue => Queue.addAbility(game, game.selectedUnit?.id, key, { targetObjectId: clickedObject.id }));
             game.addLogEntry(`Queued ${def.name} on ${clickedObject.meta?.name || clickedObject.type}`, 'info');
             game.pendingAbility = null; game.abilityPreview = null; game.abilityHover = null; game.updateUnitDetails && game.updateUnitDetails();
             return;
@@ -215,5 +215,4 @@ export function handleRightClick(game, e) {
         game.addLogEntry('Use an ability to target enemies', 'info');
     }
 }
-
 

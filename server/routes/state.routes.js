@@ -90,7 +90,7 @@ router.get('/:gameId/itineraries/:userId', async (req, res) => {
             const params = [gameId, userId];
             let sql = `
                 SELECT li.id, li.ship_id as shipId, li.sector_id as sectorId, li.created_turn as createdTurn,
-                       li.freshness_turns as freshnessTurns, li.status as status, li.itinerary_json as itineraryJson
+                       li.freshness_turns as freshnessTurns, li.status as status, li.itinerary_json as itineraryJson, li.meta as meta
                 FROM lane_itineraries li
                 JOIN sectors s ON s.id = li.sector_id
                 JOIN sector_objects so ON so.id = li.ship_id
@@ -105,7 +105,8 @@ router.get('/:gameId/itineraries/:userId', async (req, res) => {
         });
         const itineraries = rows.map(r => {
             let legs = []; try { legs = JSON.parse(r.itineraryJson || '[]'); } catch {}
-            return { id: r.id, shipId: r.shipId, sectorId: r.sectorId, createdTurn: r.createdTurn, freshnessTurns: r.freshnessTurns, status: r.status, legs };
+            let meta = {}; try { meta = JSON.parse(r.meta || '{}'); } catch {}
+            return { id: r.id, shipId: r.shipId, sectorId: r.sectorId, createdTurn: r.createdTurn, freshnessTurns: r.freshnessTurns, status: r.status, legs, meta };
         });
         res.json({ success: true, itineraries });
     } catch (error) {
@@ -113,5 +114,4 @@ router.get('/:gameId/itineraries/:userId', async (req, res) => {
         res.status(500).json({ error: 'Failed to get itineraries' });
     }
 });
-
 

@@ -118,8 +118,8 @@ export function openMapModal() {
         modalContent.innerHTML = `
             <!-- Tabs Row -->
             <div class="map-tabs">
-                <button class="map-tab active" data-tab="solar-system">🪐 ${sectorName}</button>
-                <button class="map-tab" data-tab="galaxy">🌌 Galaxy</button>
+                <button class="map-tab active" data-tab="solar-system">${sectorName}</button>
+                <button class="map-tab" data-tab="galaxy">Galaxy</button>
             </div>
 
             <!-- Solar System Tab -->
@@ -132,13 +132,10 @@ export function openMapModal() {
                             
                             <!-- Overlay Controls -->
                             <div class="map-overlay-controls">
-                                <button class="map-overlay-btn active" data-map-mode="inspect" title="Inspect map">◉</button>
-                                <button class="map-overlay-btn" data-map-mode="select" title="Select ship">🚀</button>
-                                <button class="map-overlay-btn" data-map-mode="plan" title="Plan movement">➤</button>
-                                <button class="map-overlay-btn active" id="toggleLanes" title="Warp Lanes">🛰️</button>
-                                <button class="map-overlay-btn active" id="toggleRegions" title="Regions">🧭</button>
-                                <button class="map-overlay-btn" id="toggleLabels" title="Labels">🏷️</button>
-                                <button class="map-overlay-btn" id="btnRecenter" title="Recenter">⌖</button>
+                                <button class="map-overlay-btn active" data-map-mode="plan" title="Plot a route to any map location">Plan</button>
+                                <button class="map-overlay-btn active" id="toggleLanes" aria-pressed="true" title="Show warp lanes">Lanes</button>
+                                <button class="map-overlay-btn" id="toggleRegions" aria-pressed="false" title="Show system regions">Regions</button>
+                                <button class="map-overlay-btn" id="toggleLabels" aria-pressed="false" title="Show object labels">Labels</button>
                             </div>
                             <div id="mapModeHint" class="map-mode-hint">Inspect mode · choose Plan to plot a route</div>
                         </div>
@@ -250,7 +247,7 @@ export function openMapModal() {
                 </div>
             </div>
         `;
-        window.UI.showModal({ title:'🗺️ Strategic Map', content: modalContent, className:'map-modal' });
+        window.UI.showModal({ title:'Strategic Map', content: modalContent, className:'map-modal' });
         
         // === EVENT BINDINGS ===
         
@@ -271,28 +268,6 @@ export function openMapModal() {
         });
         
         // Map overlay control toggles
-        ['toggleLanes', 'toggleRegions', 'toggleLabels'].forEach(id => {
-            const btn = modalContent.querySelector('#' + id);
-            if (btn) {
-                btn.onclick = () => {
-                    btn.classList.toggle('active');
-                    initializeFullMap();
-                };
-            }
-        });
-        
-        // Recenter button
-        const recenterBtn = modalContent.querySelector('#btnRecenter');
-        if (recenterBtn) recenterBtn.onclick = () => {
-            const ship = client.selectedUnit;
-            if (ship && Number.isFinite(Number(ship.x)) && Number.isFinite(Number(ship.y))) {
-                client.__mapClickMarker = { x: Number(ship.x), y: Number(ship.y), time: Date.now() };
-            }
-            const canvas = document.getElementById('fullMapCanvas');
-            if (canvas?.__view) { canvas.__view.zoom = 1; canvas.__view.panX = 0; canvas.__view.panY = 0; canvas.style.transform = ''; }
-            redrawMap();
-        };
-        
         // POI filter chips
         modalContent.querySelectorAll('.poi-filter').forEach(chip => {
             chip.onclick = () => {
@@ -325,6 +300,8 @@ export function openMapModal() {
                 const dest = client.__plannerTarget;
                 client.socket && client.socket.emit('travel:confirm', { 
                     routeId: selectedRoute.routeId,
+                    queue: true,
+                    clientOrderId: `warp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
                     gameId: client.gameId, 
                     sectorId: client.gameState.sector.id, 
                     shipId: client.selectedUnit.id, 
@@ -333,18 +310,13 @@ export function openMapModal() {
                     destY: dest?.y 
                 }, (resp) => {
                     if (!resp?.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); executeBtn.dataset.busy = '0'; executeBtn.disabled = false; executeBtn.textContent = 'Execute Warp'; if (status) status.textContent = 'Rejected'; return; }
-                    if (status) status.textContent = 'Queued'; executeBtn.textContent = 'Starting…';
+                    if (status) status.textContent = 'Queued'; executeBtn.textContent = 'Queued — next turn';
                     client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
-                    client.socket.emit('travel:start', { 
-                        gameId: client.gameId, 
-                        sectorId: client.gameState.sector?.id, 
-                        shipId: client.selectedUnit.id 
-                    }, (resp2) => {
-                        if (!resp2?.success) { client.addLogEntry(resp2?.error || 'Start failed', 'error'); executeBtn.dataset.busy = '0'; executeBtn.disabled = false; executeBtn.textContent = 'Execute Warp'; if (status) status.textContent = 'Rejected'; return; }
-                        client.addLogEntry('Warp initiated', 'success');
-                        if (status) status.textContent = 'Moving';
-                        initializeFullMap();
-                    });
+                    client.addLogEntry('Warp queued', 'success');
+                    if (status) status.textContent = 'Queued';
+                    initializeFullMap();
+                    executeBtn.dataset.busy = '0';
+                    executeBtn.disabled = false;
                 });
             };
         }
@@ -509,7 +481,7 @@ async function populatePOIBrowser(root) {
     let html = '';
     for (const [type, group] of Object.entries(poiGroups)) {
         if (group.items.length === 0) continue;
-        const isOpen = type === 'planets' || type === 'belts'; // Default open
+        const isOpen = false; // POI groups start collapsed; open only the category you need.
         html += `
             <div class="poi-group ${isOpen ? '' : 'collapsed'}" data-group="${type}">
                 <div class="poi-group-header">
@@ -518,8 +490,8 @@ async function populatePOIBrowser(root) {
                 </div>
                 <div class="poi-group-items">
                     ${group.items.map(it => `
-                        <div class="poi-item" data-object-id="${typeof it.id === 'number' ? it.id : ''}" data-x="${it.x}" data-y="${it.y}" data-name="${it.name}">
-                            ${group.icon} ${it.name}
+                        <div class="poi-item" title="${it.name} · ID ${it.id ?? 'map'} · ${Math.round(it.x)}, ${Math.round(it.y)}" data-poi-id="${it.id ?? ''}" data-object-id="${typeof it.id === 'number' ? it.id : ''}" data-x="${it.x}" data-y="${it.y}" data-name="${it.name}">
+                            <span>${group.icon} ${it.name}</span><span class="poi-item-id">ID ${it.id ?? 'MAP'} · ${Math.round(it.x)}, ${Math.round(it.y)}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -774,6 +746,7 @@ function buildLaneCache(canvas, facts) {
 		Object.keys(tapsByEdge).forEach(edgeId => {
 			(tapsByEdge[edgeId] || []).forEach(t => {
 				taps.push({
+					id: t.id,
 					x: Number(t.x || 0),
 					y: Number(t.y || 0),
 					queued: Number(t.queued_cu || 0)
@@ -802,7 +775,9 @@ function getMapToggles() {
 function observeCanvas(canvas) {
     if (canvas.__ro) return;
     const ro = new ResizeObserver(() => {
-        const rect = canvas.getBoundingClientRect();
+        // Measure the layout box, not the transformed canvas. Otherwise a
+        // zoomed map gets a larger backing store every time a toggle redraws.
+        const rect = (canvas.parentElement || canvas).getBoundingClientRect();
         const w = Math.max(200, Math.floor(rect.width));
         const h = Math.max(200, Math.floor(rect.height));
         if (canvas.width !== w || canvas.height !== h) {
@@ -832,22 +807,14 @@ function redrawMap() {
 async function handleFullMapClick(canvas, ev) {
     const client = window.gameClient;
     if (!client?.gameState?.sector?.id) return;
-    const mode = client.__mapMode || 'inspect';
-    if (mode !== 'plan') {
-        if (mode === 'select' && Array.isArray(client.objects)) {
-            const rect = (canvas.parentElement || canvas).getBoundingClientRect();
-            const view = canvas.__view || { zoom: 1, panX: 0, panY: 0 };
-            const wx = (ev.clientX - rect.left - view.panX) / (canvas.width / 5000 * view.zoom);
-            const wy = (ev.clientY - rect.top - view.panY) / (canvas.height / 5000 * view.zoom);
-            const hit = client.objects.filter(o => o && Number.isFinite(o.x) && Number.isFinite(o.y)).sort((a,b) => Math.hypot(wx-a.x, wy-a.y) - Math.hypot(wx-b.x, wy-b.y))[0];
-            if (hit && Math.hypot(wx-hit.x, wy-hit.y) < 80) { client.selectUnit?.(hit.id); redrawMap(); }
-        }
-        return;
-    }
-    const rect = (canvas.parentElement || canvas).getBoundingClientRect();
-    const view = canvas.__view || { zoom: 1, panX: 0, panY: 0 };
-    const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
-    const click = { x: (ev.clientX - rect.left - view.panX) / (scaleX * view.zoom), y: (ev.clientY - rect.top - view.panY) / (scaleY * view.zoom) };
+    const mode = 'plan';
+    const point = mapEventToWorld(canvas, ev);
+    if (!point) return;
+    const { wx, wy } = point;
+    const hit = nearestMapObject(client.objects, wx, wy, canvas);
+    // Plan mode intentionally accepts empty space. If an object is under the
+    // cursor, snap to its actual world coordinate so the marker and POI agree.
+    const click = hit ? { x: Number(hit.x), y: Number(hit.y) } : { x: wx, y: wy };
     client.__mapClickMarker = { x: click.x, y: click.y, time: Date.now() };
 
     const destEmpty = document.querySelector('#destEmpty');
@@ -865,7 +832,7 @@ async function handleFullMapClick(canvas, ev) {
     const routesList = document.getElementById('routesList');
     if (routesList) routesList.innerHTML = '<div class="routes-empty">Planning...</div>';
     try {
-        const routes = await new Promise(resolve => SFApi.Socket.emit('travel:plan', {
+        const routes = await new Promise(resolve => client.socket?.emit('travel:plan', {
             gameId: client.gameId,
             sectorId: client.gameState.sector.id,
             shipId: client.selectedUnit?.id,
@@ -874,25 +841,61 @@ async function handleFullMapClick(canvas, ev) {
         }, resolve));
         if (routes?.success && Array.isArray(routes.routes)) showPlannerRoutes(routes.routes);
         else if (routesList) routesList.textContent = routes?.error || 'No routes found';
-    } catch {
-        if (routesList) routesList.textContent = 'Unable to plan route';
+    } catch (error) {
+        console.error('strategic map planning error', error);
+        if (routesList) routesList.textContent = 'Unable to plan route — try selecting a ship first';
     } finally {
         redrawMap();
     }
 }
 
+function mapEventToWorld(canvas, ev) {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+        wx: ((ev.clientX - rect.left) / rect.width) * 5000,
+        wy: ((ev.clientY - rect.top) / rect.height) * 5000
+    };
+}
+
+function nearestMapObject(objects, wx, wy, canvas) {
+    const candidates = (objects || []).filter(o => o && Number.isFinite(Number(o.x)) && Number.isFinite(Number(o.y)));
+    let nearest = null; let best = Infinity;
+    for (const obj of candidates) {
+        const d = Math.hypot(wx - Number(obj.x), wy - Number(obj.y));
+        if (d < best) { best = d; nearest = obj; }
+    }
+    const rect = canvas.getBoundingClientRect();
+    const worldPerPixel = 5000 / Math.max(1, Math.min(rect.width, rect.height));
+    return nearest && best <= 24 * worldPerPixel ? nearest : null;
+}
+
+function setMapHint(text) {
+    const hint = document.getElementById('mapModeHint');
+    if (hint) hint.textContent = text;
+}
+
+function showMapTip(canvas, text, ev) {
+    const tip = canvas.__tipEl;
+    if (!tip) return;
+    tip.textContent = text;
+    tip.style.display = 'block';
+    tip.style.left = `${ev.clientX + 12}px`;
+    tip.style.top = `${ev.clientY - 10}px`;
+}
+
 function handleFullMapHover(canvas, ev) {
     const tip = canvas.__tipEl;
     if (!tip) return;
-    const rect = (canvas.parentElement || canvas).getBoundingClientRect();
-    const view = canvas.__view || { zoom: 1, panX: 0, panY: 0 };
+    const point = mapEventToWorld(canvas, ev);
+    if (!point) return;
+    const { wx, wy } = point;
     const scaleX = canvas.width / 5000, scaleY = canvas.height / 5000;
-    const wx = (ev.clientX - rect.left - view.panX) / (scaleX * view.zoom), wy = (ev.clientY - rect.top - view.panY) / (scaleY * view.zoom);
     const pxScale = (scaleX + scaleY) / 2;
     const cache = canvas.__laneCache || { edges: [], taps: [] };
     let tipText = '';
     for (const t of cache.taps) {
-        if (Math.hypot(wx - t.x, wy - t.y) * pxScale < 12) { tipText = `Tap queue: ${t.queued} CU`; break; }
+        if (Math.hypot(wx - t.x, wy - t.y) * pxScale < 12) { tipText = `T${t.id ?? 'MAP'}  ·  Tap queue: ${t.queued} CU`; break; }
     }
     if (!tipText) {
         const projectToSegment = (p, a, b) => {
@@ -930,7 +933,7 @@ function initializeFullMap() {
         if (!client || !canvas) return;
 
         // Initial size
-        const rect = canvas.getBoundingClientRect();
+        const rect = (canvas.parentElement || canvas).getBoundingClientRect();
         canvas.width  = Math.max(200, Math.floor(rect.width));
         canvas.height = Math.max(200, Math.floor(rect.height));
 
@@ -965,7 +968,7 @@ function initializeFullMap() {
         }
         (async ()=>{ try { const sid = client.gameState?.sector?.id; if (sid) { const now=Date.now(); if (!client.__factsCache||client.__factsCache.until<=now){ const facts=await SFApi.State.systemFacts(sid); client.__factsCache={facts,until:now+5000}; } buildLaneCache(canvas, client.__factsCache.facts); } } catch {} renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null); })();
         renderFullMap(ctx, canvas, scaleX, scaleY, toggles, null);
-        ['toggleRegions','toggleBelts','toggleWormholes','toggleLanes'].forEach(id => {
+        ['toggleRegions','toggleLabels','toggleBelts','toggleWormholes','toggleLanes'].forEach(id => {
             const el = document.getElementById(id); if (!el) return;
             if (el.__mapToggleBound) return;
             el.addEventListener('click', () => {
@@ -976,16 +979,7 @@ function initializeFullMap() {
             });
             el.__mapToggleBound = true;
         });
-        document.querySelectorAll('[data-map-mode]').forEach(el => {
-            if (el.__modeBound) return;
-            el.addEventListener('click', () => {
-                client.__mapMode = el.dataset.mapMode;
-                document.querySelectorAll('[data-map-mode]').forEach(other => other.classList.toggle('active', other === el));
-                const hint = document.getElementById('mapModeHint');
-                if (hint) hint.textContent = el.dataset.mapMode === 'plan' ? 'Plan mode · click a destination to calculate routes' : (el.dataset.mapMode === 'select' ? 'Select mode · click a ship or object' : 'Inspect mode · hover for details');
-            });
-            el.__modeBound = true;
-        });
+        setMapHint('Click any point in the system to calculate warp routes. Empty space is valid.');
 }
 
 async function initializeGalaxyMap() {
@@ -1070,10 +1064,6 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
             const grad = bctx.createRadialGradient(bg.width/2, bg.height/2, 0, bg.width/2, bg.height/2, Math.max(bg.width, bg.height)/2);
             grad.addColorStop(0, '#0a0a1a'); grad.addColorStop(1, '#050510');
             bctx.fillStyle = grad; bctx.fillRect(0,0,bg.width,bg.height);
-            // Subtle grid pattern
-            bctx.strokeStyle = 'rgba(100,181,246,0.06)'; bctx.lineWidth = 1;
-            const gridSize = 50; for (let x=0; x<bg.width; x+=gridSize){ bctx.beginPath(); bctx.moveTo(x,0); bctx.lineTo(x,bg.height); bctx.stroke(); }
-            for (let y=0; y<bg.height; y+=gridSize){ bctx.beginPath(); bctx.moveTo(0,y); bctx.lineTo(bg.width,y); bctx.stroke(); }
             canvas.__bgCache = { w: canvas.width, h: canvas.height, img: bg };
         }
         ctx.drawImage(canvas.__bgCache.img, 0, 0);
@@ -1103,7 +1093,34 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 if (!hasLanes) toggles.lanes = false;
             }
         } catch {}
-        // Regions overlay - OUTLINE ONLY, subtle by default
+        // Orbital tracks are authoritative world geometry. Old systems without
+        // persisted tracks intentionally render none instead of a generic grid.
+        const orbitalRings = Array.isArray(facts?.orbitalRings) ? facts.orbitalRings : [];
+        if (orbitalRings.length) {
+            ctx.save();
+            orbitalRings.forEach((ring) => {
+                const radius = Number(ring.radius || 0);
+                if (!(radius > 0)) return;
+                ctx.setLineDash([2, 7]);
+                ctx.strokeStyle = 'rgba(158, 203, 255, 0.17)';
+                ctx.lineWidth = Math.max(0.75, Math.min(1.5, Number(ring.width || 32) / 32));
+                ctx.beginPath();
+                ctx.ellipse(
+                    Number(ring.centerX || 2500) * scaleX,
+                    Number(ring.centerY || 2500) * scaleY,
+                    radius * scaleX,
+                    radius * scaleY,
+                    0,
+                    0,
+                    Math.PI * 2,
+                );
+                ctx.stroke();
+            });
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
+
+        // Regions are lightly tinted territories with a clear boundary, not bright tiles.
         if (toggles.regions && client.gameState?.sector?.id) {
             try {
                 if (facts && Array.isArray(facts.regions) && facts.regions.length > 0) {
@@ -1122,12 +1139,14 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                             isHovered = (r.cells || []).some(c => c.col === col && c.row === row);
                         }
 
-                        // NO FILL by default - only outline
-                        const outlineOpacity = isHovered ? 0.35 : 0.12;
+                        const fillOpacity = isHovered ? 0.11 : 0.035;
+                        const outlineOpacity = isHovered ? 0.55 : 0.26;
+                        ctx.fillStyle = `rgba(${baseColor}, ${fillOpacity})`;
                         ctx.strokeStyle = `rgba(${baseColor}, ${outlineOpacity})`;
-                        ctx.lineWidth = 1;
+                        ctx.lineWidth = isHovered ? 2 : 1;
                         
                         (r.cells || []).forEach(c => {
+                            ctx.fillRect(c.col*cellW*scaleX + 1, c.row*cellH*scaleY + 1, cellW*scaleX - 2, cellH*scaleY - 2);
                             ctx.strokeRect(c.col*cellW*scaleX + 1, c.row*cellH*scaleY + 1, cellW*scaleX - 2, cellH*scaleY - 2);
                         });
 
@@ -1255,8 +1274,9 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                     // Taps (diamonds)
                     const taps = tapsByEdge[l.id] || [];
                     ctx.fillStyle = 'rgba(185, 8, 177, 0.95)';
-                    taps.forEach(t => {
+                    taps.forEach((t, tapIndex) => {
                         const x = t.x*scaleX, y = t.y*scaleY;
+                        const tapLabel = t.id != null ? `T${t.id}` : `T${String(l.id)}-${tapIndex + 1}`;
                         ctx.beginPath();
                         ctx.moveTo(x, y-6);
                         ctx.lineTo(x+6, y);
@@ -1273,7 +1293,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                         }
                         // hover tooltip for tap queue
                         if (mouse && Math.hypot(mouse.x - t.x, mouse.y - t.y) * ((scaleX+scaleY)/2) < 10) {
-                            ctx.save(); ctx.font='12px Arial'; const tip = `Tap queue: ${q} CU`;
+                            ctx.save(); ctx.font='12px Arial'; const tip = `${tapLabel}  ·  Tap queue: ${q} CU`;
                             const tw = ctx.measureText(tip).width + 8; const th = 16;
                             const tx = x + 10; const ty = y - 6;
                             ctx.fillStyle = 'rgba(15,25,45,0.9)'; ctx.fillRect(tx, ty, tw, th);
@@ -1507,7 +1527,15 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         drawNavMarker(client.selectedUnit, '#64b5f6', client.selectedUnit?.name || 'Ship');
         drawNavMarker(client.__plannerTarget, '#ffca28', 'Destination', true);
 
-        // Base objects with labels
+        // Base objects. Labels are opt-in and deduplicated because some
+        // generated systems expose the same belt anchor more than once.
+        const drawnLabelKeys = new Set();
+        const drawUniqueLabel = (x, y, name, maxChars = 18, fontSize = 11) => {
+            if (!toggles.labels || !name) return;
+            const key = String(name).trim().toLowerCase();
+            if (drawnLabelKeys.has(key)) return;
+            if (drawSmartLabel(ctx, x, y, name, maxChars, fontSize)) drawnLabelKeys.add(key);
+        };
         client.objects.forEach(obj => {
             const x = obj.x * scaleX, y = obj.y * scaleY; 
             const isSelected = client.selectedUnit?.id === obj.id;
@@ -1537,7 +1565,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 ctx.restore();
                 
                 const name = obj.meta?.name || 'Gate';
-                drawSmartLabel(ctx, x, y, name, 18, 12);
+                drawUniqueLabel(x, y, name, 18, 12);
             } else if (client.isCelestialObject(obj)) {
                 const t = obj.celestial_type || obj.type;
                 let color = '#9ecbff';
@@ -1562,13 +1590,22 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 }
 
                 const name = obj.meta?.name || (t.charAt(0).toUpperCase() + t.slice(1));
-                drawSmartLabel(ctx, x, y, name, 18, 11);
+                drawUniqueLabel(x, y, name, 18, 11);
             } else if (obj.type === 'resource_node') {
-                ctx.fillStyle = '#ffd54f';
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = '#ffd54f';
-                ctx.fillRect(x-2,y-2,4,4);
+                ctx.fillStyle = 'rgba(255, 213, 79, 0.62)';
+                ctx.shadowBlur = 2;
+                ctx.shadowColor = 'rgba(255, 213, 79, 0.45)';
+                ctx.fillRect(x-1.5,y-1.5,3,3);
                 ctx.shadowBlur = 0;
+            } else if (obj.type === 'station' || obj.type === 'structure' || obj.meta?.structureType || obj.meta?.category === 'station') {
+                // Stations are strategic anchors, so give them a distinct
+                // readable silhouette instead of rendering them like ships.
+                ctx.save();
+                ctx.fillStyle = '#b7d8ff'; ctx.strokeStyle = '#64b5f6'; ctx.lineWidth = 1.5;
+                ctx.beginPath(); ctx.rect(x - 6, y - 6, 12, 12); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#102642'; ctx.fillRect(x - 2, y - 2, 4, 4);
+                ctx.restore();
+                drawUniqueLabel(x, y, obj.meta?.name || 'Station', 18, 11);
             } else {
                 // Ships
                 const isPlayer = obj.owner_id === client.userId;
