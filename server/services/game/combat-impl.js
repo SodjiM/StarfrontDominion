@@ -1,3 +1,4 @@
+const physicalScale = require('../../../client/utils/physical-scale');
 const db = require('../../db');
 const CombatConfig = require('./combat-config');
 const { Abilities } = require('../registry/abilities');
@@ -37,15 +38,15 @@ async function processAbilityOrders(gameId, turnNumber) {
         if (cdRow && Number(cdRow.available_turn) > Number(turnNumber)) continue;
         let target = null;
         if (order.target_object_id) {
-            target = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.target_object_id], (e, r) => resolve(r)));
+            target = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.target_object_id], (e, r) => resolve(r)));
         }
-        const caster = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+        const caster = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
         if (!caster) continue;
         if (target && caster.sector_id !== target.sector_id) continue;
         if (ability.range && target) {
             const dx = (caster.x || 0) - (target.x || 0);
             const dy = (caster.y || 0) - (target.y || 0);
-            const dist = Math.sqrt(dx*dx + dy*dy);
+            const dist = physicalScale.gap(caster,target);
             if (dist > ability.range) continue;
         }
         if (ability.type !== 'passive' && ability.energyCost) {
@@ -115,12 +116,12 @@ async function processAbilityOrders(gameId, turnNumber) {
                     }
 
                     // Validate distance
-                    const casterPos = await new Promise((resolve) => db.get('SELECT sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                    const casterPos = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
                     const nodePos = await new Promise((resolve) => db.get('SELECT sector_id, x, y, is_depleted FROM resource_nodes WHERE id = ?', [nodeId], (e, r) => resolve(r)));
                     if (!casterPos || !nodePos || casterPos.sector_id !== nodePos.sector_id || nodePos.is_depleted) continue;
                     const dx = Math.abs((casterPos.x||0) - (nodePos.x||0));
                     const dy = Math.abs((casterPos.y||0) - (nodePos.y||0));
-                    const cheb = Math.max(dx, dy);
+                    const cheb = physicalScale.gap(casterPos,nodePos,'chebyshev');
                     if ((ability.range || 1) < cheb) {
                         await combatRepo.appendCombatLog({ gameId, turnNumber, attackerId: order.caster_id, eventType: 'ability', summary: 'Target node out of range' });
                         continue;
@@ -159,7 +160,7 @@ async function processAbilityOrders(gameId, turnNumber) {
 
             // Non-offense special cases and status effects (subset from index.js for now)
             if (order.ability_key === 'strike_vector') {
-                const casterFull = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+                const casterFull = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
                 if (casterFull) {
                     const abilityRange = ability.range || 3;
                     const tx = Math.round(order.target_x || 0);
@@ -174,7 +175,11 @@ async function processAbilityOrders(gameId, turnNumber) {
                             (e, r) => resolve(!!r)
                         ));
                         if (!blocked) {
-                            const occupied = await new Promise((resolve) => db.get('SELECT 1 FROM sector_objects WHERE sector_id = ? AND x = ? AND y = ? LIMIT 1', [casterFull.sector_id, tx, ty], (e, r) => resolve(!!r)));
+                            const nav = require('../../utils/navigation');
+                            const obstacles=await require('../world/physical-placement').physicalObjects(db,casterFull.sector_id);
+                            const blockedTile=nav.occupancy(obstacles,casterFull.id,casterFull);
+                            const sweep=computePathBresenham(casterFull.x,casterFull.y,tx,ty);
+                            const occupied=!nav.validPoint({x:tx,y:ty})||sweep.slice(1).some((p,i)=>!nav.canStep(sweep[i],p,blockedTile));
                             if (!occupied) {
                                 await new Promise((resolve) => db.run('UPDATE sector_objects SET x = ?, y = ?, updated_at = ? WHERE id = ?', [tx, ty, new Date().toISOString(), order.caster_id], () => resolve()));
                                 const move = await new Promise((resolve) => db.get(`SELECT * FROM movement_orders WHERE object_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`, [order.caster_id], (e, r) => resolve(r)));
@@ -252,14 +257,14 @@ async function processAbilityOrders(gameId, turnNumber) {
         const cdRow = await combatRepo.getAbilityCooldown(order.caster_id, order.ability_key);
         if (cdRow && Number(cdRow.available_turn) > Number(turnNumber)) continue;
         if (!order.target_object_id) continue;
-        const target = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.target_object_id], (e, r) => resolve(r)));
-        const caster = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
+        const target = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.target_object_id], (e, r) => resolve(r)));
+        const caster = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
         if (!caster || !target) continue;
         if (caster.sector_id !== target.sector_id) continue;
         if (ability.range) {
             const dx = (caster.x || 0) - (target.x || 0);
             const dy = (caster.y || 0) - (target.y || 0);
-            const dist = Math.sqrt(dx*dx + dy*dy);
+            const dist = physicalScale.gap(caster,target);
             if (dist > ability.range) continue;
         }
         await combatRepo.upsertCombatOrder({
@@ -301,12 +306,12 @@ async function processCombatOrders(gameId, turnNumber) {
         );
     });
     for (const order of orders) {
-        const attacker = await new Promise((resolve) => db.get('SELECT id, x, y, meta FROM sector_objects WHERE id = ?', [order.attacker_id], (e, r) => resolve(r)));
-        const target = await new Promise((resolve) => db.get('SELECT id, x, y, meta FROM sector_objects WHERE id = ?', [order.target_id], (e, r) => resolve(r)));
+        const attacker = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.attacker_id], (e, r) => resolve(r)));
+        const target = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.target_id], (e, r) => resolve(r)));
         if (!attacker || !target) continue;
         const aMeta = JSON.parse(attacker.meta || '{}');
         const tMeta = JSON.parse(target.meta || '{}');
-        const distance = Math.hypot((attacker.x||0)-(target.x||0), (attacker.y||0)-(target.y||0));
+        const distance = physicalScale.gap(attacker,target);
         const AB = Abilities;
         let weapon = null;
         let weaponKey = null;

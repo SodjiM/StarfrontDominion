@@ -3,7 +3,9 @@ const { BaseStep } = require('./base-step');
 
 class FinalValidateStep extends BaseStep {
     constructor() { super('finalValidate'); }
-    async execute(context) {
+    async execute(context, options = {}) {
+        await require('../lane-clearance').repairLaneClearance(db,context.sectorId);
+        await require('../physical-placement').validateBodies(db,context.sectorId);
         const star = await new Promise((resolve)=>db.get('SELECT id FROM sector_objects WHERE sector_id = ? AND celestial_type = "star" LIMIT 1', [context.sectorId], (e,r)=>resolve(r||null)));
         const planets = await new Promise((resolve)=>db.get('SELECT COUNT(1) as c FROM sector_objects WHERE sector_id = ? AND celestial_type = "planet"', [context.sectorId], (e,r)=>resolve(Number(r?.c||0))));
         const nodes = await new Promise((resolve)=>db.get('SELECT COUNT(1) as c FROM resource_nodes WHERE sector_id = ?', [context.sectorId], (e,r)=>resolve(Number(r?.c||0))));
@@ -17,7 +19,7 @@ class FinalValidateStep extends BaseStep {
         if (!star) failures.push('no star present');
         if (planets <= 0) failures.push('no planets present');
         if (nodes <= 0) failures.push('no resource nodes');
-        if (!station) failures.push('no starting station');
+        if (options.createStartingObjects && !station) failures.push('no starting station');
         if (orbitalRings.length !== planets) failures.push('orbital ring count does not match planet count');
         if (orbitalRings.some((ring) => !ring.planet_object_id || Number(ring.radius) <= 0)) failures.push('invalid orbital ring assignment');
         if (objects.some((o) => Number(o.x) < 0 || Number(o.y) < 0 || Number(o.x) >= 5000 || Number(o.y) >= 5000)) failures.push('object outside sector bounds');
@@ -31,7 +33,7 @@ class FinalValidateStep extends BaseStep {
             `INSERT INTO generation_manifests (sector_id, generation_seed, generator_version, archetype, manifest_json, updated_at)
              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
              ON CONFLICT(sector_id) DO UPDATE SET generation_seed=excluded.generation_seed, generator_version=excluded.generator_version, archetype=excluded.archetype, manifest_json=excluded.manifest_json, updated_at=CURRENT_TIMESTAMP`,
-            [context.sectorId, context.seed, 'orbital-scaffold-v2', context.archetype, JSON.stringify(manifest)], (e) => e ? reject(e) : resolve()
+            [context.sectorId, context.seed, 'physical-scale-v1', context.archetype, JSON.stringify(manifest)], (e) => e ? reject(e) : resolve()
         ));
         await new Promise((resolve)=>db.run('UPDATE sectors SET generation_completed = 1 WHERE id = ?', [context.sectorId], ()=>resolve()));
         this.result = { valid: true, ...manifest };

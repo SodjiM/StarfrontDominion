@@ -1,0 +1,13 @@
+# Celestial sprite atlas
+
+Generated with the built-in imagegen tool. `atlas.png` preserves its original alpha channel. Nine cells in row-major order: ocean, desert, ice, gas giant, cratered moon, volcanic moon, yellow dwarf, red dwarf, blue star. The renderer derives cell size from actual image dimensions (the generator returned 1254 × 1254), not the requested resolution. Continuous canvas animation supplies axial motion and ambient light; these are static texture cells, not baked animation frames.
+
+`atlas-close.png` is the close-zoom tier. It was generated with the existing `atlas.png` supplied as a strict visual reference: the same 3×3 layout, silhouettes, palette, lighting direction, and transparent spacing, with extra surface detail. It is stored at 2508 × 2508 (2× resolution) for close rendering. `atlas-thumb.png` is the 384 × 384 distant-view tier.
+
+Prompt:
+
+Use case: stylized-concept. Asset type: production game sprite atlas for Starfront Dominion. Create one square 1536x1536 atlas with exactly 3 columns and 3 rows of evenly spaced isolated celestial bodies on genuinely transparent background. Each cell is 512x512, each body centered exactly in its cell, spherical solid disk diameter 350px, all glow contained inside cell, no overlap. Row 1: blue green ocean terrestrial planet with intricate clouds; rust ochre rocky desert planet with canyons; turquoise ice planet with frozen fractures. Row 2: amber striped gas giant WITHOUT rings; silver gray heavily cratered moon; dark volcanic moon with subtle orange lava cracks. Row 3: golden yellow sun with detailed granulation and delicate corona; crimson red dwarf sun with detailed plasma; blue white star with icy blue corona. High quality realistic painted space strategy sprites, sharp readable silhouettes, rich surface detail, consistent upper-left lighting on planets and moons with lower-right shadow yet visible entire disk. Stars self luminous. Orthographic front view. No text, labels, borders, grid lines, stars in background, checkerboard, or drop shadows. Actual alpha transparency around every body.
+
+Close-tier reference prompt:
+
+Use the existing `atlas.png` as the strict visual source of truth. Create a 2x-resolution version of the same 3x3 transparent atlas. Preserve exactly the same nine cells, row/column positions, subject identities, silhouettes, color palette, lighting direction, corona shapes, surface patterns, transparent spacing, and relative scale. Improve only texture resolution and fine detail so the sprites remain sharp when enlarged. Do not redesign, reinterpret, recolor, add, remove, or rearrange anything. Keep genuine transparent alpha around every body. No text, labels, grid lines, background stars, borders, or extra objects.

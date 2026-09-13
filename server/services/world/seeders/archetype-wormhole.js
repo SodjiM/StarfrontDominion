@@ -1,4 +1,5 @@
 const { randInt, randFloat, choice } = require('../rng');
+const { placeWithRetries } = require('../placement');
 
 // Wormhole Cluster — “Doors & Drift”
 // Primary: Riftstone, Phasegold; Secondary: Fluxium, Tachytrium, Aetherium, Quarzon, Spectrathene
@@ -12,7 +13,7 @@ const DISPLAY = {
     description: 'Hubs and throats with scheduled windows and drift trade.'
 };
 
-function plan({ sectorId, seed, rng }) {
+function plan({ sectorId, seed, rng, streams = {} }) {
     const hasB = (rng() < 0.2);
     const base = hasB
         ? [['A','B','A'], ['C','C','C'], ['A','B','A']]
@@ -48,14 +49,24 @@ function plan({ sectorId, seed, rng }) {
     const belts = [{ id:'B0', inner: 1500, width: randInt(rng, 250, 400), sectors: randInt(rng,4,7) }];
     if (rng() < 0.4) belts.push({ id:'B1', inner: 2000, width: randInt(rng, 250, 350), sectors: randInt(rng,4,7) });
 
-    // Wormhole endpoints and links (simple sketch)
-    const hubs = randInt(rng, 3, 5);
-    const fringes = randInt(rng, 2, 4);
-    const microholes = randInt(rng, 2, 6);
-    const links = [];
-    for (let i=0;i<hubs;i++) links.push({ type:'hub', stability: randInt(rng,70,95) });
-    for (let i=0;i<fringes;i++) links.push({ type:'fringe', stability: randInt(rng,35,70) });
-    for (let i=0;i<microholes;i++) links.push({ type:'micro', stability: randInt(rng,10,40) });
+    // Wormholes are rare strategic anchors, not a cloud around the star.
+    const wormholeRng = streams.wormholes || rng;
+    const wormholeCount = randInt(wormholeRng, 2, 4);
+    const positions = placeWithRetries({
+        rng: wormholeRng,
+        count: wormholeCount,
+        minDistance: 520,
+        sample: (source) => {
+            const radius = randInt(source, 900, 2200);
+            const angle = randFloat(source, 0, Math.PI * 2);
+            return { x: 2500 + Math.cos(angle) * radius, y: 2500 + Math.sin(angle) * radius };
+        }
+    });
+    const links = positions.map((position, index) => {
+        const type = index === 0 ? 'hub' : choice(wormholeRng, ['fringe', 'fringe', 'micro']);
+        const stability = type === 'hub' ? randInt(wormholeRng, 70, 95) : type === 'fringe' ? randInt(wormholeRng, 35, 70) : randInt(wormholeRng, 15, 40);
+        return { ...position, type, stability };
+    });
 
     return { regions, sun, planets, belts, wormholes: links, seed };
 }
@@ -139,13 +150,13 @@ async function persist({ sectorId, plan, db }) {
             }
         }
     }
-    // Wormhole endpoints sketch: create endpoints only (no exact coords for MVP)
+    // Persist the seeded endpoints from the canonical plan.
     for (let i=0;i<plan.wormholes.length;i++) {
         const w = plan.wormholes[i];
         const meta = JSON.stringify({ name: `${w.type}_wormhole_${i}`, stability: w.stability, alwaysKnown:1 });
         await new Promise((resolve,reject)=>db.run(
-            `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, 'wormhole', ?, ?, NULL, ?)`,
-            [sectorId, 2400 + i*10, 2400 + i*10, meta],
+            `INSERT INTO sector_objects (sector_id, type, celestial_type, x, y, owner_id, meta, radius) VALUES (?, 'wormhole', 'wormhole', ?, ?, NULL, ?, 10)`,
+            [sectorId, Math.round(w.x), Math.round(w.y), meta],
             (e)=> e?reject(e):resolve()
         ));
     }

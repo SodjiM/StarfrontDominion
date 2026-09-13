@@ -1,3 +1,4 @@
+import { physicalScale } from '../utils/physical-geometry.js';
 // Unit Details panel: pure view builder. Emits callbacks for actions.
 
 import * as UICargo from './cargo-modal.js';
@@ -44,13 +45,17 @@ export function renderUnitDetails(game, unit, options = {}) {
     });
 
     const iconHtml = game.getUnitIcon(unit);
+    const portrait = window.SFSprites?.getSpriteForObject?.(unit);
+    const portraitHtml = portrait ? `<img src="${escapeAttr(portrait.src)}" alt="${escapeAttr(meta.blueprintId || meta.stationClass || meta.shipType || meta.class || unit.type)}" style="display:block;width:100%;height:150px;object-fit:contain;margin:8px 0 14px;filter:drop-shadow(0 4px 12px rgba(100,181,246,.18))">` : '';
     const adjacentGate = (unit.type === 'ship') && isAdjacentToInterstellarGate(game, unit);
     detailsContainer.innerHTML = `
         <div class="unit-info">
+            ${portraitHtml}
             <h3 class="unit-heading">
                 ${iconHtml} ${meta.name || unit.type}
             </h3>
             <div class="unit-stats">
+                <div class="stat-item"><span>Footprint</span><strong>${physicalScale.width(unit)} × ${physicalScale.width(unit)} tiles</strong></div>
                 <div class="stat-item"><span>Position</span><strong>(${unit.x}, ${unit.y})</strong></div>
                 ${meta.movementSpeed ? `<div class=\"stat-item\"><span>${unit?.meta?.travelMode ? `Warp (${unit.meta.travelMode})` : 'Movement'}</span><strong id=\"movementStat\">${(()=>{ try { if (unit?.meta?.travelMode) { const v = unit?.meta?.warpTPT; return v?`${v} tiles/turn`: `${game.getEffectiveMovementSpeed({ ...unit, statusEffects: unit.statusEffects || [] })} tiles/turn`; } } catch {} return `${game.getEffectiveMovementSpeed({ ...unit, statusEffects: unit.statusEffects || [] })} tiles/turn`; })()}</strong></div>` : ''}
                 ${meta.scanRange ? `<div class=\"stat-item\"><span>Scan range</span><strong>${game.getEffectiveScanRange(unit)}</strong></div>` : ''}

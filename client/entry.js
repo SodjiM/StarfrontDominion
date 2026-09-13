@@ -9,6 +9,7 @@ import './render/grid-renderer.js';
 import './render/fog-of-war.js';
 import './render/movement-paths.js';
 import './render/object-renderer.js';
+import './render/celestial-types.js';
 import './render/celestial-renderer.js';
 import './render/resource-renderer.js';
 import './render/ship-renderer.js';
@@ -56,5 +57,4 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 });
-
 

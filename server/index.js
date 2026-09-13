@@ -1416,8 +1416,14 @@ app.set('io', io);
 // Register socket channel via ServerApp in future; for now, register directly
 
 // Start server after DB is initialized
-db.ready.then(() => {
+db.ready.then(async () => {
+    const backupDir = path.resolve('.data/backups');
+    require('fs').mkdirSync(backupDir,{recursive:true});
+    const migration = await require('./services/game/mutation-lock').run(() => require('./services/world/scale-migration').migrateScales(db, {
+        backupPath: process.env.DATABASE_PATH === ':memory:' ? undefined : path.join(backupDir,`before-physical-scale-${Date.now()}.sqlite`)
+    }));
+    if(migration.length)logger.info('physical_scale_migrated',{sectors:migration});
     server.listen(PORT, () => {
         logger.info('server_started', { port: PORT, env: CONFIG.nodeEnv });
     });
-});
+}).catch(error=>{console.error('Startup scale migration failed; save rolled back:',error);process.exit(1);});

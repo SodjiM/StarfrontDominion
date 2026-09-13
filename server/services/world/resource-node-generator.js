@@ -197,6 +197,18 @@ async function spawnNodesForSector(sectorId, options = {}) {
         }
     }
 
+    const count=await new Promise((resolve,reject)=>db.get('SELECT COUNT(*) n FROM resource_nodes WHERE sector_id=?',[sectorId],(e,r)=>e?reject(e):resolve(r.n)));
+    if(!count) {
+        // Archetypes without belts still need accessible mining pockets.
+        const planets=await new Promise((resolve,reject)=>db.all("SELECT x,y,radius FROM sector_objects WHERE sector_id=? AND celestial_type='planet'",[sectorId],(e,r)=>e?reject(e):resolve(r||[])));
+        for(const planet of planets)for(let i=0;i<5;i++) {
+            const typeId=await getTypeId(CORE_MINERALS[i]); if(!typeId)continue;
+            const angle=randFloat(rng,0,Math.PI*2),distance=Number(planet.radius)+60+randInt(rng,0,50);
+            const x=Math.round(planet.x+Math.cos(angle)*distance),y=Math.round(planet.y+Math.sin(angle)*distance);
+            await new Promise((resolve,reject)=>db.run('INSERT INTO resource_nodes(sector_id,resource_type_id,x,y,size,resource_amount,max_resource,harvest_difficulty,is_depleted,meta) VALUES(?,?,?,?,1,120,120,1,0,?)',[sectorId,typeId,x,y,JSON.stringify({resourceType:CORE_MINERALS[i],fieldType:'planetary-pocket'})],e=>e?reject(e):resolve()));
+        }
+    }
+
     return { success: true };
 }
 

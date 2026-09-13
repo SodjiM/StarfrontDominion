@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { mulberry32, createRngStreams } = require('../server/services/world/rng');
 const { plan } = require('../server/services/world/seeders/archetype-asteroid-heavy');
 const { plan: binaryPlan } = require('../server/services/world/seeders/archetype-binary');
+const { plan: wormholePlan } = require('../server/services/world/seeders/archetype-wormhole');
 const { placeWithRetries, inBounds } = require('../server/services/world/placement');
 const { applyOrbitalScaffold } = require('../server/services/world/orbital-scaffold');
 
@@ -47,6 +48,25 @@ test('the universal orbital scaffold handles multi-star archetypes', () => {
         assert.equal(planet.orbitRingIndex, ring.ringIndex);
         assert.ok(Math.abs(Math.hypot(planet.x - ring.centerX, planet.y - ring.centerY) - ring.radius) < 0.001);
     });
+});
+
+test('wormhole clusters seed a small, spaced set of strategic endpoints', () => {
+    const seed = 90210;
+    const make = () => {
+        const streams = createRngStreams(seed);
+        return wormholePlan({ sectorId: 1, seed, rng: streams.layout, streams });
+    };
+    const first = make(), second = make();
+    assert.deepEqual(first.wormholes, second.wormholes);
+    assert.ok(first.wormholes.length >= 2 && first.wormholes.length <= 4);
+    first.wormholes.forEach((wormhole) => {
+        const radius = Math.hypot(wormhole.x - 2500, wormhole.y - 2500);
+        assert.ok(radius >= 899 && radius <= 2201);
+        assert.ok(inBounds(wormhole, undefined, 1));
+    });
+    for (let i = 0; i < first.wormholes.length; i++) for (let j = i + 1; j < first.wormholes.length; j++) {
+        assert.ok(Math.hypot(first.wormholes[i].x - first.wormholes[j].x, first.wormholes[i].y - first.wormholes[j].y) >= 520);
+    }
 });
 
 test('placement retries enforce bounds and spacing', () => {

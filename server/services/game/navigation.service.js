@@ -1,19 +1,20 @@
 const nav=require('../../utils/navigation');
 class NavigationService {
  constructor(db){this.db=db;}
+ sectorObjects(sectorId){return require('../world/physical-placement').physicalObjects(this.db,sectorId);}
  get(sql,args=[]){return new Promise((r,j)=>this.db.get(sql,args,(e,v)=>e?j(e):r(v)));}
  all(sql,args=[]){return new Promise((r,j)=>this.db.all(sql,args,(e,v)=>e?j(e):r(v||[])));}
  run(sql,args=[]){return new Promise((r,j)=>this.db.run(sql,args,function(e){e?j(e):r(this)}));}
  async destinationNear(ship,targetId){
   const target=await this.get('SELECT * FROM sector_objects WHERE id=? AND sector_id=?',[targetId,ship.sector_id]);
   if(!target)throw new Error('target_not_in_sector');
-  const objects=await this.all('SELECT id,type,x,y,radius FROM sector_objects WHERE sector_id=?',[ship.sector_id]);
-  const blocked=nav.occupancy(objects,ship.id),radius=Math.ceil(Number(target.radius)||0)+2,candidates=[];
-  for(let i=0;i<32;i++){const a=i*Math.PI/16,p={x:Math.round(target.x+Math.cos(a)*radius),y:Math.round(target.y+Math.sin(a)*radius)};if(!blocked(p))candidates.push(p);}
-  candidates.sort((a,b)=>Math.hypot(a.x-ship.x,a.y-ship.y)-Math.hypot(b.x-ship.x,b.y-ship.y));
-  if(!candidates.length)throw new Error('destination_blocked');return candidates[0];
+  const objects=await this.sectorObjects(ship.sector_id);
+  const radius=Math.ceil(nav.scale.extent(target)+nav.scale.extent(ship))+2;
+  const point=nav.findPlacement(objects,ship,target,{minRadius:radius,maxRadius:radius+30});
+  if(!point)throw new Error('destination_blocked');
+  return point;
  }
- async route(ship,dest){const objects=await this.all('SELECT id,type,x,y,radius FROM sector_objects WHERE sector_id=?',[ship.sector_id]);return nav.findPath(ship,dest,nav.occupancy(objects,ship.id));}
+ async route(ship,dest){const objects=await this.sectorObjects(ship.sector_id);return nav.findPath(ship,dest,nav.occupancy(objects,ship.id,ship));}
  async order(shipId,dest,{userId,gameId,internal=false}={}){
   if(!nav.validPoint(dest))throw new Error('destination_out_of_bounds');
   const ship=await this.get('SELECT so.*,s.game_id FROM sector_objects so JOIN sectors s ON s.id=so.sector_id WHERE so.id=? AND so.type=\'ship\'',[shipId]);
@@ -30,13 +31,13 @@ class NavigationService {
   const results=[];const seen=new Set();
   for(const o of orders){if(seen.has(o.ship_id))continue;seen.add(o.ship_id);
    if(await this.get('SELECT id FROM lane_transits WHERE ship_id=?',[o.ship_id]))continue;
-   const ship={...o,id:o.ship_id};
+   const ship={...o,id:o.ship_id,type:"ship"};
    let path = null;
    try {
     const stored = JSON.parse(o.movement_path || '[]');
     if (Array.isArray(stored) && stored.length > 1 && stored[0]?.x === o.x && stored[0]?.y === o.y) {
-     const objects = await this.all('SELECT id,type,x,y,radius FROM sector_objects WHERE sector_id=?',[o.sector_id]);
-     const blocked = nav.occupancy(objects,o.ship_id);
+     const objects = await this.sectorObjects(o.sector_id);
+     const blocked = nav.occupancy(objects,o.ship_id,{...ship,type:"ship"});
      const validRemaining = !blocked(stored[stored.length - 1]) && stored.slice(1).every((p,i)=>nav.canStep(stored[i],p,blocked));
      if (validRemaining) path = stored;
     }

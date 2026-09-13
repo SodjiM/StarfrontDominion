@@ -40,12 +40,19 @@ test('lane confirmation uses server-issued route and ignores edited client legs'
  const edge=(await n.run(`INSERT INTO lane_edges(sector_id,cls,region_id,polyline_json,width_core,width_shoulder,lane_speed,cap_base,headway,mass_limit) VALUES(?,'test','r',?,150,200,100,100,10,'all')`,[sector,JSON.stringify([{x:10,y:10},{x:410,y:10}])])).lastID;
  await n.run('INSERT INTO lane_edges_runtime(edge_id) VALUES(?)',[edge]);
  const a=await connect(alice.cookie);a.emit('join-game',game,alice.userId);
+ const b=await connect(bob.cookie);b.emit('join-game',game,bob.userId);
+ const missingShip=await b.call('travel:plan',{gameId:game,sectorId:sector,shipId:ship,to:{x:12,y:10}});
+ assert.equal(missingShip.error,'not_owner');
  const plan=await a.call('travel:plan',{gameId:game,sectorId:sector,shipId:ship,from:{x:4000,y:4000},to:{x:400,y:10}});
  assert.equal(plan.success,true);assert(plan.routes.length>0);
  const route=plan.routes[0];assert.equal(route.legs[0].sStart,0);
  const result=await a.call('travel:confirm',{gameId:game,sectorId:sector,shipId:ship,routeId:route.routeId,legs:[{edgeId:999999,sStart:0,sEnd:999999}]});
  assert.equal(result.success,true);assert.equal(result.itinerary[0].edgeId,edge);
  assert.equal((await a.call('travel:cancel',{gameId:game,sectorId:sector,shipId:ship})).success,true);
+ const nearby=await a.call('travel:plan',{gameId:game,sectorId:sector,shipId:ship,to:{x:12.4,y:10.2}});
+ assert.equal(nearby.success,true);assert.equal(nearby.routes[0].mode,'impulse');
+ const queued=await a.call('travel:confirm',{gameId:game,sectorId:sector,shipId:ship,routeId:nearby.routes[0].routeId,queue:true,clientOrderId:'direct-impulse-test'});
+ assert.equal(queued.success,true);assert.equal(queued.mode,'impulse');
 });
 test('logout revokes existing HTTP and socket sessions; login reconnects',async()=>{
  const a=await connect(alice.cookie);a.emit('join-game',game,alice.userId);

@@ -30,9 +30,11 @@ Use native buttons and form controls, preserve visible focus, label icon-only co
 
 - Encyclopedia uses a two-pane reference layout: compact category navigation on the left and a readable entry column on the right.
 - Category and entry navigation use native buttons with visible active state and entry counts.
-- Strategic Map keeps the map primary, gives the inspector a narrower fixed column, and uses explicit text controls for inspect, select, plan, lanes, regions, labels, and recenter.
+- Strategic Map is a near-full-viewport chart. Travel planning lives in a collapsible right rail on desktop and a bottom sheet on narrow screens, leaving the map as the dominant surface.
 - Strategic-map labels are opt-in, collision-aware, and deduplicated by name. Selection and destination markers remain visible even when labels are off.
-- Both tools use bounded modal geometry and internal scroll ownership so short content does not create oversized empty frames.
+- The map supports cursor-anchored zoom, constrained panning, and a resettable numeric zoom control. Inspecting and panning are the default; custom destination placement is an explicit, cancelable mode.
+- Route cards own their queue action and show ETA, travel mode, and load once. A missing selected ship is presented as a red, human-readable prerequisite instead of a route error.
+- Both tools use bounded modal geometry and internal scroll ownership so short content does not create oversized empty frames. The travel rail owns POI scrolling so destination selection remains usable on mobile.
 
 ### Orbital geometry
 
@@ -40,3 +42,10 @@ Use native buttons and form controls, preserve visible focus, label icon-only co
 - Every generated planet occupies its assigned track, and both maps use the same generated center and radius as the authoritative planet coordinates.
 - Tracks remain quiet cartographic context: fine blue dashes behind objects, resources, regions, routes, and selection markers.
 - Systems without persisted orbital geometry show no fallback rings. This keeps older worlds honest instead of implying structure they do not possess.
+
+## Celestial artwork and tactical unit scale
+
+- `client/render/celestial-types.js` owns the shared cosmetic taxonomy. Generated worlds persist `meta.visualType`; older objects resolve deterministically from existing metadata and identity.
+- `client/assets/celestial/atlas.png` supplies nine textured, transparent bodies. `celestial-renderer.js` caches atlas cells and feathers stellar corona edges. Ambient light and restrained axial motion use the single 30 fps clock in `ambient-loop.js`, pause in hidden tabs, and respect reduced motion.
+- `client/render/object-scale.js` owns main-map display sizes and picking. Celestial diameter is twice stored radius. Ships use class-based sizes with 42–84 px tactical minimums; stations use 72–104 px minimums, with smaller symbols at system zoom. Selection follows that same display geometry. Physical unit occupancy remains a separate server concern.
+- Unit details show a 150 px portrait using the existing sprite registry so players can inspect a silhouette without changing map zoom.

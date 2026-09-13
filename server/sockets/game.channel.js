@@ -46,9 +46,12 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 if (!allow(socket, 'travel')) return cb && cb({ success:false, error:'rate_limited' });
                 const { gameId, sectorId } = payload || {};
                 let to=payload?.to;
-                const controlledShip=await laneService.get('SELECT id,x,y,meta,sector_id FROM sector_objects WHERE id=?',[payload?.shipId]);
+                const controlledShip=await laneService.get('SELECT id,x,y,meta,sector_id FROM sector_objects WHERE id=? AND owner_id=?',[payload?.shipId, socket.userId]);
+                if (!controlledShip) return cb && cb({ success:false, error:'no_ship_selected' });
                 if(controlledShip && payload?.targetObjectId)to=await laneService.destinationNear(controlledShip,Number(payload.targetObjectId));
-                if(!controlledShip || !require('../utils/navigation').validPoint(to))return cb && cb({success:false,error:'invalid_destination'});
+                if (!to || !Number.isFinite(Number(to.x)) || !Number.isFinite(Number(to.y))) return cb && cb({success:false,error:'invalid_destination'});
+                to = { x: Math.round(Number(to.x)), y: Math.round(Number(to.y)) };
+                if(!require('../utils/navigation').validPoint(to))return cb && cb({success:false,error:'invalid_destination'});
                 const blockingTarget=await laneService.get('SELECT id FROM sector_objects WHERE sector_id=? AND x=? AND y=? AND id!=?',[sectorId,to.x,to.y,controlledShip.id]);
                 if(blockingTarget)to=await laneService.destinationNear(controlledShip,blockingTarget.id);
                 const from={x:controlledShip.x,y:controlledShip.y};
@@ -72,10 +75,16 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 // Merge and filter out degenerate routes (missing legs or all zero-length)
                 const merged = [...single, ...multi];
                 const isNonZero = (legs)=>Array.isArray(legs) && legs.some(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-6);
-                const filtered = merged.filter(r => isNonZero(r.legs));
+                const seenRoutes = new Set();
+                const filtered = merged.filter(r => r.mode === 'impulse' || isNonZero(r.legs)).sort((a,b)=>a.eta-b.eta).filter(route => {
+                    const key = route.mode === 'impulse' ? 'impulse' : JSON.stringify((route.legs || []).map(leg => [Number(leg.edgeId), leg.entry, Number(leg.tapId) || 0, Math.round(Number(leg.sStart)), Math.round(Number(leg.sEnd))]));
+                    if (seenRoutes.has(key)) return false;
+                    seenRoutes.add(key);
+                    return true;
+                });
                 // Prefer best ETAs overall; include top 3
                 plannedRoutes.clear();
-                const routes = filtered.sort((a,b)=>a.eta-b.eta).slice(0,3).map(r=>{const routeId=require('node:crypto').randomUUID();plannedRoutes.set(routeId,{legs:r.legs,dest:to,shipId,sectorId,gameId,turn:currentTurn,at:Date.now()});return {...r,routeId};});
+                const routes = filtered.sort((a,b)=>a.eta-b.eta).slice(0,3).map(r=>{const routeId=require('node:crypto').randomUUID();plannedRoutes.set(routeId,{mode:r.mode||'lane',legs:r.legs||[],dest:to,shipId,sectorId,gameId,turn:currentTurn,at:Date.now()});return {...r,routeId};});
                 cb && cb({ success:true, routes, currentTurn });
             } catch (e) {
                 cb && cb({ success:false, error:'server_error' });
@@ -90,6 +99,18 @@ function registerGameChannel({ io, db, resolveTurn }) {
             if(current?.turn_number!==plan.turn)return cb?.({success:false,error:'route_expired_replan'});
             if (payload?.queue) {
                 try {
+                    if (plan.mode === 'impulse') {
+                        const queued = await queuedActions.enqueue({
+                            gameId: plan.gameId,
+                            shipId: plan.shipId,
+                            actionType: 'movement.move',
+                            payload: { destination: plan.dest },
+                            clientOrderId: payload.clientOrderId || null
+                        });
+                        plannedRoutes.delete(payload.routeId);
+                        if (!queued.duplicate) io.to(`game-${plan.gameId}`).emit('queue:updated', { shipId: plan.shipId });
+                        return cb?.({ success: true, queued: true, duplicate: queued.duplicate, mode: 'impulse', order: queued.order });
+                    }
                     const queued = await queuedActions.enqueue({
                         gameId: plan.gameId,
                         shipId: plan.shipId,

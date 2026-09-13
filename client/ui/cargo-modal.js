@@ -1,3 +1,4 @@
+import { physicalScale } from '../utils/physical-geometry.js';
 // Cargo & Transfer UI (ESM)
 import { getUnitIcon } from './icons.js';
 import { deployStructure } from '../features/build.js';
@@ -11,7 +12,7 @@ export async function showCargo(game) {
         const adjacentObjects = game.gameState.objects.filter(obj => {
             if (obj.id === selectedUnit.id) return false;
             const dx = Math.abs(obj.x - selectedUnit.x); const dy = Math.abs(obj.y - selectedUnit.y);
-            if (!(dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0))) return false;
+            if (!physicalScale.adjacent(obj,selectedUnit)) return false;
             if (obj.owner_id === game.userId) return true;
             try { const m = obj.meta || {}; return !!m.publicAccess; } catch { return false; }
         });

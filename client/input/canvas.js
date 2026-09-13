@@ -1,3 +1,4 @@
+import { pickMapObject } from '../render/object-scale.js';
 // Canvas input handlers and binding
 import * as MoveCtl from '../features/movement-controller.js';
 
@@ -26,11 +27,7 @@ export function handleMouseMove(game, e) {
     const worldX = Math.round(game.camera.x + (x - centerX) / game.tileSize);
     const worldY = Math.round(game.camera.y + (y - centerY) / game.tileSize);
 
-    const hoveredObject = game.objects.find(obj => {
-        const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
-        const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8);
-        return distance <= hitRadius;
-    });
+    const hoveredObject = pickMapObject(game, x, y);
 
     game.updateMapTooltip && game.updateMapTooltip(hoveredObject, x, y);
 
@@ -134,11 +131,7 @@ export function handleLeftClick(game, e) {
     const worldX = Math.round(game.camera.x + (x - centerX) / game.tileSize);
     const worldY = Math.round(game.camera.y + (y - centerY) / game.tileSize);
 
-    const clickedObject = game.objects.find(obj => {
-        const distance = Math.sqrt(Math.pow(obj.x - worldX, 2) + Math.pow(obj.y - worldY, 2));
-        const hitRadius = Math.max(0.5, (obj.radius || 1) * 0.8);
-        return distance <= hitRadius;
-    });
+    const clickedObject = pickMapObject(game, x, y);
 
     if (game.pendingAbility) {
         const { key, def } = game.pendingAbility;
@@ -179,13 +172,7 @@ export function handleRightClick(game, e) {
     const worldX = Math.round(game.camera.x + (x - centerX) / game.tileSize);
     const worldY = Math.round(game.camera.y + (y - centerY) / game.tileSize);
 
-    const clickedObject = game.objects.find(obj => {
-        if (game.isCelestialObject(obj) && obj.radius > 50) return false;
-        const distance = Math.hypot(obj.x - worldX, obj.y - worldY);
-        const baseRadius = (obj.radius || 1);
-        const hitRadius = obj.type === 'resource_node' ? Math.max(0.4, baseRadius * 0.5) : Math.max(0.5, baseRadius * 0.8);
-        return distance <= hitRadius;
-    });
+    const clickedObject = pickMapObject(game, x, y);
 
     if (clickedObject && clickedObject.type === 'resource_node') {
         const target = clickedObject;

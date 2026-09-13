@@ -1,6 +1,65 @@
 // Starfront: Dominion - Celestial object renderer (global namespace)
 
 (function(){
+    const atlases = new Map();
+    const cells = new Map();
+    const lodForDiameter = diameter => diameter <= 56 ? 'thumbnail' : diameter <= 220 ? 'tactical' : 'close';
+    const atlasPath = lod => ({ thumbnail: 'assets/celestial/atlas-thumb.png', tactical: 'assets/celestial/atlas.png', close: 'assets/celestial/atlas-close.png' }[lod] || 'assets/celestial/atlas.png');
+    function getAtlas(lod) {
+        if (atlases.has(lod)) return atlases.get(lod);
+        const atlas = new Image();
+        atlas.onload = () => window.gameClient?.render();
+        atlas.src = atlasPath(lod);
+        atlases.set(lod, atlas);
+        return atlas;
+    }
+    function drawSprite(ctx, obj, x, y, size, game) {
+        const style = window.SFCelestialTypes?.resolve(obj);
+        if (!style) return false;
+        const lod = lodForDiameter(size);
+        const atlas = getAtlas(lod);
+        if (!atlas.complete || !atlas.naturalWidth) return false;
+        const time = game?.reducedMotion ? 0 : (game?.animationTime || 0);
+        const phase = style.phase;
+        const star = style.family === 'star';
+        const pulse = Math.sin(time * (star ? 0.8 : 0.45) + phase);
+        const cell = atlas.naturalWidth / 3;
+        const cellKey = `${lod}:${style.cell}`;
+        if (!cells.has(cellKey)) {
+            const sprite = document.createElement('canvas');
+            sprite.width = sprite.height = cell;
+            const paint = sprite.getContext('2d');
+            paint.drawImage(atlas, (style.cell % 3) * cell, Math.floor(style.cell / 3) * cell, cell, cell, 0, 0, cell, cell);
+            if (star) {
+                // Feather atlas-edge corona so rotation never exposes a square seam.
+                paint.globalCompositeOperation = 'destination-in';
+                const mask = paint.createRadialGradient(cell/2, cell/2, cell * 0.39, cell/2, cell/2, cell * 0.5);
+                mask.addColorStop(0, '#fff'); mask.addColorStop(1, 'rgba(255,255,255,0)');
+                paint.fillStyle = mask; paint.fillRect(0, 0, cell, cell);
+            }
+            cells.set(cellKey, sprite);
+        }
+        // The atlas includes atmosphere/corona in each cell; never crop its alpha.
+        const extent = size * (star ? 1.2 : 1.06);
+        ctx.save();
+        ctx.shadowBlur = 0;
+        const glow = ctx.createRadialGradient(x, y, size * 0.35, x, y, size * (star ? 0.85 : 0.65));
+        glow.addColorStop(0, style.tint + (star ? '45' : '19'));
+        glow.addColorStop(1, style.tint + '00');
+        ctx.globalAlpha *= 0.88 + pulse * 0.08;
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(x, y, size * 0.85, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        ctx.save();
+        ctx.shadowBlur = 0;
+        ctx.translate(x, y);
+        // Small, slow axial motion; no positional drift or mouse-based timing.
+        ctx.rotate(star ? time * 0.018 + phase : Math.sin(time * 0.12 + phase) * 0.025);
+        ctx.imageSmoothingEnabled = lod !== 'thumbnail';
+        ctx.drawImage(cells.get(cellKey), -extent / 2, -extent / 2, extent, extent);
+        ctx.restore();
+        return true;
+    }
     function tileSizeOf(game) { return (game && game.tileSize) ? game.tileSize : 20; }
     function cameraOf(game) { return (game && game.camera) ? game.camera : { x: 0, y: 0 }; }
 
@@ -54,7 +113,7 @@
     function drawDistantNebula(ctx, x, y, size, colors) {
         ctx.fillStyle = colors.background; const numClouds = Math.max(3, Math.floor(size / 20 / 2));
         for (let i = 0; i < numClouds; i++) {
-            const angle = (i / numClouds) * Math.PI * 2; const offsetX = Math.cos(angle) * size * 0.25; const offsetY = Math.sin(angle) * size * 0.25; const cloudSize = size * (0.3 + Math.random() * 0.4);
+            const angle = (i / numClouds) * Math.PI * 2; const offsetX = Math.cos(angle) * size * 0.25; const offsetY = Math.sin(angle) * size * 0.25; const cloudSize = size * (0.3 + (Math.sin(i * 12.9898) * 0.5 + 0.5) * 0.4);
             ctx.beginPath(); ctx.arc(x + offsetX, y + offsetY, cloudSize/2, 0, Math.PI * 2); ctx.fill();
         }
     }
@@ -83,13 +142,14 @@
 
     function drawPlanetFeatures(ctx, x, y, size, colors, meta) {
         ctx.fillStyle = colors.border + '44'; const numFeatures = 3;
-        for (let i = 0; i < numFeatures; i++) { const angle = Math.random() * Math.PI * 2; const distance = Math.random() * size * 0.3; const fx = x + Math.cos(angle) * distance; const fy = y + Math.sin(angle) * distance; const fsize = size * 0.1 * (0.5 + Math.random() * 0.5); ctx.beginPath(); ctx.arc(fx, fy, fsize, 0, Math.PI * 2); ctx.fill(); }
+        for (let i = 0; i < numFeatures; i++) { const angle = i * 2.4; const distance = (0.1 + i * 0.07) * size; const fx = x + Math.cos(angle) * distance; const fy = y + Math.sin(angle) * distance; const fsize = size * (0.05 + i * 0.012); ctx.beginPath(); ctx.arc(fx, fy, fsize, 0, Math.PI * 2); ctx.fill(); }
     }
 
     function drawCelestialObject(ctx, obj, x, y, size, colors, visibility, game) {
         const type = obj.celestial_type || obj.type; const ts = tileSizeOf(game);
         if (colors.glow && size > ts) { ctx.shadowColor = colors.glow; ctx.shadowBlur = Math.min(size * 0.3, 20); }
-        if (type === 'star') drawStar(ctx, x, y, size, colors);
+        if (drawSprite(ctx, obj, x, y, size, game)) { /* textured celestial body */ }
+        else if (type === 'star' || type === 'sun') drawStar(ctx, x, y, size, colors);
         else if (type === 'planet' || type === 'moon') drawPlanet(ctx, x, y, size, colors, obj.meta);
         else if (type === 'belt') drawAsteroidBelt(ctx, x, y, size, colors);
         else if (type === 'nebula') drawNebula(ctx, x, y, size, colors, game);
@@ -112,5 +172,3 @@
         window.SFRenderers.celestial = { drawCelestialObject };
     }
 })();
-
-

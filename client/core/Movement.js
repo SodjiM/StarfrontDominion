@@ -1,3 +1,4 @@
+import { physicalScale } from '../utils/physical-geometry.js';
 // Movement helpers and calculations
 
 export function calculateMovementPath(startX, startY, endX, endY) {
@@ -36,19 +37,17 @@ export function calculateETA(path, movementSpeed, unit, gameState) {
     return Math.ceil(distance / Math.max(1, effectiveSpeed));
 }
 
-export function getAdjacentTileNear(targetX, targetY, fromX, fromY) {
-    const candidates = [
-        { x: targetX + 1, y: targetY },
-        { x: targetX - 1, y: targetY },
-        { x: targetX, y: targetY + 1 },
-        { x: targetX, y: targetY - 1 },
-    ];
-    candidates.sort((a, b) => {
-        const da = Math.hypot(a.x - fromX, a.y - fromY);
-        const db = Math.hypot(b.x - fromX, b.y - fromY);
-        return da - db;
-    });
+export function getAdjacentTileNear(targetX, targetY, fromX, fromY, game) {
+    const mover=game?.selectedUnit || {type:'ship'};
+    const target=(game?.objects||[]).find(o=>o.x===targetX&&o.y===targetY) || {x:targetX,y:targetY};
+    const candidates=[];
+    const r=Math.ceil(physicalScale.extent(target)+physicalScale.extent(mover))+2;
+    for(let dx=-r;dx<=r;dx++)for(let dy=-r;dy<=r;dy++) {
+        const p={x:targetX+dx,y:targetY+dy},body={...mover,...p};
+        if(!physicalScale.inBounds(body)||!physicalScale.adjacent(body,target))continue;
+        if((game?.objects||[]).some(o=>o.id!==mover.id&&physicalScale.isSolid(o)&&physicalScale.overlaps(body,o)))continue;
+        candidates.push(p);
+    }
+    candidates.sort((a,b)=>Math.hypot(a.x-fromX,a.y-fromY)-Math.hypot(b.x-fromX,b.y-fromY));
     return candidates[0] || null;
 }
-
-

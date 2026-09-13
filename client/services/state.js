@@ -9,6 +9,8 @@ export async function loadGameState(game) {
         const preserveCamera = { x: game.camera.x, y: game.camera.y };
         game.gameState = normalizeGameState(data);
         await game.updateUI();
+        const notice=game.gameState.objects?.find(o=>o.owner_id===game.userId&&o.meta?.scaleMigrationNotice)?.meta?.scaleMigrationNotice;
+        if(notice&&!game._scaleMigrationNotified){game._scaleMigrationNotified=true;game.addLogEntry(notice,'warning');}
         game.camera.x = preserveCamera.x; game.camera.y = preserveCamera.y;
         game.render();
         return game.gameState;

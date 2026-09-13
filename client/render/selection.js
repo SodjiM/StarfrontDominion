@@ -1,15 +1,24 @@
+import { physicalScale } from '../utils/physical-geometry.js';
+import { objectDisplaySize } from './object-scale.js';
 // Selection overlay rendering
 
 export function drawSelection(game, ctx, centerX, centerY) {
     try {
         const unit = game.selectedUnit;
         if (!unit) return;
-        const screenX = centerX + (unit.x - game.camera.x) * game.tileSize;
-        const screenY = centerY + (unit.y - game.camera.y) * game.tileSize;
-        const size = game.tileSize;
+        const center = physicalScale.shape(unit);
+        const screenX = centerX + (center.x - game.camera.x) * game.tileSize;
+        const screenY = centerY + (center.y - game.camera.y) * game.tileSize;
+        const size = objectDisplaySize(unit, game.tileSize);
 
+        // Exact occupied footprint, separate from the readability-sized sprite.
+        if (!physicalScale.isDisk(unit)) {
+            const width=physicalScale.width(unit)*game.tileSize;
+            ctx.save(); ctx.strokeStyle='rgba(255,193,7,0.35)'; ctx.lineWidth=1;
+            ctx.strokeRect(screenX-width/2,screenY-width/2,width,width); ctx.restore();
+        }
         // Animated selection ring
-        const time = Date.now() / 1000;
+        const time = game.reducedMotion ? 0 : (game.animationTime || 0);
         const alpha = 0.5 + 0.3 * Math.sin(time * 3);
         ctx.strokeStyle = `rgba(255, 193, 7, ${alpha})`;
         ctx.lineWidth = 3;

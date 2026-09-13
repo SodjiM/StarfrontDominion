@@ -1,3 +1,4 @@
+import { physicalScale } from '../utils/physical-geometry.js';
 // Warp Controller - ESM version (no globals)
 
 export function showWarpConfirmation(client, target) {
@@ -177,7 +178,7 @@ export function isAdjacentToInterstellarGate(client, ship) {
             if (obj.type !== 'interstellar-gate') return false;
             const dx = Math.abs(obj.x - ship.x);
             const dy = Math.abs(obj.y - ship.y);
-            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+            return physicalScale.adjacent(obj,ship);
         });
         return adjacentGates.length > 0;
 }
@@ -188,7 +189,7 @@ export function getAdjacentInterstellarGates(client, ship) {
             if (obj.type !== 'interstellar-gate') return false;
             const dx = Math.abs(obj.x - ship.x);
             const dy = Math.abs(obj.y - ship.y);
-            return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+            return physicalScale.adjacent(obj,ship);
         });
 }
 

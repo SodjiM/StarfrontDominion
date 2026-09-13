@@ -159,7 +159,6 @@ class LaneGraphService {
 	async planDijkstraRoutes(sectorId, from, to, opts={}) {
 		const ctx = await this.loadSectorLaneContext(sectorId);
 		const { edges, runtimeByEdge, healthByRegion, tapsByEdge, gates } = ctx;
-		if (!edges.length) return [];
 		const fromP = { x:Number(from.x), y:Number(from.y) };
 		const toP = { x:Number(to.x), y:Number(to.y) };
 
@@ -450,7 +449,7 @@ class LaneGraphService {
 		const eta = Math.ceil(dist.get(DST));
 		breakdown.total = dist.get(DST);
 		
-		return [{ eta, rho: rhoMax, risk: (rhoMax>1.5?3:(rhoMax>1?2:1)), breakdown, legs: filtered }];
+		return [{ mode: filtered.length ? 'lane' : 'impulse', eta, rho: rhoMax, risk: (rhoMax>1.5?3:(rhoMax>1?2:1)), breakdown, legs: filtered }];
 	}
 
 	// Helper to interpolate world point at arclength s on polyline

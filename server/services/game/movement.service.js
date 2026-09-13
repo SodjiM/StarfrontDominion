@@ -1,3 +1,5 @@
+const scale = require('../../../client/utils/physical-scale');
+const {placeNear} = require('../world/physical-placement');
 const db = require('../../db');
 
 class MovementService {
@@ -26,7 +28,7 @@ class MovementService {
         const destinationSectorId = gateMeta.destinationSectorId;
         if (!destinationSectorId) return { success: false, httpStatus: 400, error: 'Gate has no valid destination' };
         const dx = Math.abs(ship.x - gate.x); const dy = Math.abs(ship.y - gate.y);
-        if (dx > 1 || dy > 1) return { success: false, httpStatus: 400, error: 'Ship must be adjacent to the gate to travel' };
+        if (!scale.adjacent(ship,gate)) return { success: false, httpStatus: 400, error: 'Ship must be adjacent to the gate to travel' };
 
         const pairedGate = await new Promise((resolve, reject) => {
             db.get(
@@ -41,9 +43,8 @@ class MovementService {
         const sector=await navigation.get('SELECT game_id FROM sectors WHERE id=?',[ship.sector_id]);
         const dest=await navigation.get('SELECT game_id FROM sectors WHERE id=?',[destinationSectorId]);
         if(!dest || dest.game_id!==sector.game_id)return {success:false,httpStatus:400,error:'Invalid destination game'};
-        const objects=await navigation.all('SELECT id,type,x,y,radius FROM sector_objects WHERE sector_id=?',[destinationSectorId]);
-        const blocked=require('../../utils/navigation').occupancy(objects,ship.id);
-        let landing;for(const [dx,dy] of [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]){const p={x:pairedGate.x+dx,y:pairedGate.y+dy};if(!blocked(p)){landing=p;break;}}
+        let landing;
+        try { landing=await placeNear(db,destinationSectorId,ship,pairedGate,{maxRadius:20}); } catch {}
         if(!landing)return {success:false,httpStatus:400,error:'Destination gate blocked'};
         await navigation.cancel(shipId);
         const {x:newX,y:newY}=landing;

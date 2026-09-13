@@ -1,3 +1,4 @@
+const nav=require('../../utils/navigation');
 const {NavigationService}=require('./navigation.service');
 const {geometry,pointAt,advance,validPoint}=require('../../utils/navigation');
 class LaneTravelService extends NavigationService {
@@ -74,6 +75,20 @@ class LaneTravelService extends NavigationService {
    const congestion=rho<=1?1:rho<=1.5?0.8:rho<=2?0.6:0.4;
    const stats=JSON.parse(ship.meta||'{}'),speed=100*congestion*Math.max(0.1,Number(stats.warpSpeedMultiplier||stats.warpSpeed)||1);
    const progress=advance(transit.progress*edge.geom.total,leg.sEnd,speed),p=pointAt(edge.geom,progress.position);
+   const obstacles=await this.sectorObjects(ship.sector_id);
+   const blocked=nav.occupancy(obstacles,ship.id,ship);
+   const startS=transit.progress*edge.geom.total, direction=Math.sign(progress.position-startS);
+   let prior={x:ship.x,y:ship.y},clear=true;
+   for(let traveled=0;traveled<=progress.used+1;traveled++) {
+    const point=pointAt(edge.geom,startS+direction*Math.min(progress.used,traveled));
+    const sweep=require('../../utils/path').computePathBresenham(prior.x,prior.y,point.x,point.y);
+    if(blocked(point)||sweep.slice(1).some((q,i)=>!nav.canStep(sweep[i],q,blocked))){clear=false;break;}
+    prior=point;
+   }
+   if(!clear) {
+    meta.stage='blocked';meta.error='Lane footprint obstructed; retrying next turn';
+    await this.run('UPDATE lane_itineraries SET meta=? WHERE id=?',[JSON.stringify(meta),row.id]);continue;
+   }
    await this.run('UPDATE sector_objects SET x=?,y=?,updated_at=? WHERE id=?',[p.x,p.y,new Date().toISOString(),ship.id]);
    await this.run('UPDATE lane_transits SET progress=? WHERE id=?',[progress.position/edge.geom.total,transit.id]);
    meta.stage='transit';delete meta.error;

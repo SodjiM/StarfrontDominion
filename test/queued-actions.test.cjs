@@ -13,6 +13,8 @@ let sectorId;
 let ownerId;
 
 async function createShip(meta = {}) {
+    // Each scenario starts in clear space; prior scenario ships retain their history.
+    await run('UPDATE sector_objects SET x=1000+id*20,y=1000 WHERE sector_id=?',[sectorId]);
     return (await run(
         "INSERT INTO sector_objects(sector_id,type,x,y,owner_id,meta) VALUES(?,'ship',10,10,?,?)",
         [sectorId, ownerId, JSON.stringify({ blueprintId: 'explorer', movementSpeed: 4, warpSpeed: 3, harvestRate: 1, abilities: ['strike_vector', 'dual_light_coilguns'], ...meta })]

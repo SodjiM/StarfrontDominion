@@ -1,3 +1,4 @@
+const physicalScale = require('../../../client/utils/physical-scale');
 const { CargoManager } = require('./cargo-manager');
 const { computePathBresenham } = require('../../utils/path');
 
@@ -143,7 +144,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
         const {HarvestingManager}=require('../world/harvesting-manager');
         const ships = await new Promise((resolve) => {
             db.all(
-                `SELECT so.id as ship_id, so.sector_id, so.x, so.y
+                `SELECT so.id as ship_id, so.sector_id, so.x, so.y, so.meta, so.type
                  FROM sector_objects so
                  JOIN sectors s ON s.id = so.sector_id
                  WHERE s.game_id = ? AND so.type = 'ship'`,
@@ -223,7 +224,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                     const ability = Abilities[abilityKey];
                     // If target object anchor is specified, validate presence/sector and simple range
                     if (targetId) {
-                        const t = await new Promise((resolve)=>db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [targetId], (e,r)=>resolve(r||null)));
+                        const t = await new Promise((resolve)=>db.get('SELECT * FROM sector_objects WHERE id = ?', [targetId], (e,r)=>resolve(r||null)));
                         if (!t || Number(t.sector_id) !== Number(ship.sector_id)) {
                             await new Promise((resolve)=>db.run('UPDATE queued_orders SET status = ? WHERE id = ?', ['skipped', q.id], ()=>resolve()));
                             // Cascade cancel remaining queued items
@@ -233,7 +234,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                         if (ability && ability.range) {
                             const dx = Number(t.x) - Number(ship.x);
                             const dy = Number(t.y) - Number(ship.y);
-                            const dist = Math.hypot(dx, dy);
+                            const dist = physicalScale.gap({...ship,type:'ship'},t);
                             if (dist > Number(ability.range)) {
                                 // Not in range yet; leave queued to try next turn (auto-approach can be added later)
                                 continue;

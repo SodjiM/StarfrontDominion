@@ -3,6 +3,7 @@ const { z } = require('zod');
 const db = require('../db');
 const { CargoManager } = require('../services/game/cargo-manager');
 const { BuildService } = require('../services/game/build.service');
+const { placeNear } = require('../services/world/physical-placement');
 const router = express.Router();
 require('../middleware/auth').protectRouter(router);
 
@@ -76,13 +77,17 @@ router.post('/build-basic-explorer', (req, res) => {
             const stats = await computePilotStats(gameId, userId, currentTurn);
             if ((stats.available || 0) < 1) return res.status(400).json({ error: 'No available pilots to command a new ship' });
         } catch {}
+        let spawnPoint;
+        try {
+            spawnPoint = await placeNear(db, station.sector_id, { type: 'ship', meta: { shipType: 'explorer' } }, station, { maxRadius: 20 });
+        } catch { return res.status(400).json({ error: 'No clear launch area beside this station' }); }
         CargoManager.removeResourceFromCargo(stationId, 'rock', 1, false)
             .then(result => {
                 if (!result.success) return res.status(400).json({ error: 'Insufficient resources' });
                 const shipMetaObj = { name: 'Explorer', hp: 50, maxHp: 50, scanRange: 50, movementSpeed: 4, cargoCapacity: 10, abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience','prospector_microlasers'], shipType: 'explorer', pilotCost: 1 };
                 const shipMeta = JSON.stringify(shipMetaObj);
-                const spawnX = station.x + (Math.random() < 0.5 ? -1 : 1);
-                const spawnY = station.y + (Math.random() < 0.5 ? -1 : 1);
+                const spawnX = spawnPoint.x;
+                const spawnY = spawnPoint.y;
                 db.run(
                     'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],

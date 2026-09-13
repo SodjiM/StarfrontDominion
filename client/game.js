@@ -15,6 +15,7 @@ import { renderUnitDetails as uiRenderUnitDetails } from './ui/UnitDetails.js';
 import { connectSocket as netConnectSocket } from './net/socket.js';
 import { fetchSectorTrails as trailsFetchSectorTrails, handleLingeringTrailsOnTurn, applyTurnTrails } from './features/Trails.js';
 import { renderObjects as renderMapObjects } from './render/objects.js';
+import { startAmbientLoop } from './render/ambient-loop.js';
 import { drawSelection as renderSelectionOverlay } from './render/selection.js';
 import { updateTopbar as uiUpdateTopbar, updateSectorOverviewTitle as uiUpdateSectorOverviewTitle } from './ui/topbar.js';
 import { computeRemainingTurns as utilComputeRemainingTurns } from './utils/turns.js';
@@ -106,6 +107,7 @@ export class GameClient {
         await this.loadGameState();
         this.setupEventListeners();
         this.bindUIControls();
+        startAmbientLoop(this);
         console.log(`🎮 Game ${gameId} initialized for user ${this.userId}`);
     }
 
@@ -364,7 +366,7 @@ export class GameClient {
     getEffectiveMovementSpeed(unit) { return coreGetEffectiveMovementSpeed(unit); }
     getEffectiveScanRange(unit) { return coreGetEffectiveScanRange(unit); }
 
-    render() {
+    render({ ambient = false } = {}) {
         if (!this.canvas || !this.objects) return;
         const ctx = this.ctx; const canvas = this.canvas;
         // Background
@@ -452,7 +454,7 @@ export class GameClient {
         renderSelectionOverlay(this, ctx, canvas.width/2, canvas.height/2);
         if (this.fogEnabled) this.fogOffscreen = SFRenderers.fog.drawFogOfWar(ctx, canvas, this.objects, this.userId, this.camera, this.tileSize, this.fogOffscreen);
         // Minimap
-        if (this.miniCanvas) {
+        if (this.miniCanvas && !ambient) {
             this.miniCanvas._mainWidth = canvas.width;
             this.miniCanvas._mainHeight = canvas.height;
             SFMinimap.renderer.renderMiniMap(this.miniCtx, this.miniCanvas, this.objects, this.userId, this.camera, this.tileSize, this.gameState, this.__factsCache?.facts?.orbitalRings || []);
@@ -604,7 +606,7 @@ export class GameClient {
 
     // Helpers used by input/context handlers and warp/minimap
     isCelestialObject(obj) { return utilIsCelestialObject(obj); }
-    getAdjacentTileNear(targetX, targetY, fromX, fromY) { return coreGetAdjacentTileNear(targetX, targetY, fromX, fromY); }
+    getAdjacentTileNear(targetX, targetY, fromX, fromY) { return coreGetAdjacentTileNear(targetX, targetY, fromX, fromY, this); }
     handleMoveCommand(x, y) { return MoveCtl.handleMoveCommand(this, x, y); }
 
     // Warp

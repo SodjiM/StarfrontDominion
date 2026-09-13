@@ -47,6 +47,6 @@ test('asteroid-heavy resources include dense hubs and diffuse pockets', async ()
 
 test('generation manifest records orbital geometry and version', async () => {
     const rows = await all('SELECT generator_version,manifest_json FROM generation_manifests WHERE sector_id = ?', [sectorId]);
-    assert.equal(rows[0].generator_version, 'orbital-scaffold-v2');
+    assert.equal(rows[0].generator_version, 'physical-scale-v1');
     assert.equal(JSON.parse(rows[0].manifest_json).orbitalRings.length, (await all('SELECT 1 FROM orbital_rings WHERE sector_id = ?', [sectorId])).length);
 });

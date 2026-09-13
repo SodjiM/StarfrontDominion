@@ -1,3 +1,6 @@
+const { placeNear, query, physicalObjects } = require('../world/physical-placement');
+const nav = require('../../utils/navigation');
+const scale = nav.scale;
 const db = require('../../db');
 const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../registry/blueprints');
 const { Abilities } = require('../registry/abilities');
@@ -82,14 +85,15 @@ class BuildService {
             }
             const candidate = celestialObjects.find(o => {
                 const dx = ship.x - o.x; const dy = ship.y - o.y; const dist = Math.sqrt(dx*dx + dy*dy);
-                return dist <= ((o.radius || 1) + 1);
+                return scale.gap(ship,o) <= 30;
             });
-            if (!candidate) return { success: false, httpStatus: 400, error: `Must be adjacent to a ${requiredType} to deploy this station` };
+            if (!candidate) return { success: false, httpStatus: 400, error: `Must be within 30 tiles of a ${requiredType} surface to deploy this station` };
             const exists = await new Promise((resolve, reject) => db.get(`SELECT id FROM sector_objects WHERE type = 'station' AND parent_object_id = ? LIMIT 1`, [candidate.id], (e, r) => e ? reject(e) : resolve(!!r)));
             if (exists) return { success: false, httpStatus: 400, error: 'This celestial object already has a station anchored' };
-            let vx = ship.x - candidate.x; let vy = ship.y - candidate.y; if (vx === 0 && vy === 0) vx = 1;
-            const len = Math.sqrt(vx*vx + vy*vy) || 1; const ring = (candidate.radius || 1) + 1;
-            const deployX = Math.round(candidate.x + vx/len * ring); const deployY = Math.round(candidate.y + vy/len * ring);
+            let placement;
+            try { placement=await placeNear(db,ship.sector_id,{type:'station',meta:{stationClass:structureType}},candidate,{anchored:true,maxRadius:40}); }
+            catch { return {success:false,httpStatus:400,error:'No clear space for station footprint near this body'}; }
+            const {x:deployX,y:deployY}=placement;
             const removed = await CargoManager.removeResourceFromCargo(shipId, structureType, 1, true);
             if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Structure not found in ship cargo' };
             const stationMeta = JSON.stringify({
@@ -110,8 +114,10 @@ class BuildService {
         }
 
         // Generic non-anchored structure
-        const deployX = ship.x + (Math.random() < 0.5 ? -1 : 1);
-        const deployY = ship.y + (Math.random() < 0.5 ? -1 : 1);
+        let placement;
+        try { placement=await placeNear(db,ship.sector_id,{type:'storage-structure',meta:{structureType}},ship,{maxRadius:10}); }
+        catch { return {success:false,httpStatus:400,error:'No clear space for deployable footprint'}; }
+        const {x:deployX,y:deployY}=placement;
         const structureMeta = JSON.stringify({
             name: `${structureTemplate.name} ${Math.floor(Math.random() * 1000)}`,
             structureType: structureType,
@@ -157,12 +163,18 @@ class BuildService {
         const exists = await new Promise((resolve, reject) => db.get(`SELECT 1 FROM sector_objects WHERE sector_id = ? AND type='interstellar-gate' AND json_extract(meta,'$.destinationSectorId') = ? LIMIT 1`, [ship.sector_id, destinationSectorId], (e, r) => e ? reject(e) : resolve(!!r)));
         if (exists) return { success: false, httpStatus: 400, error: 'connection_already_exists' };
 
+        let originPoint,destinationPoint;
+        try {
+            originPoint=await placeNear(db,ship.sector_id,{type:'interstellar-gate'},ship,{maxRadius:20});
+            const destinationObjects=await physicalObjects(db,destinationSectorId);
+            destinationPoint=nav.findPlacement(destinationObjects,{type:'interstellar-gate'},{x:2500,y:2500},{maxRadius:600});
+            if(!destinationPoint)throw new Error('blocked');
+        } catch { return {success:false,httpStatus:400,error:'No clear space for both gate footprints'}; }
         const removed = await CargoManager.removeResourceFromCargo(shipId, 'interstellar-gate', 1, true);
         if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Interstellar gate not found in ship cargo' };
 
         // Create origin gate
-        const originGateX = ship.x + (Math.random() < 0.5 ? -1 : 1);
-        const originGateY = ship.y + (Math.random() < 0.5 ? -1 : 1);
+        const {x:originGateX,y:originGateY}=originPoint;
         const originGateMeta = JSON.stringify({
             name: `Interstellar Gate to ${destinationSector.name}`,
             structureType: 'interstellar-gate', hp: 200, maxHp: 200, publicAccess: true,
@@ -173,8 +185,7 @@ class BuildService {
         });
 
         // Create destination gate near center
-        const destGateX = 2500 + Math.floor(Math.random() * 100) - 50;
-        const destGateY = 2500 + Math.floor(Math.random() * 100) - 50;
+        const {x:destGateX,y:destGateY}=destinationPoint;
         const destGateMeta = JSON.stringify({
             name: `Interstellar Gate to ${ship.sector_id === destinationSector.id ? 'Origin' : 'Sector ' + ship.sector_id}`,
             structureType: 'interstellar-gate', hp: 200, maxHp: 200, publicAccess: true,
@@ -218,6 +229,10 @@ class BuildService {
         const reqs = computeAllRequirements(blueprint);
         const resourceMap = { ...reqs.core, ...reqs.specialized };
 
+        let spawnPoint;
+        try { spawnPoint=await placeNear(db,station.sector_id,{type:'ship',meta:{...blueprint,blueprintId:blueprint.id}},station,{maxRadius:20}); }
+        catch { return {success:false,httpStatus:400,error:'No clear launch space for this ship footprint'}; }
+
         // Consume resources unless free build in dev
         const devMode = process.env.SF_DEV_MODE === '1' || process.env.NODE_ENV === 'development';
         const allowFree = !!freeBuild && devMode;
@@ -240,8 +255,7 @@ class BuildService {
         shipMetaObj.abilities = shipMetaObj.abilities.filter(k => !!Abilities[k]);
         const shipMeta = JSON.stringify(shipMetaObj);
 
-        const spawnX = station.x + (Math.random() < 0.5 ? -1 : 1);
-        const spawnY = station.y + (Math.random() < 0.5 ? -1 : 1);
+        const {x:spawnX,y:spawnY}=spawnPoint;
         const shipId = await new Promise((resolve, reject) => {
             db.run(
                 'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',

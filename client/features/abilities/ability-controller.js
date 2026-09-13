@@ -1,3 +1,4 @@
+import { physicalScale } from '../../utils/physical-geometry.js';
 // Abilities Controller - extracts ability logic from GameClient
 // Exposes a global namespace: window.SFAbilities
 
@@ -26,7 +27,8 @@
         const dist = Math.hypot(dx, dy);
         // Default rule: within range and destination tile unoccupied
         const inRange = !def.range || dist <= def.range;
-        const free = !client.isTileOccupied(worldX, worldY);
+        const destination = { ...unit, x: worldX, y: worldY };
+        const free = physicalScale.inBounds(destination) && !(client.objects || []).some(o => o.id !== unit.id && physicalScale.isSolid(o) && physicalScale.overlaps(destination, o));
         const valid = inRange && free;
         return { x: worldX, y: worldY, valid, inRange, free };
     }

@@ -391,9 +391,7 @@ class CargoManager {
      * @returns {boolean} True if objects are adjacent
      */
     static areObjectsAdjacent(object1, object2) {
-        const dx = Math.abs(object1.x - object2.x);
-        const dy = Math.abs(object1.y - object2.y);
-        return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0); // Adjacent but not same position
+        return require('../../../client/utils/physical-scale').adjacent(object1,object2);
     }
     
     /**

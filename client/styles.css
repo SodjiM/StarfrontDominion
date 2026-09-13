@@ -83,6 +83,237 @@ body {
   .encyclopedia-body { grid-template-columns: 1fr; }
 }
 
+/* Strategic map: full-chart navigation surface with a collapsible flight rail. */
+.map-modal {
+  width: calc(100vw - 16px) !important;
+  max-width: 1800px !important;
+  height: calc(100dvh - 16px) !important;
+  max-height: calc(100dvh - 16px) !important;
+}
+.map-modal .game-modal-header { min-height: 50px; padding: .65rem 1rem; }
+.map-modal .game-modal-content { background: #050a14; }
+.map-tabs { gap: 2px; min-height: 38px; padding: 0 12px; background: #09111f; }
+.map-tab {
+  align-self: stretch;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #8095ad;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.map-tab:hover { background: rgba(255,255,255,.035); }
+.map-tab.active { border-bottom-color: var(--primary); background: rgba(100,181,246,.07); color: #bfe2ff; }
+#solar-system-tab .map-main { position: relative; display: block; padding: 8px; }
+#solar-system-tab .map-pane, #solar-system-tab .map-container { width: 100%; height: 100%; }
+#solar-system-tab .map-container { border-radius: 5px; border-color: rgba(100,181,246,.28); }
+.full-map-canvas { cursor: grab; touch-action: none; }
+.full-map-canvas.is-planning { cursor: crosshair; }
+.full-map-canvas.is-panning { cursor: grabbing; }
+.map-overlay-controls { right: auto; max-width: calc(100% - 28px); gap: 4px; }
+.map-overlay-btn { min-width: 34px; height: 30px; border-radius: 5px; background: rgba(5,12,24,.9); }
+.map-overlay-btn:focus-visible, .planner-rail-tab:focus-visible, .planner-close:focus-visible,
+.custom-destination-btn:focus-visible, .poi-filter:focus-visible, .poi-item:focus-visible,
+.poi-group-header:focus-visible, .route-select-btn:focus-visible, .route-queue-btn:focus-visible {
+  outline: 2px solid #9ed1ff;
+  outline-offset: 2px;
+}
+.map-control-divider { width: 1px; height: 20px; align-self: center; margin: 0 3px; background: rgba(255,255,255,.16); }
+.map-zoom-readout { min-width: 48px; font-variant-numeric: tabular-nums; }
+.map-icon-btn { font-size: 1rem; }
+.system-popover {
+  position: absolute;
+  z-index: 12;
+  top: 48px;
+  left: 9px;
+  width: min(330px, calc(100% - 18px));
+  padding: 13px;
+  border: 1px solid rgba(100,181,246,.35);
+  border-radius: 5px;
+  background: rgba(7,15,28,.96);
+  box-shadow: 0 16px 40px rgba(0,0,0,.38);
+  color: var(--text);
+}
+.system-popover[hidden], .map-mode-hint[hidden], .poi-search-clear[hidden] { display: none !important; }
+.map-mode-hint { left: 50%; bottom: 16px; z-index: 12; transform: translateX(-50%); border: 1px solid rgba(100,181,246,.35); border-radius: 4px; white-space: nowrap; }
+.planner-rail-tab {
+  position: absolute;
+  z-index: 14;
+  top: 50%;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 178px;
+  padding: 12px 8px;
+  border: 1px solid rgba(100,181,246,.45);
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  background: rgba(8,19,35,.96);
+  color: #bfe2ff;
+  font: 700 .68rem/1.2 inherit;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  transform: translateY(-50%);
+  transition: opacity .14s ease, transform .14s ease;
+}
+.planner-rail-tab:hover { background: #102844; color: #fff; }
+.planner-rail-tab.is-hidden { opacity: 0; pointer-events: none; transform: translate(10px, -50%); }
+#solar-system-tab .map-sidebar {
+  position: absolute;
+  z-index: 15;
+  inset: 0 0 0 auto;
+  display: flex;
+  width: min(390px, calc(100% - 52px));
+  gap: 0;
+  overflow: hidden;
+  border-left: 1px solid rgba(100,181,246,.32);
+  background: rgba(7,15,28,.985);
+  box-shadow: -18px 0 48px rgba(0,0,0,.34);
+  transform: translateX(0);
+  transition: transform .18s ease, visibility .18s;
+}
+#solar-system-tab .map-sidebar.is-collapsed { visibility: hidden; pointer-events: none; transform: translateX(calc(100% + 12px)); }
+.planner-drawer-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 57px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+.planner-drawer-header h3 { margin: 1px 0 0; color: #edf7ff; font-size: .98rem; letter-spacing: -.01em; }
+.planner-kicker, .browser-heading, .routes-header { color: #7894b1; font-size: .6rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+.planner-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 4px;
+  background: transparent;
+  color: #9fb2c7;
+  font-size: 1.15rem;
+}
+.planner-close:hover { border-color: rgba(100,181,246,.45); color: #fff; }
+.planner-status { flex: 0 0 auto; padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,.08); color: #a9bdd0; font-size: .72rem; line-height: 1.35; }
+.planner-status::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.planner-status.is-danger { color: #ff7e7b; background: rgba(239,83,80,.08); }
+.planner-status.is-warning { color: #edc76a; }
+.planner-status.is-ready, .planner-status.is-success { color: #83d7a0; }
+.planner-destination { flex: 0 0 auto; min-height: 36px; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.planner-destination #destInfo { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.planner-destination #destInfo[hidden] { display: none; }
+.dest-name { overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.dest-coords { flex: 0 0 auto; font: .66rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dest-empty { padding: 0; text-align: left; font-size: .7rem; }
+#solar-system-tab .sidebar-zone-routes {
+  flex: 0 1 auto;
+  max-height: 294px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  border-radius: 0;
+  background: transparent;
+}
+.routes-header { margin-bottom: 8px; }
+.routes-empty { padding: 12px 4px; text-align: left; line-height: 1.4; }
+.route-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; margin: 0 0 6px; padding: 0; border-radius: 5px; cursor: default; }
+.route-card.selected { box-shadow: inset 2px 0 #64b5f6; }
+.route-select-btn {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.route-info, .route-info > span { display: block; }
+.route-stats { flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 3px; }
+.route-queue-btn {
+  align-self: stretch;
+  min-width: 67px;
+  padding: 5px 7px;
+  border: 0;
+  border-left: 1px solid rgba(100,181,246,.22);
+  border-radius: 0 4px 4px 0;
+  background: rgba(100,181,246,.1);
+  color: #a9d8ff;
+  font: 700 .61rem/1.2 inherit;
+}
+.route-queue-btn:hover { background: rgba(100,181,246,.2); color: #fff; }
+.route-queue-btn:disabled { cursor: wait; opacity: .68; }
+.custom-destination-btn {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 39px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  background: rgba(100,181,246,.045);
+  color: #a9d8ff;
+  font: 700 .7rem/1.2 inherit;
+  text-align: left;
+}
+.custom-destination-btn:hover, .custom-destination-btn.active { background: rgba(100,181,246,.14); color: #fff; }
+#solar-system-tab .sidebar-zone-browser { border: 0; border-radius: 0; background: transparent; }
+#solar-system-tab .browser-tabs { padding: 10px 12px 7px; border: 0; }
+#solar-system-tab .browser-content { padding: 0 12px 12px; }
+.poi-search-wrap { position: relative; }
+.poi-search { min-height: 34px; margin: 0 0 8px; padding-right: 32px; border-radius: 4px; }
+.poi-search-clear { position: absolute; top: 3px; right: 3px; width: 28px; height: 28px; border: 0; background: transparent; color: #8ea3b9; }
+.poi-filters { gap: 4px; margin-bottom: 8px; }
+.poi-filter { padding: 4px 8px; border-radius: 4px; }
+.poi-group { margin-bottom: 4px; }
+.poi-group-header { width: 100%; margin: 0; padding: 7px 8px; border: 0; border-radius: 3px; color: #9db0c3; font: 700 .7rem/1.2 inherit; text-align: left; }
+.poi-item { width: 100%; padding: 7px 8px 7px 22px; border-radius: 3px; background: transparent; text-align: left; }
+.poi-item > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#galaxy-tab .map-main { grid-template-columns: minmax(0,1fr) 320px; }
+#galaxy-tab .map-sidebar { position: static; width: auto; transform: none; }
+.map-footer { display: none !important; }
+
+@media (max-width: 768px) {
+  .map-modal { width: calc(100vw - 8px) !important; height: calc(100dvh - 8px) !important; max-height: calc(100dvh - 8px) !important; }
+  .map-modal .game-modal-header { min-height: 44px; padding: .5rem .7rem; }
+  .map-tabs { min-height: 34px; padding: 0 7px; }
+  .map-tab { padding: 0 10px; font-size: .67rem; }
+  #solar-system-tab .map-main { grid-template-rows: none; padding: 4px; overflow: hidden; }
+  .map-overlay-controls { top: 6px; left: 6px; max-width: calc(100% - 12px); }
+  .map-overlay-btn { height: 28px; min-width: 30px; padding: 3px 6px; font-size: .62rem; }
+  .map-control-divider { margin: 0; }
+  .map-mode-hint { bottom: 48px; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
+  .planner-rail-tab { top: auto; right: 8px; bottom: 8px; min-height: 0; padding: 9px 11px; border: 1px solid rgba(100,181,246,.45); border-radius: 5px; writing-mode: horizontal-tb; transform: none; }
+  .planner-rail-tab.is-hidden { transform: translateY(8px); }
+  #solar-system-tab .map-sidebar {
+    inset: auto 0 0 0;
+    width: 100%;
+    height: min(62%, 520px);
+    border-top: 1px solid rgba(100,181,246,.36);
+    border-left: 0;
+    box-shadow: 0 -18px 48px rgba(0,0,0,.42);
+    transform: translateY(0);
+  }
+  #solar-system-tab .map-sidebar.is-collapsed { transform: translateY(calc(100% + 12px)); }
+  .planner-drawer-header { min-height: 48px; }
+  #solar-system-tab .sidebar-zone-routes { max-height: 168px; }
+  #galaxy-tab .map-main { grid-template-columns: 1fr; grid-template-rows: minmax(260px,1fr) minmax(180px,.55fr); overflow: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #solar-system-tab .map-sidebar, .planner-rail-tab { transition: none; }
+}
+
 /* Utility controls share one quiet toolbar across desktop and mobile. The map
    keeps its canvas unobstructed; zoom remains gesture/scroll driven while the
    minimap, strategic map, encyclopedia, settings, and quit actions stay easy
@@ -2464,4 +2695,78 @@ button.game-item { font: inherit; }
   .map-footer { grid-template-columns: 1fr; gap: .45rem; }
   .footer-actions { justify-content: stretch; }
   .footer-actions > * { flex: 1; }
+}
+
+/* Final strategic-map authority. Kept after legacy modal rules during migration. */
+.game-modal-container.map-modal { width: calc(100vw - 16px) !important; max-width: 1800px !important; height: calc(100dvh - 16px) !important; max-height: calc(100dvh - 16px) !important; }
+.map-modal .map-tab-content { padding: 0; }
+.map-modal .full-map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.map-modal .map-tab { flex: 0 0 auto; }
+.map-modal .map-tabs { padding: 0 12px; }
+.map-modal .route-select-btn { padding: 6px; }
+.map-modal .route-queue-btn { font-family: inherit; font-size: .65rem; font-weight: 700; }
+.map-modal .custom-destination-btn, .map-modal .planner-rail-tab { font-family: inherit; font-size: .72rem; font-weight: 700; }
+.map-modal .route-breakdown { font-size: .6rem; }
+.map-modal .route-meta { font-size: .65rem; }
+.map-modal .route-stats { gap: 3px; }
+.map-modal .dest-empty, .map-modal .routes-empty { text-align: left; padding: 4px 0; }
+#solar-system-tab .sidebar-zone-browser { min-height: 150px; }
+@media (min-width: 769px) {
+  #solar-system-tab #zoneRoutes { max-height: none; flex: 0 0 auto; overflow: visible; }
+}
+@media (max-width: 768px) {
+  #solar-system-tab #mapPlannerDrawer { height: 72%; }
+  .map-modal .map-overlay-btn { padding: 3px 5px; min-width: 26px; font-size: .6rem; }
+  .map-modal .map-zoom-readout { min-width: 42px; }
+}
+.map-modal { width: calc(100vw - 16px) !important; max-width: 1800px !important; height: calc(100dvh - 16px) !important; max-height: calc(100dvh - 16px) !important; }
+.map-modal .game-modal-header { min-height: 50px; padding: .65rem 1rem; }
+.map-tabs { gap: 2px; min-height: 38px; padding: 0 12px; background: #09111f; }
+.map-tab { align-self: stretch; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: .72rem; }
+.map-tab.active { border-bottom-color: var(--primary); background: rgba(100,181,246,.07); }
+#solar-system-tab .map-main { position: relative; display: block; padding: 8px; overflow: hidden; }
+#solar-system-tab .map-pane, #solar-system-tab .map-container { width: 100%; height: 100%; }
+#solar-system-tab .map-container { border-radius: 5px; }
+#solar-system-tab .map-sidebar { gap: 0; overflow: hidden; }
+#solar-system-tab .sidebar-zone-routes { max-height: 294px; padding: 10px 12px; border: 0; border-bottom: 1px solid rgba(255,255,255,.1); border-radius: 0; }
+#solar-system-tab .route-card { gap: 7px; margin: 0 0 6px; padding: 0; border-radius: 5px; }
+#solar-system-tab .sidebar-zone-browser { border: 0; border-radius: 0; }
+#solar-system-tab .poi-search { min-height: 34px; margin: 0 0 8px; border-radius: 4px; }
+#solar-system-tab .poi-filter, #solar-system-tab .poi-group-header, #solar-system-tab .poi-item { border-radius: 4px; }
+.map-footer { display: none !important; }
+@media (max-width: 768px) {
+  .map-modal { width: calc(100vw - 8px) !important; height: calc(100dvh - 8px) !important; max-height: calc(100dvh - 8px) !important; }
+  #solar-system-tab .map-main { grid-template-rows: none; padding: 4px; overflow: hidden; }
+  #solar-system-tab .map-sidebar { overflow: hidden; }
+  #solar-system-tab .sidebar-zone-routes { max-height: 168px; }
+}
+
+/* The destination planner is a footer control on the system map. Its open
+   state keeps the established right-hand panel footprint, but animates from
+   the bottom so the collapsed control never competes with the map edge. */
+@media (min-width: 769px) {
+  #solar-system-tab .planner-rail-tab {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    width: min(390px, calc(100% - 16px));
+    min-height: 44px;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border: 1px solid rgba(100,181,246,.45);
+    border-bottom: 0;
+    border-radius: 6px 0 0 0;
+    writing-mode: horizontal-tb;
+    transform: none;
+  }
+  #solar-system-tab .planner-rail-tab.is-hidden {
+    transform: translateY(10px);
+  }
+  #solar-system-tab .map-sidebar {
+    inset: 0 0 0 auto;
+    transform: translateY(0);
+  }
+  #solar-system-tab .map-sidebar.is-collapsed {
+    transform: translateY(calc(100% + 12px));
+  }
 }

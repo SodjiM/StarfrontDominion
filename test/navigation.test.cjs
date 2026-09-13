@@ -10,7 +10,7 @@ let game,sector,ship,owner;
 before(async()=>{await db.ready;owner=(await n.run("INSERT INTO users(username,password) VALUES('test','hash')")).lastID;game=(await n.run("INSERT INTO games(name,status) VALUES('test','active')")).lastID;sector=(await n.run("INSERT INTO sectors(game_id,name) VALUES(?,'test')",[game])).lastID;ship=(await n.run("INSERT INTO sector_objects(sector_id,type,x,y,owner_id,meta) VALUES(?,'ship',10,10,?,?)",[sector,owner,JSON.stringify({movementSpeed:4,warpSpeedMultiplier:1})])).lastID;});
 after(()=>new Promise(r=>db.close(r)));
 test('path avoids intermediate obstacles, disallows corner cutting and bounds',()=>{
- const blocked=nav.occupancy([{id:2,x:12,y:10,type:'station'}],1);
+ const blocked=nav.occupancy([{id:2,x:12,y:10,type:'storage-structure'}],1);
  const path=nav.findPath({x:10,y:10},{x:18,y:10},blocked);
  assert(path);assert(path.every(p=>!(p.x===12&&p.y===10)));
  assert(path.slice(1).every((p,i)=>nav.canStep(path[i],p,blocked)));
@@ -23,7 +23,7 @@ test('signed progress and zero endpoint respect the per-turn distance',()=>{
  assert.deepEqual(nav.advance(50,0,100),{position:0,used:50,arrived:true});
 });
 test('server routes movement, retries blocked orders, rejects wrong owners',async()=>{
- await n.run("INSERT INTO sector_objects(sector_id,type,x,y) VALUES(?,'station',12,10)",[sector]);
+ await n.run("INSERT INTO sector_objects(sector_id,type,x,y) VALUES(?,'storage-structure',12,10)",[sector]);
  const result=await n.order(ship,{x:18,y:10},{userId:owner,gameId:game});
  assert(!result.movementPath.some(p=>p.x===12&&p.y===10));
  await assert.rejects(()=>n.order(ship,{x:100,y:100},{userId:owner+1,gameId:game}),/not_owner/);
@@ -31,7 +31,7 @@ test('server routes movement, retries blocked orders, rejects wrong owners',asyn
  await n.run('UPDATE movement_orders SET movement_path=? WHERE object_id=?',['[{"x":10,"y":10},{"x":4000,"y":4000}]',ship]);
  await n.tickMoves(game,1);let pos=await n.get('SELECT x,y FROM sector_objects WHERE id=?',[ship]);
  assert(Math.max(Math.abs(pos.x-10),Math.abs(pos.y-10))<=4);
- const obstacle=(await n.run("INSERT INTO sector_objects(sector_id,type,x,y) VALUES(?,'station',18,10)",[sector])).lastID;
+ const obstacle=(await n.run("INSERT INTO sector_objects(sector_id,type,x,y) VALUES(?,'storage-structure',18,10)",[sector])).lastID;
  const blockedResult=await n.tickMoves(game,2);assert.equal((await n.get('SELECT status FROM movement_orders WHERE object_id=?',[ship])).status,'blocked');
  assert.equal(blockedResult[0].retrying,true);
  assert.equal(JSON.parse((await n.get('SELECT blocked_by FROM movement_orders WHERE object_id=?',[ship])).blocked_by).nextRetryTurn,3);

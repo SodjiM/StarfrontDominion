@@ -1,10 +1,11 @@
+const scale = require('../../../client/utils/physical-scale');
 // Authoritative harvesting manager
 const db = require('../../db');
 
 const HarvestingManager = {
     async getNearbyResourceNodes(shipId, range = 3) {
         const r = Math.max(1, Math.floor(Number(range) || 3));
-        const ship = await new Promise((resolve) => db.get('SELECT sector_id, x, y FROM sector_objects WHERE id = ?', [shipId], (e, r) => resolve(r)));
+        const ship = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [shipId], (e, r) => resolve(r)));
         if (!ship) return [];
         const nodes = await new Promise((resolve) => db.all(
             `SELECT rn.id, rn.sector_id, rn.x, rn.y, rn.resource_amount, rn.is_depleted,
@@ -14,18 +15,18 @@ const HarvestingManager = {
              JOIN resource_types rt ON rn.resource_type_id = rt.id
              WHERE rn.sector_id = ? AND ABS(rn.x - ?) <= ? AND ABS(rn.y - ?) <= ?
              ORDER BY distance ASC, rn.id ASC`,
-            [ship.x, ship.y, ship.sector_id, ship.x, r, ship.y, r],
+            [ship.x, ship.y, ship.sector_id, ship.x, r+scale.width(ship), ship.y, r+scale.width(ship)],
             (e, rows) => resolve(rows || [])
         ));
-        return nodes;
+        return nodes.map(node=>({...node,distance:scale.gap(ship,node,'chebyshev')})).filter(node=>node.distance<=r).sort((a,b)=>a.distance-b.distance||a.id-b.id);
     },
 
     async startHarvesting(shipId, resourceNodeId, currentTurn, baseRate = 1.0) {
-        const ship = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [shipId], (e, r) => resolve(r)));
+        const ship = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [shipId], (e, r) => resolve(r)));
         const node = await new Promise((resolve) => db.get('SELECT id, sector_id, x, y, is_depleted FROM resource_nodes WHERE id = ?', [resourceNodeId], (e, r) => resolve(r)));
         if (!ship || !node || ship.sector_id !== node.sector_id) return { success: false, error: 'Invalid ship/node' };
         if (node.is_depleted) return { success: false, error: 'Node depleted' };
-        const distChebyshev = Math.max(Math.abs(ship.x - node.x), Math.abs(ship.y - node.y));
+        const distChebyshev = scale.gap(ship,node,'chebyshev');
         if (distChebyshev > 3) {
             // Basic safety limit; ability executor should validate range precisely
             return { success: false, error: 'Node out of range' };
@@ -57,6 +58,11 @@ const HarvestingManager = {
             (e, r) => resolve(r || [])
         ));
         for (const t of tasks) {
+            const ship=await new Promise((r,j)=>db.get('SELECT * FROM sector_objects WHERE id=?',[t.ship_id],(e,v)=>e?j(e):r(v)));
+            const node=await new Promise((r,j)=>db.get('SELECT * FROM resource_nodes WHERE id=?',[t.resource_node_id],(e,v)=>e?j(e):r(v)));
+            if(!ship||!node||ship.sector_id!==node.sector_id||scale.gap(ship,node,'chebyshev')>3) {
+                await this.stopHarvesting(t.ship_id); continue;
+            }
             try {
                 // Check for active mining effect for ramp and energy drain
                 const effect = await new Promise((resolve) => db.get(

@@ -1,3 +1,4 @@
+const physicalScale = require('../../../client/utils/physical-scale');
 const { z } = require('zod');
 const { NavigationService } = require('./navigation.service');
 const { LaneTravelService } = require('./lane-travel.service');
@@ -97,12 +98,12 @@ function makeActionRegistry({ db }) {
 
             let target = null;
             if (payload.targetObjectId) {
-                target = await get('SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?', [payload.targetObjectId]);
+                target = await get('SELECT * FROM sector_objects WHERE id = ?', [payload.targetObjectId]);
                 if (!target || Number(target.sector_id) !== Number(ctx.ship.sector_id)) {
                     return { outcome: 'failed', reason: 'target_not_in_sector', cancelFollowing: true };
                 }
                 if (ability.range) {
-                    const distance = Math.hypot(Number(target.x) - Number(ctx.ship.x), Number(target.y) - Number(ctx.ship.y));
+                    const distance = physicalScale.gap(ctx.ship,target);
                     if (distance > Number(ability.range)) return { outcome: 'waiting', reason: 'target_out_of_range', retryTurn: ctx.turnNumber + 1 };
                 }
             }

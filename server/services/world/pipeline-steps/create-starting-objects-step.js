@@ -1,3 +1,4 @@
+const { placeNear } = require('../physical-placement');
 const db = require('../../../db');
 const { BaseStep } = require('./base-step');
 const { SHIP_BLUEPRINTS } = require('../../registry/blueprints');
@@ -15,29 +16,18 @@ class CreateStartingObjectsStep extends BaseStep {
 
         // Determine an anchor position and ensure a station exists for this sector
         let stationRow = await new Promise((resolve) => db.get(
-            'SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND type = "station" AND owner_id = ? LIMIT 1',
+            'SELECT * FROM sector_objects WHERE sector_id = ? AND type = "station" AND owner_id = ? LIMIT 1',
             [sectorId, userId],
             (e, r) => resolve(r || null)
         ));
 
         if (!stationRow) {
             // Pick a planet; if none, place near sun
-            const planet = await new Promise((resolve)=>db.get('SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND celestial_type = "planet" LIMIT 1', [sectorId], (e,r)=>resolve(r||null)));
-            let x = 2500, y = 2500, parentId = null;
-            if (planet) {
-                const rng = context.rngStreams?.startingObjects || Math.random;
-                const angle = randFloat(rng, 0, Math.PI * 2); const dist = 22;
-                x = Math.max(1, Math.min(4999, Math.round(planet.x + Math.cos(angle) * dist)));
-                y = Math.max(1, Math.min(4999, Math.round(planet.y + Math.sin(angle) * dist)));
-                parentId = planet.id;
-            } else {
-                const sun = await new Promise((resolve)=>db.get('SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND celestial_type = "star" LIMIT 1', [sectorId], (e,r)=>resolve(r||{id:null,x:2500,y:2500})));
-                const rng = context.rngStreams?.startingObjects || Math.random;
-                const angle = randFloat(rng, 0, Math.PI * 2); const dist = 28;
-                x = Math.max(1, Math.min(4999, Math.round(sun.x + Math.cos(angle) * dist)));
-                y = Math.max(1, Math.min(4999, Math.round(sun.y + Math.sin(angle) * dist)));
-                parentId = sun.id || null;
-            }
+            const planet = await new Promise((resolve)=>db.get('SELECT * FROM sector_objects WHERE sector_id = ? AND celestial_type = "planet" LIMIT 1', [sectorId], (e,r)=>resolve(r||null)));
+            const host = planet || await new Promise((resolve,reject)=>db.get("SELECT * FROM sector_objects WHERE sector_id=? AND celestial_type='star' LIMIT 1",[sectorId],(e,r)=>e?reject(e):resolve(r)));
+            if(!host)throw new Error('missing_starting_anchor');
+            const {x,y}=await placeNear(db,sectorId,{type:'station',meta:{stationClass:'planet-station'}},host,{anchored:true});
+            const parentId=host.id;
 
             const stationMeta = JSON.stringify({ 
                 name: `${options.player.username || 'Player'} Station`, 
@@ -83,9 +73,8 @@ class CreateStartingObjectsStep extends BaseStep {
                 shipMetaObj.abilities = shipMetaObj.abilities.filter(k => !!Abilities[k]);
 
                 const shipMeta = JSON.stringify(shipMetaObj);
-                const rng = context.rngStreams?.startingObjects || Math.random;
-                const sx = (stationRow?.x ?? 2500) + (rng() < 0.5 ? -1 : 1);
-                const sy = (stationRow?.y ?? 2500) + (rng() < 0.5 ? -1 : 1);
+                const {x:sx,y:sy}=await placeNear(db,sectorId,{type:'ship',meta:shipMetaObj},{...stationRow,type:'station',meta:{stationClass:'planet-station'}});
+
 
                 const shipId = await new Promise((resolve, reject) => db.run(
                     `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, 'ship', ?, ?, ?, ?, ?, ?, ?)`,
@@ -101,7 +90,7 @@ class CreateStartingObjectsStep extends BaseStep {
 
                 console.log(`Created starting ship for user ${userId} at (${sx},${sy}) in sector ${sectorId}`);
             } catch (error) {
-                console.warn('Failed to create starting ship:', error);
+                throw error;
             }
         }
 
