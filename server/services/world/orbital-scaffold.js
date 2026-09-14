@@ -143,6 +143,8 @@ async function persistOrbitalScaffold({ db, sectorId, plan }) {
         const style = celestialTypes.resolve({ ...body, meta });
         if (!style) continue;
         meta.visualType = style.key;
+        meta.gameplayType = style.key;
+        meta.gameplayTags = style.gameplayTags || [];
         meta.scaleVersion = 'physical-scale-v1';
         await new Promise((resolve, reject) => db.run('UPDATE sector_objects SET meta = ? WHERE id = ?',
             [JSON.stringify(meta), body.id], err => err ? reject(err) : resolve()));

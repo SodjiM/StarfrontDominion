@@ -56,3 +56,13 @@ Structure construction now uses server-owned rock prices and ignores client-supp
 ## Browser integration follow-up
 
 Continued the browser check through game start, player setup, ship selection, strategic-map planning, route confirmation, and successive turn locks. Verified actual approach and lane transit positions in the gameplay UI. Fixed missing ship IDs in strategic-map planner requests, preserved POI object IDs, and resolved occupied planet destinations to exterior tiles on the server. Planner errors now display the server's reason. Reduced wormhole-archetype outer planet and belt radii to keep newly generated bodies inside the sector. Existing generated worlds are not converted.
+
+## Economy and repair consistency — September 13
+
+Construction cards now request `/game/structure-costs` and use the server catalog for both labels and affordability. Existing server prices are preserved: sun 8, planet 6, moon 4, storage 1, beacon 2, and gate 5 rock. Submitted prices cannot change charges; the request no longer requires a client price.
+
+Build and deployment operations use savepoints under the existing request mutation lock. Resource consumption composes with the outer savepoint, so insertion or cargo-initialization failures roll back materials and created objects together. Paired gates and the legacy basic-explorer endpoint have the same protection.
+
+Repair-over-time, energy regeneration, and temporary metadata expiry run independently. Repair stacks positive active percentages, caps at maximum HP, and stops after its expiry turn; ships at full energy or with zero regeneration can heal. Database failures in this phase now reach the turn rollback.
+
+Validation: 42 automated tests pass, including real SQLite failure injection and authenticated construction requests. The production build passes. A disposable in-memory browser fixture verified all six prices, affordability with six rock, a successful six-rock planet-station purchase, and disabled construction at zero rock. This was a construction workflow check, not a full-game playthrough. The broad frontend static audit still flags existing UI-contract issues outside this change.

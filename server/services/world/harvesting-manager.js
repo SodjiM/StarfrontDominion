@@ -1,4 +1,5 @@
 const scale = require('../../../client/utils/physical-scale');
+const { CargoManager } = require('../game/cargo-manager');
 // Authoritative harvesting manager
 const db = require('../../db');
 
@@ -47,12 +48,18 @@ const HarvestingManager = {
     },
 
     async processHarvestingForTurn(gameId, turnNumber) {
+        await new Promise((resolve) => db.run(`CREATE TABLE IF NOT EXISTS turn_harvest_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, turn_number INTEGER NOT NULL,
+            ship_id INTEGER NOT NULL, resource_type_id INTEGER NOT NULL, amount INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`, () => resolve()));
         const tasks = await new Promise((resolve) => db.all(
-            `SELECT ht.ship_id, ht.resource_node_id, ht.harvest_rate, rn.resource_amount, rn.resource_type_id
+            `SELECT ht.ship_id, ht.resource_node_id, ht.harvest_rate, rn.resource_amount, rn.resource_type_id,
+                    rt.resource_name, rt.base_size
              FROM harvesting_tasks ht
              JOIN sector_objects so ON so.id = ht.ship_id
              JOIN sectors s ON s.id = so.sector_id
              JOIN resource_nodes rn ON rn.id = ht.resource_node_id
+             JOIN resource_types rt ON rt.id = rn.resource_type_id
              WHERE ht.status = 'active' AND s.game_id = ?`,
             [gameId],
             (e, r) => resolve(r || [])
@@ -109,22 +116,27 @@ const HarvestingManager = {
             } catch {}
 
             const perTurn = Math.ceil(t.harvest_rate || 1);
-            const amount = Math.max(0, Math.min(t.resource_amount || 0, perTurn));
+            let amount = Math.max(0, Math.min(t.resource_amount || 0, perTurn));
+            try {
+                const { getOperationalBonuses } = require('../game/station-effects.service');
+                const bonuses = await getOperationalBonuses(db, ship, { resourceName: t.resource_name });
+                amount = Math.max(0, Math.min(t.resource_amount || 0, Math.ceil(amount * (1 + Math.min(0.5, bonuses.resourceYield || 0)))));
+            } catch {}
             if (amount <= 0) continue;
+            const cargo = await CargoManager.getObjectCargo(t.ship_id);
+            const baseSize = Number(t.base_size || 1);
+            if (cargo.spaceUsed + amount * baseSize > cargo.capacity) continue;
             await new Promise((resolve) => db.run('UPDATE resource_nodes SET resource_amount = resource_amount - ?, is_depleted = CASE WHEN resource_amount - ? <= 0 THEN 1 ELSE 0 END WHERE id = ?', [amount, amount, t.resource_node_id], () => resolve()));
+            const added = await CargoManager.addResourceToCargo(t.ship_id, t.resource_name, amount);
+            if (!added?.success) {
+                await new Promise((resolve) => db.run('UPDATE resource_nodes SET resource_amount = resource_amount + ?, is_depleted = 0 WHERE id = ?', [amount, t.resource_node_id], () => resolve()));
+                continue;
+            }
             await new Promise((resolve) => db.run('UPDATE harvesting_tasks SET total_harvested = total_harvested + ? WHERE ship_id = ?', [amount, t.ship_id], () => resolve()));
-            // Deposit into object_cargo for the ship
-            await new Promise((resolve) => db.run(
-                `INSERT INTO object_cargo (object_id, resource_type_id, quantity)
-                 VALUES (?, ?, ?)
-                 ON CONFLICT(object_id, resource_type_id) DO UPDATE SET quantity = quantity + excluded.quantity`,
-                [t.ship_id, t.resource_type_id, amount],
-                () => resolve()
-            ));
+            await new Promise((resolve) => db.run('INSERT INTO turn_harvest_events(game_id,turn_number,ship_id,resource_type_id,amount) VALUES(?,?,?,?,?)', [gameId,turnNumber,t.ship_id,t.resource_type_id,amount], () => resolve()));
         }
         return { success: true };
     }
 };
 
 module.exports = { HarvestingManager };
-

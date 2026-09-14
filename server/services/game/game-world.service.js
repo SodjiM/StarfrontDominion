@@ -97,7 +97,7 @@ class GameWorldManager {
 
     static async calculatePlayerVision(gameId, userId, turnNumber) {
         return new Promise((resolve, reject) => {
-            db.all('SELECT id, sector_id, x, y, meta FROM sector_objects WHERE owner_id = ? AND type IN ("ship", "station")', [userId], (err, units) => {
+            db.all('SELECT so.id, so.sector_id, so.x, so.y, so.meta, parent.meta AS host_meta FROM sector_objects so LEFT JOIN sector_objects parent ON parent.id=so.parent_object_id WHERE so.owner_id = ? AND so.type IN ("ship", "station")', [userId], (err, units) => {
                 if (err) return reject(err);
                 if (!units || units.length === 0) return resolve([]);
                 const sectorIdToUnits = new Map();
@@ -112,6 +112,8 @@ class GameWorldManager {
                     const sensors = sectorUnits.map(u => {
                         const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
                         let scanRange = meta.scanRange || 5;
+                        let hostMeta = {}; try { hostMeta = JSON.parse(u.host_meta || '{}'); } catch {}
+                        if (meta.stationClass === 'moon-station' && (meta.hostGameplayType === 'cratered' || hostMeta.gameplayType === 'cratered' || hostMeta.visualType === 'cratered')) scanRange *= 1.25;
                         let detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
                         try {
                             if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
@@ -184,7 +186,7 @@ class GameWorldManager {
     static async computeCurrentVisibility(gameId, userId, sectorId) {
         return new Promise((resolve, reject) => {
             db.all(
-                'SELECT id, x, y, meta FROM sector_objects WHERE sector_id = ? AND owner_id = ? AND type IN ("ship", "station", "sensor-tower")',
+                'SELECT so.id, so.x, so.y, so.meta, parent.meta AS host_meta FROM sector_objects so LEFT JOIN sector_objects parent ON parent.id=so.parent_object_id WHERE so.sector_id = ? AND so.owner_id = ? AND so.type IN ("ship", "station", "sensor-tower")',
                 [sectorId, userId],
                 (err, units) => {
                     if (err) return reject(err);
@@ -193,6 +195,8 @@ class GameWorldManager {
                     const sensors = units.map(u => {
                         const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
                         let scanRange = meta.scanRange || 5;
+                        let hostMeta = {}; try { hostMeta = JSON.parse(u.host_meta || '{}'); } catch {}
+                        if (meta.stationClass === 'moon-station' && (meta.hostGameplayType === 'cratered' || hostMeta.gameplayType === 'cratered' || hostMeta.visualType === 'cratered')) scanRange *= 1.25;
                         let detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
                         try {
                             if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
@@ -364,7 +368,7 @@ class GameWorldManager {
                                 (err, lockStatus) => {
                                     if (err) return reject(err);
                                     db.get(
-                                        'SELECT avatar, color_primary AS colorPrimary, color_secondary AS colorSecondary, setup_completed FROM game_players WHERE game_id = ? AND user_id = ?',
+                                        'SELECT avatar, color_primary AS colorPrimary, color_secondary AS colorSecondary, setup_completed, political_influence AS politicalInfluence FROM game_players WHERE game_id = ? AND user_id = ?',
                                         [gameId, userId],
                                         (err, playerData) => {
                                             if (err) return reject(err);
@@ -520,52 +524,9 @@ async function getCurrentTurnNumberServer(gameId) {
 }
 
 async function computePilotStats(gameId, userId, currentTurn) {
-    const stationRows = await new Promise((resolve) => {
-        db.all(
-            `SELECT so.meta FROM sector_objects so
-             JOIN sectors s ON s.id = so.sector_id
-             WHERE s.game_id = ? AND so.owner_id = ? AND so.type = 'station'`,
-            [gameId, userId],
-            (e, rows) => resolve(rows || [])
-        );
-    });
-    let capacity = 5;
-    for (const r of stationRows) {
-        try {
-            const meta = JSON.parse(r.meta || '{}');
-            const cls = meta.stationClass;
-            if (cls === 'sun-station') capacity += 10;
-            else if (cls === 'planet-station' || !cls) capacity += 5;
-            else if (cls === 'moon-station') capacity += 3;
-        } catch {}
-    }
-    const shipRows = await new Promise((resolve) => {
-        db.all(
-            `SELECT so.meta FROM sector_objects so
-             JOIN sectors s ON s.id = so.sector_id
-             WHERE s.game_id = ? AND so.owner_id = ? AND so.type = 'ship'`,
-            [gameId, userId],
-            (e, rows) => resolve(rows || [])
-        );
-    });
-    let active = 0;
-    for (const r of shipRows) {
-        try { const m = JSON.parse(r.meta || '{}'); active += Number(m.pilotCost || 1); } catch { active += 1; }
-    }
-    const deadRows = await new Promise((resolve) => {
-        db.all(
-            `SELECT respawn_turn as turn, SUM(count) as qty
-             FROM dead_pilots_queue
-             WHERE game_id = ? AND user_id = ? AND respawn_turn > ?
-             GROUP BY respawn_turn ORDER BY respawn_turn ASC`,
-            [gameId, userId, currentTurn],
-            (e, rows) => resolve(rows || [])
-        );
-    });
-    const respawnsByTurn = (deadRows || []).map(r => ({ turn: Number(r.turn), turnsLeft: Math.max(0, Number(r.turn) - Number(currentTurn)), count: Number(r.qty || 0) }));
-    const dead = respawnsByTurn.reduce((sum, r) => sum + (r.count || 0), 0);
-    const available = Math.max(0, capacity - active - dead);
-    return { capacity, active, dead, available, respawnsByTurn };
+    const stats = await require('./pilot.service').getPilotStats(gameId, userId, currentTurn, db);
+    const deadRows = await new Promise((resolve) => db.all(`SELECT respawn_turn AS turn, SUM(count) AS qty FROM dead_pilots_queue WHERE game_id=? AND user_id=? AND respawn_turn>? GROUP BY respawn_turn ORDER BY respawn_turn`, [gameId,userId,currentTurn], (e, rows) => resolve(rows || [])));
+    return { ...stats, active: stats.deployed, dead: stats.recovering, respawnsByTurn: deadRows.map(r => ({ turn:Number(r.turn), turnsLeft:Math.max(0,Number(r.turn)-Number(currentTurn)), count:Number(r.qty||0) })) };
 }
 
 module.exports = { GameWorldManager, getCurrentTurnNumberServer, computePilotStats };

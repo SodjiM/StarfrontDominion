@@ -28,7 +28,8 @@ function updateStatsStrip(game) {
         const mine = objects.filter(o => o.owner_id === game.userId);
         const ships = mine.filter(o => o.type === 'ship');
         const stations = mine.filter(o => o.type === 'station' || o.type === 'starbase');
-        const pilots = ships.length; // one pilot per ship for now; refine if server provides
+        const pilotStats = game.gameState.pilotStats || {};
+        const pilots = Number.isFinite(Number(pilotStats.available)) ? `${pilotStats.available}/${pilotStats.capacity}` : ships.length;
         const credits = (game.gameState.player && typeof game.gameState.player.credits === 'number') ? game.gameState.player.credits : '—';
         const byId = (id) => document.getElementById(id);
         const setText = (id, text) => { const el = byId(id); if (el) el.textContent = String(text); };
@@ -38,7 +39,11 @@ function updateStatsStrip(game) {
         setText('pilotsChip', pilots);
         // pilot breakdown (placeholder; can be expanded later when roles/crew exist)
         const breakdown = byId('pilotBreakdown');
-        if (breakdown) breakdown.textContent = ships.length ? `${ships.length} active pilots` : '';
+        if (breakdown) {
+                breakdown.textContent = pilotStats.capacity != null
+                        ? `${pilotStats.available} available · ${pilotStats.deployed ?? pilotStats.active ?? ships.length} deployed · ${pilotStats.recovering ?? pilotStats.dead ?? 0} recovering · +${pilotStats.regenRate ?? 1}/turn`
+                        : (ships.length ? `${ships.length} active pilots` : '');
+        }
 }
 
 export function updatePlayerPanel(game) {
@@ -47,5 +52,4 @@ export function updatePlayerPanel(game) {
         updateStatsStrip(game);
         applySenate(game);
 }
-
 

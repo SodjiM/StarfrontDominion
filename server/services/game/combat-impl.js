@@ -7,6 +7,7 @@ const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../registry/bluepri
 const { CombatRepository } = require('../../repositories/combat.repo');
 const { computePathBresenham } = require('../../utils/path');
 const { HarvestingManager } = require('../world/harvesting-manager');
+const { isCombatTarget, isLiveShip } = require('./combat-rules');
 
 async function processAbilityOrders(gameId, turnNumber) {
     const combatRepo = new CombatRepository();
@@ -42,31 +43,44 @@ async function processAbilityOrders(gameId, turnNumber) {
         }
         const caster = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
         if (!caster) continue;
+        if (!isLiveShip(caster)) {
+            await combatRepo.appendCombatLog({
+                gameId,
+                turnNumber,
+                attackerId: order.caster_id,
+                eventType: 'ability',
+                summary: 'Ability cancelled: ship is destroyed'
+            });
+            continue;
+        }
         if (target && caster.sector_id !== target.sector_id) continue;
         if (ability.range && target) {
             const dx = (caster.x || 0) - (target.x || 0);
-            const dy = (caster.y || 0) - (target.y || 0);
             const dist = physicalScale.gap(caster,target);
-            if (dist > ability.range) continue;
+            let range = ability.range;
+            try { const b = await require('./station-effects.service').getOperationalBonuses(db, caster); range = Math.ceil(range * (1 + Math.min(0.25, Number(b.abilityRangeMultiplier || 0)))); } catch {}
+            if (dist > range) continue;
         }
         if (ability.type !== 'passive' && ability.energyCost) {
             const casterMetaRow = await new Promise((resolve) => db.get('SELECT meta FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
             if (!casterMetaRow) continue;
             const metaObj = JSON.parse(casterMetaRow.meta || '{}');
+            let energyCost = Number(ability.energyCost || 0);
+            try { const b = await require('./station-effects.service').getOperationalBonuses(db, caster); energyCost = Math.max(1, Math.ceil(energyCost * (1 + Math.max(-0.25, Number(b.abilityCostMultiplier || 0))))); } catch {}
             const currentEnergy = Number(metaObj.energy || 0);
-            if (currentEnergy < ability.energyCost) {
+            if (currentEnergy < energyCost) {
                 await combatRepo.appendCombatLog({
                     gameId,
                     turnNumber,
                     attackerId: order.caster_id,
                     eventType: 'ability',
                     summary: `Not enough energy for ${order.ability_key}`,
-                    data: { needed: ability.energyCost, have: currentEnergy }
+                    data: { needed: energyCost, have: currentEnergy }
                 });
                 continue;
             }
             const cap = (typeof metaObj.maxEnergy === 'number') ? Number(metaObj.maxEnergy) : undefined;
-            const post = Math.max(0, currentEnergy - ability.energyCost);
+            const post = Math.max(0, currentEnergy - energyCost);
             metaObj.energy = cap != null ? Math.min(cap, post) : post;
             await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(metaObj), new Date().toISOString(), order.caster_id], () => resolve()));
         }
@@ -156,6 +170,85 @@ async function processAbilityOrders(gameId, turnNumber) {
                     });
                     continue;
                 } catch {}
+            }
+
+            // Short-lived movement burst. This is a status effect so the
+            // movement phase consumes it through the same authoritative path
+            // as all other movement modifiers.
+            if (order.ability_key === 'microthruster_shift') {
+                await combatRepo.applyStatusEffect({
+                    shipId: order.caster_id,
+                    effectKey: ability.effectKey,
+                    magnitude: null,
+                    effectData: { movementFlatBonus: ability.movementFlatBonus },
+                    sourceObjectId: order.caster_id,
+                    appliedTurn: turnNumber,
+                    expiresTurn: Number(turnNumber) + ability.duration
+                });
+                await combatRepo.appendCombatLog({
+                    gameId,
+                    turnNumber,
+                    attackerId: order.caster_id,
+                    eventType: 'ability',
+                    summary: 'Microthruster Shift: +3 movement this turn',
+                    data: { movementFlatBonus: ability.movementFlatBonus }
+                });
+                const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+                await combatRepo.setAbilityCooldown(order.caster_id, order.ability_key, availableTurn);
+                continue;
+            }
+
+            // Jettison cargo into a neutral, attackable cargo can and grant
+            // the ship a brief escape/evasion burst.
+            if (order.ability_key === 'emergency_discharge_vent') {
+                const casterFull = await new Promise((resolve) => db.get(
+                    'SELECT id, sector_id, x, y FROM sector_objects WHERE id = ?',
+                    [order.caster_id], (e, r) => resolve(r)
+                ));
+                if (casterFull) {
+                    const cargo = await CargoManager.getShipCargo(order.caster_id);
+                    const canMeta = {
+                        name: 'Jettisoned Cargo', hp: 10, maxHp: 10,
+                        cargoCapacity: Math.max(25, Math.ceil(Number(cargo.spaceUsed || 0))),
+                        alwaysKnown: true, publicAccess: true,
+                        emptiesAtTurn: Number(turnNumber) + 10
+                    };
+                    const canId = await new Promise((resolve, reject) => db.run(
+                        `INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta)
+                         VALUES (?, 'cargo_can', ?, ?, NULL, ?)`,
+                        [casterFull.sector_id, casterFull.x, casterFull.y, JSON.stringify(canMeta)],
+                        function (e) { e ? reject(e) : resolve(this.lastID); }
+                    ));
+                    await CargoManager.initializeObjectCargo(canId, 25);
+                    for (const item of (cargo.items || [])) {
+                        const quantity = Number(item.quantity || 0);
+                        if (quantity > 0) {
+                            await CargoManager.removeResourceFromCargo(order.caster_id, item.resource_name, quantity, true);
+                            await CargoManager.addResourceToCargo(canId, item.resource_name, quantity, false);
+                        }
+                    }
+                    await combatRepo.appendCombatLog({
+                        gameId,
+                        turnNumber,
+                        attackerId: order.caster_id,
+                        targetId: canId,
+                        eventType: 'ability',
+                        summary: 'Emergency Discharge: cargo jettisoned',
+                        data: { canId }
+                    });
+                }
+                await combatRepo.applyStatusEffect({
+                    shipId: order.caster_id,
+                    effectKey: 'emergency_discharge_buff',
+                    magnitude: null,
+                    effectData: { movementFlatBonus: 3, evasionBonus: 0.5 },
+                    sourceObjectId: order.caster_id,
+                    appliedTurn: turnNumber,
+                    expiresTurn: Number(turnNumber) + 1
+                });
+                const availableTurn = Number(turnNumber) + (ability.cooldown || 1);
+                await combatRepo.setAbilityCooldown(order.caster_id, order.ability_key, availableTurn);
+                continue;
             }
 
             // Non-offense special cases and status effects (subset from index.js for now)
@@ -260,12 +353,25 @@ async function processAbilityOrders(gameId, turnNumber) {
         const target = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.target_object_id], (e, r) => resolve(r)));
         const caster = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.caster_id], (e, r) => resolve(r)));
         if (!caster || !target) continue;
+        if (!isLiveShip(caster) || !isCombatTarget(target)) {
+            await combatRepo.appendCombatLog({
+                gameId,
+                turnNumber,
+                attackerId: caster?.id || order.caster_id,
+                targetId: target?.id || order.target_object_id,
+                eventType: 'attack',
+                summary: 'Invalid combat target'
+            });
+            continue;
+        }
         if (caster.sector_id !== target.sector_id) continue;
         if (ability.range) {
             const dx = (caster.x || 0) - (target.x || 0);
             const dy = (caster.y || 0) - (target.y || 0);
             const dist = physicalScale.gap(caster,target);
-            if (dist > ability.range) continue;
+            let range = ability.range;
+            try { const b = await require('./station-effects.service').getOperationalBonuses(db, caster); range = Math.ceil(range * (1 + Math.min(0.25, Number(b.abilityRangeMultiplier || 0)))); } catch {}
+            if (dist > range) continue;
         }
         await combatRepo.upsertCombatOrder({
             gameId,
@@ -305,10 +411,35 @@ async function processCombatOrders(gameId, turnNumber) {
             (err, rows) => err ? reject(err) : resolve(rows || [])
         );
     });
+    // Combat is simultaneous: capture the combatants before applying any
+    // damage so one attack cannot make a later declared attack disappear.
+    const snapshotIds = [...new Set(orders.flatMap(order => [order.attacker_id, order.target_id]))];
+    const snapshot = new Map();
+    if (snapshotIds.length) {
+        const placeholders = snapshotIds.map(() => '?').join(',');
+        const rows = await new Promise((resolve) => db.all(
+            `SELECT * FROM sector_objects WHERE id IN (${placeholders})`,
+            snapshotIds,
+            (e, result) => resolve(result || [])
+        ));
+        for (const row of rows) snapshot.set(row.id, row);
+    }
+    const pendingHp = new Map();
+    const destroyedTargets = new Set();
     for (const order of orders) {
-        const attacker = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.attacker_id], (e, r) => resolve(r)));
-        const target = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [order.target_id], (e, r) => resolve(r)));
-        if (!attacker || !target) continue;
+        const attacker = snapshot.get(order.attacker_id);
+        const target = snapshot.get(order.target_id);
+        if (!isLiveShip(attacker) || !isCombatTarget(target)) {
+            await combatRepo.appendCombatLog({
+                gameId,
+                turnNumber,
+                attackerId: attacker?.id || order.attacker_id,
+                targetId: target?.id || order.target_id,
+                eventType: 'attack',
+                summary: 'Invalid combat target'
+            });
+            continue;
+        }
         const aMeta = JSON.parse(attacker.meta || '{}');
         const tMeta = JSON.parse(target.meta || '{}');
         const distance = physicalScale.gap(attacker,target);
@@ -357,6 +488,16 @@ async function processCombatOrders(gameId, turnNumber) {
             } catch {}
         }
         const sizeMult = CombatConfig.computeSizePenalty(aMeta.class, tMeta.class, effectCtx);
+        let damageReduction = 0;
+        for (const eff of effects) {
+            try {
+                const data = eff.effect_data ? JSON.parse(eff.effect_data) : {};
+                if (eff.ship_id === target.id && typeof data.damageReduction === 'number') {
+                    damageReduction = Math.max(damageReduction, data.damageReduction);
+                }
+            } catch {}
+        }
+        damageReduction = Math.max(0, Math.min(0.9, damageReduction));
         let evasionTotal = 0;
         for (const eff of effects) {
             try {
@@ -372,13 +513,18 @@ async function processCombatOrders(gameId, turnNumber) {
         evasionTotal = Math.max(0, Math.min(0.9, evasionTotal));
         const targetAbilities = Array.isArray(tMeta.abilities) ? tMeta.abilities : [];
         let baseDamage = weapon.baseDamage || 0;
+        try {
+            const b = await require('./station-effects.service').getOperationalBonuses(db, attacker);
+            baseDamage = Math.round(baseDamage * (1 + Math.min(0.15, Number(b.combatDamageMultiplier || 0))));
+        } catch {}
         const isPD = (weapon.tags || []).includes('pd');
         const targetIsSmall = (tMeta.class === 'frigate');
         if (isPD && !targetIsSmall) {
             baseDamage = Math.floor(baseDamage * 0.2);
         }
         const hitMultiplier = Math.max(0, 1 - evasionTotal);
-        let damage = Math.max(0, Math.round(baseDamage * rangeMult * sizeMult * hitMultiplier));
+        const mitigationMultiplier = 1 - damageReduction;
+        let damage = Math.max(0, Math.round(baseDamage * rangeMult * sizeMult * hitMultiplier * mitigationMultiplier));
         if (targetAbilities.includes('duct_tape_resilience') && tMeta.hp === tMeta.maxHp && !tMeta._resilienceConsumed) {
             damage = Math.floor(damage * 0.75);
             tMeta._resilienceConsumed = true;
@@ -391,13 +537,16 @@ async function processCombatOrders(gameId, turnNumber) {
                 targetId: target.id,
                 eventType: 'attack',
                 summary: `Attack with ${weaponKey} missed/ineffective`,
-                data: { weaponKey, distance, rangeMult, sizeMult, evasionTotal, hitMultiplier }
+                data: { weaponKey, distance, rangeMult, sizeMult, evasionTotal, hitMultiplier, damageReduction, mitigationMultiplier }
             });
             continue;
         }
-        const targetHp = typeof tMeta.hp === 'number' ? tMeta.hp : 1;
+        const targetHp = pendingHp.has(target.id)
+            ? pendingHp.get(target.id)
+            : (typeof tMeta.hp === 'number' ? tMeta.hp : 1);
         const newHp = targetHp - damage;
         tMeta.hp = newHp;
+        pendingHp.set(target.id, newHp);
         await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(tMeta), new Date().toISOString(), target.id], () => resolve()));
         try {
             const weap = Abilities[weaponKey];
@@ -432,18 +581,56 @@ async function processCombatOrders(gameId, turnNumber) {
             targetId: target.id,
             eventType: 'attack',
             summary: `Hit for ${damage}`,
-            data: { weaponKey, distance, rangeMult, sizeMult, evasionTotal, hitMultiplier }
+            data: { weaponKey, damage, distance, rangeMult, sizeMult, evasionTotal, hitMultiplier, damageReduction, mitigationMultiplier }
         });
-        if (newHp <= 0) {
+        if (newHp <= 0 && !destroyedTargets.has(target.id)) {
+            destroyedTargets.add(target.id);
             await combatRepo.clearStatusEffectsForShip(target.id);
-            const wreckMeta = { name: (tMeta.name || 'Wreck'), type: 'wreck', decayTurn: Number(turnNumber) + 7 };
+            const targetType = String(target.type);
+            if (targetType === 'wreck' || targetType === 'cargo_can') {
+                const inertMeta = {
+                    name: tMeta.name || (targetType === 'wreck' ? 'Wreckage' : 'Cargo Debris'),
+                    type: 'wreck',
+                    wreckKind: targetType,
+                    destroyed: true,
+                    decayTurn: Number(turnNumber) + 2
+                };
+                await new Promise((resolve) => db.run('DELETE FROM object_cargo WHERE object_id = ?', [target.id], () => resolve()));
+                await new Promise((resolve) => db.run(
+                    'UPDATE sector_objects SET type = ?, meta = ?, updated_at = ? WHERE id = ?',
+                    ['wreck', JSON.stringify(inertMeta), new Date().toISOString(), target.id], () => resolve()
+                ));
+                await combatRepo.appendCombatLog({
+                    gameId,
+                    turnNumber,
+                    attackerId: attacker.id,
+                    targetId: target.id,
+                    eventType: 'destroyed_object',
+                    summary: `Destroyed ${targetType}`,
+                    data: { weaponKey }
+                });
+                continue;
+            }
+            const wreckMeta = {
+                name: (tMeta.name || 'Wreck'),
+                type: 'wreck',
+                wreckKind: targetType,
+                // Preserve enough inventory capacity for cargo already on the
+                // ship; otherwise converting to a wreck silently makes loot
+                // transfers fail against the default capacity of 10.
+                cargoCapacity: Math.max(10, Number(tMeta.cargoCapacity || 10)),
+                decayTurn: Number(turnNumber) + 7
+            };
             await new Promise((resolve) => db.run('UPDATE sector_objects SET type = ?, meta = ?, updated_at = ? WHERE id = ?', ['wreck', JSON.stringify(wreckMeta), new Date().toISOString(), target.id], () => resolve()));
+            // Only ships consume pilots. Stations and other attackable
+            // objects may have an owner, but they are not crewed hulls.
             try {
+                if (targetType !== 'ship') throw new Error('non_ship_target');
                 const pilotCost = Number(tMeta.pilotCost || 1);
                 const gameIdRow = await new Promise((resolve) => db.get('SELECT game_id FROM sectors WHERE id = (SELECT sector_id FROM sector_objects WHERE id = ?)', [target.id], (e, r) => resolve(r)));
                 const gid = gameIdRow?.game_id;
                 if (gid && target.owner_id) {
-                    await new Promise((resolve) => db.run('INSERT INTO dead_pilots_queue (game_id, user_id, count, respawn_turn) VALUES (?, ?, ?, ?)', [gid, target.owner_id, Math.max(1, pilotCost), Number(turnNumber) + 10], () => resolve()));
+                    await new Promise((resolve) => db.run('INSERT INTO dead_pilots_queue (game_id, user_id, count, respawn_turn) VALUES (?, ?, ?, ?)', [gid, target.owner_id, Math.max(1, pilotCost), Number(turnNumber) + 1], () => resolve()));
                 }
             } catch {}
             try {
@@ -458,8 +645,10 @@ async function processCombatOrders(gameId, turnNumber) {
                     }
                 }
             } catch {}
+            // Ship salvage is derived from ship blueprints. Station and
+            // cargo/wreck destruction must not invent ship salvage.
             try {
-                if (tMeta?.blueprintId) {
+                if (targetType === 'ship' && tMeta?.blueprintId) {
                     const bp = (SHIP_BLUEPRINTS || []).find(b => b.id === tMeta.blueprintId) || { id: tMeta.blueprintId, class: tMeta.class, role: tMeta.role, specialized: [] };
                     const reqs = computeAllRequirements(bp);
                     const salvageMap = {};
@@ -543,5 +732,3 @@ async function cleanupExpiredEffectsAndWrecks(gameId, turnNumber) {
 }
 
 module.exports = { processAbilityOrders, processCombatOrders, cleanupExpiredEffectsAndWrecks };
-
-

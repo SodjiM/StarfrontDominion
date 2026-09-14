@@ -37,7 +37,7 @@ async function spawnNodesForSector(sectorId, options = {}) {
     ));
 
     // Helper: map mineral name -> resource_type id
-    const getTypeId = async (name) => new Promise((resolve) => db.get('SELECT id FROM resource_types WHERE resource_name = ?', [name], (e, r) => resolve(r?.id || null)));
+    const getTypeId = async (name) => new Promise((resolve) => db.get('SELECT id FROM resource_types WHERE resource_key = ? OR resource_name = ? LIMIT 1', [name, name], (e, r) => resolve(r?.id || null)));
 
     // Determine primaries/secondaries by archetype
     let primaryMinerals = DEFAULT_PRIMARIES;

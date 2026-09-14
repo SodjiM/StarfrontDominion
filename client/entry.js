@@ -17,7 +17,8 @@ import './features/abilities/ability-controller.js';
 import './services/api.js';
 import './features/warp.js';
 import './features/mining.js';
-import './features/build.js';
+// Build is loaded on demand from the command action so an optional build-module
+// failure cannot prevent the core game and player setup from initializing.
 // UI modules now ESM; imported on-demand inside game.js
 import './ui/minimap.js';
 import './input/mouseKeyboard.js';
@@ -57,4 +58,3 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 });
-

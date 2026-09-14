@@ -3,14 +3,14 @@
     const VERSION = 'physical-scale-v1';
     function metaOf(o) { if (typeof o?.meta === 'string') { try { return JSON.parse(o.meta) || {}; } catch { return {}; } } return o?.meta || {}; }
     function width(o) {
-        const m = metaOf(o), key = String(m.blueprintId || m.stationClass || m.structureType || m.shipType || m.hull || m.class || o?.type || '').toLowerCase();
+        const m = metaOf(o), key = String(m.blueprintId || m.stationClass || m.structureType || m.shipClass || m.shipType || m.hull || m.class || o?.type || '').toLowerCase();
         if (o?.type === 'station' || o?.type === 'starbase' || key.endsWith('-station')) return key === 'sun-station' || key === 'shipyard' ? 13 : key === 'moon-station' || key === 'outpost' ? 5 : 9;
         if (o?.type === 'ship' || o?.type === 'wreck') {
             if (/carrier|capital|battleship|dreadnought/.test(key)) return 5;
             if (/cruiser/.test(key)) return 3;
             if (/courier|scout/.test(key)) return 1;
             if (/explorer|frigate|skiff|gunship|mining/.test(key)) return 2;
-            const cls = String(m.class || m.shipType || '').toLowerCase();
+        const cls = String(m.class || m.shipClass || m.shipType || '').toLowerCase();
             return /carrier|capital|battleship/.test(cls) ? 5 : /cruiser/.test(cls) ? 3 : /frigate|mining/.test(cls) ? 2 : 1;
         }
         if (/platform|interstellar-gate/.test(key)) return 3;

@@ -1,7 +1,6 @@
 import { physicalScale } from '../utils/physical-geometry.js';
 // Cargo & Transfer UI (ESM)
 import { getUnitIcon } from './icons.js';
-import { deployStructure } from '../features/build.js';
 
 export async function showCargo(game) {
     const selectedUnit = game.selectedUnit; if (!selectedUnit) { game.addLogEntry('No unit selected', 'warning'); return; }
@@ -58,9 +57,20 @@ export async function showCargo(game) {
                 cargoDisplay.appendChild(cargoItem);
             });
         }
-        cargoDisplay.addEventListener('click', (e) => {
+        cargoDisplay.addEventListener('click', async (e) => {
             const deployBtn = e.target.closest('[data-action="deploy-structure"]');
-            if (deployBtn) { const res = deployBtn.dataset.resource; const shipId = Number(deployBtn.dataset.shipId); try { deployStructure(res, shipId); } catch {} return; }
+            if (deployBtn) {
+                const res = deployBtn.dataset.resource;
+                const shipId = Number(deployBtn.dataset.shipId);
+                try {
+                    const mod = await import('../features/build.js');
+                    await mod.deployStructure(res, shipId);
+                } catch (error) {
+                    console.error('Failed to load deployment controls:', error);
+                    game.addLogEntry('Deployment controls are temporarily unavailable.', 'error');
+                }
+                return;
+            }
             const openBtn = e.target.closest('[data-action="open-transfer"]');
             if (openBtn) { const fromId = Number(openBtn.dataset.fromId); const toId = Number(openBtn.dataset.toId); const toName = openBtn.dataset.toName || 'Target'; showTransferModal(game, fromId, toId, toName); return; }
         });
@@ -134,5 +144,4 @@ export async function updateCargoStatus(game, shipId) {
         }
     } catch (error) { console.error('Error updating cargo status:', error); }
 }
-
 

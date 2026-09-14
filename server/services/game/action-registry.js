@@ -5,6 +5,7 @@ const { LaneTravelService } = require('./lane-travel.service');
 const { HarvestingManager } = require('../world/harvesting-manager');
 const { Abilities } = require('../registry/abilities');
 const { SHIP_BLUEPRINTS } = require('../registry/blueprints');
+const { isCombatTarget } = require('./combat-rules');
 
 function json(value) {
     try { return value ? JSON.parse(value) : {}; } catch { return {}; }
@@ -101,6 +102,9 @@ function makeActionRegistry({ db }) {
                 target = await get('SELECT * FROM sector_objects WHERE id = ?', [payload.targetObjectId]);
                 if (!target || Number(target.sector_id) !== Number(ctx.ship.sector_id)) {
                     return { outcome: 'failed', reason: 'target_not_in_sector', cancelFollowing: true };
+                }
+                if (ability.type === 'offense' && !isCombatTarget(target)) {
+                    return { outcome: 'failed', reason: 'invalid_combat_target', cancelFollowing: true };
                 }
                 if (ability.range) {
                     const distance = physicalScale.gap(ctx.ship,target);

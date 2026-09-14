@@ -351,9 +351,9 @@ Expected characteristics:
 - Better interaction with raider-aligned, covert, security, and exploration policies.
 - Greater exposure to isolation, interdiction, and station loss.
 
-#### Deep-space post
+#### Senator-hosting station types
 
-Deep-space structures may support an informal or irregular political post, but should not automatically count as a full Senate seat. If they host senators at all, the post should emphasize local operations, intelligence, piracy, or exploration rather than conventional governmental reach.
+Only sun, planet, and moon stations host senators in the current design. Deep-space structures may provide political, intelligence, piracy, or exploration effects, but they do not create Senate seats unless a later design explicitly changes this rule.
 
 ### Local and global influence
 
@@ -376,19 +376,20 @@ These are strategic profiles, not a simple ranking. A moon senator may be less u
 
 ### Station loss and political vacancies
 
-If a station hosting a senator is destroyed, captured, or otherwise made unusable, the senator's status must be resolved explicitly. The senator must not silently disappear from the player's cabinet.
+If a station hosting a senator is destroyed, the senator is killed. The senator is permanently removed from the active cabinet, their station assignment ends, and the seat becomes vacant. The game must explain the death and its political consequences; the senator must not silently disappear.
 
-Possible outcomes include:
+There is no emergency reassignment after station loss. Senators may only be assigned or reassigned during Senate sessions. The player must wait until the next session to appoint a replacement or reorganize the cabinet.
 
-- Killed: the senator is permanently lost.
-- Missing: the senator is unavailable while a recovery objective is active.
-- Displaced: the senator survives but loses their post and becomes temporarily inactive.
-- Defected: a rare outcome associated with capture, severe unhappiness, or specific political events.
-- Injured or shaken: the senator survives with reduced happiness or temporary influence.
+When a senator dies, the system should:
 
-Permanent death should be reserved for clearly dangerous outcomes, especially destruction of an occupied station under siege or capture of an exposed frontier post. The game should explain why the senator was lost and what political consequences follow.
+- Remove their happiness and tag contribution.
+- Recalculate affected policy eligibility.
+- Identify policies that have lost a requirement.
+- Preserve a readable historical record.
+- Mark the Senate seat vacant until the next session.
+- Offer replacement candidates at the next session.
 
-When a senator loses their station, the player may be left with a temporary Senate vacancy. Reassignment should normally occur during a Senate session, except for an emergency reassignment after station loss if continuity is later required.
+Policies should not be silently deleted in the middle of turn resolution. They should be marked at risk and reevaluated at the next session boundary, with a clearly communicated grace rule if the final implementation uses one.
 
 ### Senator seat progression
 
@@ -410,7 +411,7 @@ Station count should be encouraged, not made trivially exploitable. Qualifying s
 
 ### Terms and retirement
 
-Senators may serve up to four terms. They must retire after their fourth completed term.
+Senators may serve up to four terms. Each term is one Senate cycle of approximately 100 turns, so a senator can serve for approximately 400 turns before mandatory retirement. They must retire after their fourth completed term.
 
 Terms should increase a senator's effectiveness:
 
@@ -419,9 +420,11 @@ Terms should increase a senator's effectiveness:
 - Term 3: highly established contribution.
 - Term 4: very strong contribution, but final term.
 
+The player should always be able to see the senator's current term, remaining term count, and expected retirement session.
+
 The four-term limit creates political succession as a strategic system. A player may enjoy a period where all five senators are experienced and powerful, but should anticipate that several may retire around the same time. Station loss can create an earlier succession problem by removing a senator's post before their term is complete.
 
-Players should be able to retire, replace, or reassign a senator during a Senate session. Early retirement should have a cost, such as:
+Players should be able to retire, replace, or reassign a senator only during a Senate session. Early retirement should have a cost, such as:
 
 - Loss of accumulated experience.
 - Temporary mandate disruption.
@@ -429,6 +432,8 @@ Players should be able to retire, replace, or reassign a senator during a Senate
 - Reduced political capital.
 
 Reassignment should also be a real choice. Moving a senator from a sun station to a moon station may reduce their global mandate contribution while improving their local tactical effects and changing their objectives. The station post should be part of the cabinet build, not merely an administrative field.
+
+Reassignment is unavailable between Senate sessions. This creates a predictable political cadence and makes station placement a commitment rather than a freely switchable bonus.
 
 It may also provide a legacy benefit if the senator served long enough.
 
@@ -632,24 +637,67 @@ These connect the player's internal government to multiplayer politics.
 
 Players should not activate every eligible policy simultaneously. Active policy slots create a government loadout.
 
-Possible slot progression:
+Current baseline: five active policy slots.
 
-- One slot at the start.
-- Two slots after early Senate development.
-- Three slots after meaningful domain development.
-- Four or five slots in the late game.
+Possible expansion:
+
+- Five slots at the start of the political system.
+- A sixth slot after a first institutional-influence threshold.
+- A seventh slot after a stronger developed-domain threshold.
+- An eighth slot only for a highly developed late-game government, if playtesting supports it.
 
 The player may have six eligible cards but only three active slots. This creates the important decision between political possibility and current commitment.
 
-Policy slots may be unlocked through:
-
-- Number and quality of stations.
-- Sun-station ownership.
-- Senate size.
-- Regional development.
-- Political milestones.
+Policy slots may be unlocked through the combined institutional-influence value described above, rather than through station count alone. Station count, station type, development, regional health, and political milestones may all contribute to that value.
 
 Policy effects should be centralized in a modifier layer so movement, construction, harvesting, pilots, stations, and missions can read them consistently.
+
+### Policy capacity and institutional influence
+
+The player begins with five active policy slots. This is the current baseline and should be treated as a government capacity rather than a senator count.
+
+Additional policy slots may unlock through a combined institutional-influence value derived from the player's physical political domain. This value should consider:
+
+- The number of developed sun, planet, and moon stations.
+- The base political value of each station type.
+- Station development and upgrades.
+- Regional health and infrastructure support.
+- Connected logistics and administrative reach.
+- System concentration or multi-system governance.
+
+The intended station weighting is:
+
+```text
+Sun station: high institutional influence
+Planet station: medium institutional influence
+Moon station: low institutional influence
+```
+
+This does not mean that sun stations are always the best strategic choice. It means that they are more valuable for broad institutional capacity, while planet and moon networks can provide stronger regional or tactical advantages.
+
+Conceptually:
+
+```text
+Policy capacity =
+  five baseline slots
+  + slots unlocked by institutional-influence thresholds
+```
+
+Example thresholds might unlock a sixth, seventh, or eighth slot as the player's domain grows. Exact values and any hard cap are balance variables. The first implementation should use a modest cap so additional slots expand strategic choice without making the policy interface unreadable.
+
+Institutional influence, tag mandate, and political capital are separate:
+
+- Institutional influence determines how many policies the government can operate.
+- Tag mandate and senator happiness determine which policy cards are eligible.
+- Political capital is spent on external agendas, diplomacy, and civic naming rights.
+
+This gives the player three distinct political questions:
+
+```text
+How much government can I operate?
+What kind of government can I operate?
+How much leverage do I have outside my own government?
+```
 
 ### Policy tradeoffs
 
@@ -969,6 +1017,7 @@ The future implementation should preserve the following conceptual records, whet
 - Tag mandate by player and game.
 - Active policy cards.
 - Policy-slot capacity.
+- Institutional influence and policy-capacity thresholds.
 - Political capital.
 - External agenda items and votes.
 - Timed regional or galactic effects.
@@ -979,9 +1028,18 @@ The station assignment should be a first-class relationship rather than a presen
 
 - Which station hosts each active senator?
 - Which senator, if any, is assigned to each station?
-- What happens when that station is destroyed, captured, disabled, or transferred?
+- What happens when that station is destroyed or transferred?
 - Which region and solar system define the senator's local constituency?
 - Which post-specific effects are active?
+
+The authoritative model must enforce:
+
+- Only sun, planet, and moon stations can host senators.
+- Every active senator has exactly one hosting station.
+- Every senator-hosting station has at most one active senator.
+- Senator reassignment is only legal during an open Senate session.
+- Destruction of a senator-hosting station kills the assigned senator.
+- A killed senator's seat remains vacant until a later Senate session.
 
 Candidate generation, objective progress, happiness changes, mandate updates, policy eligibility, and voting outcomes must be server-authoritative and deterministic from committed game events.
 
@@ -1015,6 +1073,8 @@ Implement:
 - One personal objective per senator.
 - A small number of tags.
 
+For this phase, every active senator must be assigned to a sun, planet, or moon station. Reassignment is only available inside the Senate-session flow. Destroying an occupied station kills its senator and leaves the seat vacant until the next session.
+
 The first station-assignment test should include a sun post, a planet post, and a moon post so the player can see that the same tag behaves differently by location.
 
 Do not begin with the full quest engine or global agenda system.
@@ -1027,6 +1087,7 @@ Implement:
 - Happiness thresholds.
 - Policy-card requirements.
 - Active policy slots.
+- Five baseline policy slots and a first institutional-influence threshold for a sixth slot.
 - Centralized policy modifiers.
 - Policy invalidation and grace periods after retirement.
 
@@ -1042,7 +1103,7 @@ Implement:
 - Same-tag reinforcement.
 - A small set of cross-tag synergies.
 - Clear warnings about future retirements and policy risk.
-- Station-loss outcomes, vacancies, and reassignment.
+- Station-loss death, vacancies, and session-bound reassignment.
 - Post-specific influence and objective generation.
 
 ### Phase 4: External agendas
@@ -1121,17 +1182,20 @@ The current direction is:
 - Up to five active senators.
 - Start with one senator assigned to the starting station and add seats through qualifying station development.
 - Every active senator occupies one owned station.
+- Only sun, planet, and moon stations can host senators.
+- Senator reassignment is available only during Senate sessions.
+- Destruction of a senator-hosting station kills the assigned senator and creates a vacancy.
 - Station type changes the senator's influence profile, objective pool, and political reach.
 - Senator objectives care about both tags and assigned place.
-- Station destruction can create a vacancy, displacement, or senator loss.
-- Senators serve up to four terms.
+- Senators serve up to four 100-turn terms, for approximately 400 turns total.
 - Senators can retire early or be replaced.
 - Each active senator supplies one session objective.
 - Happiness is senator-specific.
 - Tag mandate is aggregated across relevant senators.
 - Political capital is a separate spendable external resource.
 - Policy cards require tag and happiness conditions.
-- Policy slots limit the active government loadout.
+- The government begins with five active policy slots.
+- Additional policy slots may unlock through combined institutional influence from the player's developed station network.
 - Some policy cards may require senators to be happy and assigned to particular station types.
 - Policies include direct bonuses and structural world effects.
 - Same-tag senators reinforce a political movement.
@@ -1149,15 +1213,15 @@ The current direction is:
 These questions should remain explicit until playtesting resolves them:
 
 1. What exact station development thresholds unlock seats two through five?
-2. Which stations qualify to host senators: all owned stations, only supplied stations, or only developed stations?
-3. What happens when a station hosting a senator is destroyed, captured, or disabled?
-4. How much pilot capacity and generation should each station type provide?
-5. How much global versus local influence should sun, planet, and moon posts contribute?
-6. How much happiness does an objective provide compared with ordinary aligned actions?
-7. How quickly should tag mandate accumulate?
-8. Should mandate ever decay, or only change through active Senate composition?
-9. What is the exact policy-slot progression?
-10. How long should policies remain active after a senator retirement or station loss invalidates their requirements?
+2. What station quality, supply, or development threshold is required before a station can host a senator?
+3. How much pilot capacity and generation should each station type provide?
+4. How much global versus local influence should sun, planet, and moon posts contribute?
+5. How much happiness does an objective provide compared with ordinary aligned actions?
+6. How quickly should tag mandate accumulate?
+7. Should mandate ever decay, or only change through active Senate composition?
+8. What institutional-influence thresholds unlock policy slots six through eight?
+9. What hard cap should policy slots have in the first implementation?
+10. How long should policies remain active after a senator retirement or station death invalidates their requirements?
 11. How many policy cards should be visible at each stage?
 12. Which tags are essential for the first playable political build?
 13. How much political capital should a player receive per session?
@@ -1172,6 +1236,7 @@ These questions should remain explicit until playtesting resolves them:
 22. How much should political capital naming rights cost by object type?
 23. Which objects may be renamed, and what control threshold is required?
 24. How should captured objects display current and historical names?
+25. If an occupied station is captured rather than destroyed, is the senator killed, expelled, or transferred with the station?
 
 ## First proof of fun
 

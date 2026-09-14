@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS game_players (
     color_primary TEXT DEFAULT NULL,
     color_secondary TEXT DEFAULT NULL,
     setup_completed BOOLEAN DEFAULT FALSE,
+    political_influence REAL NOT NULL DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (game_id) REFERENCES games(id),
     UNIQUE(game_id, user_id)
-); 
+);

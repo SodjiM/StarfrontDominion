@@ -23,7 +23,10 @@ const Abilities = {
         cooldown: 1,
         energyCost: 5,
         description: 'Brief burst of additional movement.',
-        shortDescription: '+Speed this turn'
+        shortDescription: '+3 movement this turn',
+        effectKey: 'microthruster_speed',
+        duration: 1,
+        movementFlatBonus: 3
     },
 
     emergency_discharge_vent: {
@@ -42,9 +45,18 @@ const Abilities = {
         name: 'Dual Light Coilguns',
         type: 'offense',
         target: 'enemy',
-        range: null,
+        // Basic frigate weapon. Keep the combat values on the authoritative
+        // ability definition so queued and direct ability paths resolve the
+        // same way and the client can explain the weapon to the player.
+        range: 9,
         cooldown: 1,
-        energyCost: 0
+        energyCost: 0,
+        baseDamage: 10,
+        optimal: 4,
+        falloff: 0.2,
+        tags: ['small', 'main'],
+        description: 'Reliable short-range frigate guns with damage falloff outside their optimal range.',
+        shortDescription: 'Short-range sustained fire'
     },
 
     boost_engines: {
@@ -67,7 +79,12 @@ const Abilities = {
         target: 'self',
         range: null,
         cooldown: 3,
-        energyCost: 8
+        energyCost: 8,
+        description: 'Patch the hull over time.',
+        shortDescription: 'Repair over time',
+        effectKey: 'repair_over_time',
+        duration: 3,
+        healPercentPerTurn: 0.10
     },
     survey_scanner: {
         key: 'survey_scanner',
@@ -76,7 +93,12 @@ const Abilities = {
         target: 'self',
         range: null,
         cooldown: 1,
-        energyCost: 2
+        energyCost: 2,
+        description: 'Temporarily increases scan range.',
+        shortDescription: '+50% scan range',
+        effectKey: 'survey_scanner',
+        duration: 2,
+        scanRangeMultiplier: 1.5
     },
     duct_tape_resilience: {
         key: 'duct_tape_resilience',
@@ -137,4 +159,3 @@ const Abilities = {
 };
 
 module.exports = { Abilities };
-

@@ -8,6 +8,9 @@ export function showSetupModal(game) {
         validationMessage.setAttribute('aria-live', 'assertive');
         validationMessage.hidden = true;
 
+        if (!window.UI?.showModal) {
+            throw new Error('UI modal service is unavailable');
+        }
         const modal = UI.showModal({
             title: '🚀 Initialize Your Solar System',
             content: setupForm,

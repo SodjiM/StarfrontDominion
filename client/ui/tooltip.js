@@ -29,11 +29,11 @@
         }
         const meta = obj.meta || {};
         const name = meta.name || obj.type || 'Unknown';
-        const shipType = obj.type === 'resource_node' ? (meta.resourceType || 'resource_node') : (meta.shipType || meta.class || obj.subtype || obj.type);
+        const shipType = obj.type === 'resource_node' ? (meta.resourceType || 'resource_node') : (meta.shipClass || meta.shipType || meta.class || obj.subtype || obj.type);
         const ownerName = getOwnerName ? getOwnerName(obj.owner_id) : (obj.owner_id || '—');
         const hp = (meta.hp != null && meta.maxHp != null) ? `${meta.hp}/${meta.maxHp}` : (meta.hp != null ? String(meta.hp) : '—');
         const celestial = window.SFCelestialTypes?.resolve(obj);
-        const lines = [ `${name}`, `Type: ${celestial?.label || shipType || '—'}` ];
+        const lines = [ `${name}`, `Type: ${celestial?.label || meta.shipClass || shipType || '—'}` ];
         if (obj.type === 'resource_node') {
             const amt = (meta.resourceAmount != null) ? meta.resourceAmount : (meta.amount != null ? meta.amount : undefined);
             if (meta.resourceType) lines.push(`Resource: ${meta.resourceType}`);
@@ -59,4 +59,3 @@
         window.SFTooltip = window.SFTooltip || { create, update, hide };
     }
 })();
-

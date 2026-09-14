@@ -24,6 +24,7 @@ const initializeDatabase = async () => {
         const beltsLanesSchema = fs.readFileSync(path.join(__dirname, 'models/belts_wormholes_lanes.sql'), 'utf8');
         const resourceSchema = fs.readFileSync(path.join(__dirname, 'models/resource_system.sql'), 'utf8');
         const combatSchema = fs.readFileSync(path.join(__dirname, 'models/combat.sql'), 'utf8');
+        const politicalSchema = fs.readFileSync(path.join(__dirname, 'models/political.sql'), 'utf8');
         
         // Execute schemas sequentially using promises
         await new Promise((resolve, reject) => {
@@ -68,6 +69,12 @@ const initializeDatabase = async () => {
                 // ignore if exists
                 resolve();
             });
+        });
+        await new Promise((resolve) => {
+            db.run(`ALTER TABLE game_players ADD COLUMN political_influence REAL NOT NULL DEFAULT 0`, () => resolve());
+        });
+        await new Promise((resolve) => {
+            db.run(`ALTER TABLE pilot_ledgers ADD COLUMN regen_progress REAL NOT NULL DEFAULT 0`, () => resolve());
         });
         
         await new Promise((resolve, reject) => {
@@ -145,8 +152,9 @@ const initializeDatabase = async () => {
                                                     console.log('✅ Belts/Wormholes/Lanes schema applied');
                                                     // Post-schema safety migrations for lanes (older DBs may lack columns)
                                                     const proceedToResource = () => {
-                                                        // Apply resource system then combat schema (protect against FK issues on upsert)
-                                                        db.exec(resourceSchema, (err) => {
+                                                        // Apply resource system then combat schema. Add the new stable-key
+                                                        // column first so older databases can execute the evolved schema.
+                                                        db.run('ALTER TABLE resource_types ADD COLUMN resource_key TEXT', () => db.exec(resourceSchema, (err) => {
                                                             if (err) {
                                                                 console.error('Error applying resource system schema:', err);
                                                                 reject(err);
@@ -158,11 +166,19 @@ const initializeDatabase = async () => {
                                                                         reject(cerr);
                                                                     } else {
                                                                         console.log('✅ Combat system schema applied');
-                                                                        resolve();
+                                                                        db.exec(politicalSchema, (politicalErr) => {
+                                                                            if (politicalErr) {
+                                                                                console.error('Error applying political system schema:', politicalErr);
+                                                                                reject(politicalErr);
+                                                                            } else {
+                                                                                console.log('✅ Political system schema applied');
+                                                                                resolve();
+                                                                            }
+                                                                        });
                                                                     }
                                                                 });
                                                             }
-                                                        });
+                                                        }));
                                                     };
                                                     const migrateLaneItineraries = () => {
                                                         try {
@@ -202,6 +218,112 @@ const initializeDatabase = async () => {
                             });
                         });
                     });
+                });
+            });
+        });
+
+        // Stable resource slugs are the internal contract. Existing databases
+        // may predate resource_key, so add and backfill it before validating
+        // the blueprint registry.
+        await new Promise((resolve, reject) => {
+            db.run('ALTER TABLE resource_types ADD COLUMN resource_key TEXT', (alterErr) => {
+                db.all('SELECT id, resource_name, resource_key FROM resource_types', (listErr, rows) => {
+                    if (listErr) return reject(listErr);
+                    const update = (index) => {
+                        if (index >= (rows || []).length) {
+                            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_types_key ON resource_types(resource_key)', (indexErr) => indexErr ? reject(indexErr) : resolve());
+                            return;
+                        }
+                        const row = rows[index];
+                        if (row.resource_key) return update(index + 1);
+                        const key = String(row.resource_name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                        db.run('UPDATE resource_types SET resource_key=? WHERE id=?', [key, row.id], (updateErr) => updateErr ? reject(updateErr) : update(index + 1));
+                    };
+                    update(0);
+                });
+            });
+        });
+        const { SHIP_BLUEPRINTS, validateBlueprintRegistry } = require('./services/registry/blueprints');
+        const { Abilities } = require('./services/registry/abilities');
+        await new Promise((resolve, reject) => db.all('SELECT resource_key FROM resource_types WHERE resource_key IS NOT NULL', (e, rows) => {
+            if (e) return reject(e);
+            try { validateBlueprintRegistry({ resourceKeys: (rows || []).map(r => r.resource_key), abilities: Abilities }); resolve(); }
+            catch (error) { reject(error); }
+        }));
+
+        // Durable construction and build-event records are part of the normal
+        // schema, not tables created opportunistically during a request.
+        await new Promise((resolve, reject) => db.exec(`
+            CREATE TABLE IF NOT EXISTS ship_builds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                station_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                blueprint_id TEXT NOT NULL,
+                ship_name TEXT NOT NULL,
+                pilot_cost INTEGER NOT NULL,
+                start_turn INTEGER NOT NULL,
+                completion_turn INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                status_reason TEXT,
+                resource_costs TEXT,
+                client_order_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME,
+                FOREIGN KEY (game_id) REFERENCES games(id),
+                FOREIGN KEY (station_id) REFERENCES sector_objects(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ship_builds_due ON ship_builds(game_id, status, completion_turn);
+            CREATE TABLE IF NOT EXISTS turn_build_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                turn_number INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                object_id INTEGER,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        `, (e) => e ? reject(e) : resolve()));
+        await new Promise((resolve) => {
+            const add = (column, next) => db.run(`ALTER TABLE ship_builds ADD COLUMN ${column}`, () => next());
+            add('resource_costs TEXT', () => add('client_order_id TEXT', () => db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_ship_builds_client_order ON ship_builds(user_id, client_order_id) WHERE client_order_id IS NOT NULL', () => resolve())));
+        });
+
+        // Consolidate legacy ship inventory into the universal object inventory.
+        // Keep the old table intact as a rollback reference, but never read from it.
+        await new Promise((resolve) => {
+            db.run(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)`, (createErr) => {
+                if (createErr) return resolve();
+                db.get(`SELECT 1 FROM schema_migrations WHERE name = 'ship-cargo-to-object-cargo-v1'`, (checkErr, row) => {
+                    if (checkErr || row) return resolve();
+                    db.run('BEGIN', (beginErr) => {
+                        if (beginErr) return resolve();
+                        db.run(`INSERT OR REPLACE INTO object_cargo (object_id, resource_type_id, quantity, last_updated)
+                                SELECT sc.ship_id, sc.resource_type_id,
+                                       COALESCE(oc.quantity, 0) + sc.quantity,
+                                       sc.last_updated
+                                FROM ship_cargo sc
+                                LEFT JOIN object_cargo oc
+                                  ON oc.object_id = sc.ship_id AND oc.resource_type_id = sc.resource_type_id`, (copyErr) => {
+                            if (copyErr) return db.run('ROLLBACK', () => resolve());
+                            db.run(`INSERT INTO schema_migrations(name) VALUES ('ship-cargo-to-object-cargo-v1')`, (markErr) => {
+                                if (markErr) return db.run('ROLLBACK', () => resolve());
+                                db.run('COMMIT', () => resolve());
+                            });
+                        });
+                    });
+                });
+            });
+        });
+
+        await new Promise((resolve) => {
+            db.run('CREATE INDEX IF NOT EXISTS idx_sector_objects_parent_type ON sector_objects(parent_object_id, type)', () => {
+                db.run('CREATE INDEX IF NOT EXISTS idx_sector_objects_celestial ON sector_objects(sector_id, celestial_type)', () => {
+                    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_station_parent_unique
+                            ON sector_objects(parent_object_id)
+                            WHERE type = 'station' AND parent_object_id IS NOT NULL`, () => resolve());
                 });
             });
         });

@@ -37,6 +37,14 @@ export function renderUnitDetails(game, unit, options = {}) {
                 def.energyCost ? `Energy: ${def.energyCost}` : 'Energy: 0',
                 def.cooldown ? `Cooldown: ${def.cooldown} turn${def.cooldown === 1 ? '' : 's'}` : '',
                 def.range ? `Range: ${def.range}` : '',
+                def.type === 'offense' && typeof def.baseDamage === 'number' ? `Damage: ${def.baseDamage}` : '',
+                def.type === 'offense' && typeof def.optimal === 'number' ? `Optimal range: ${def.optimal}` : '',
+                def.type === 'offense' && typeof def.falloff === 'number' ? `Falloff: ${Math.round(def.falloff * 100)}% per tile from optimal` : '',
+                def.duration ? `Duration: ${def.duration} turn${def.duration === 1 ? '' : 's'}` : '',
+                typeof def.movementFlatBonus === 'number' ? `Movement: +${def.movementFlatBonus} tiles` : '',
+                typeof def.movementBonus === 'number' ? `Movement: +${Math.round(def.movementBonus * 100)}%` : '',
+                typeof def.healPercentPerTurn === 'number' ? `Repair: ${Math.round(def.healPercentPerTurn * 100)}% HP/turn` : '',
+                typeof def.scanRangeMultiplier === 'number' ? `Scan range: ×${def.scanRangeMultiplier}` : '',
                 def.target ? `Target: ${def.target}` : ''
             ].filter(Boolean);
             const tooltip = escapeAttr(tooltipParts.join(' • '));
@@ -46,7 +54,7 @@ export function renderUnitDetails(game, unit, options = {}) {
 
     const iconHtml = game.getUnitIcon(unit);
     const portrait = window.SFSprites?.getSpriteForObject?.(unit);
-    const portraitHtml = portrait ? `<img src="${escapeAttr(portrait.src)}" alt="${escapeAttr(meta.blueprintId || meta.stationClass || meta.shipType || meta.class || unit.type)}" style="display:block;width:100%;height:150px;object-fit:contain;margin:8px 0 14px;filter:drop-shadow(0 4px 12px rgba(100,181,246,.18))">` : '';
+    const portraitHtml = portrait ? `<img src="${escapeAttr(portrait.src)}" alt="${escapeAttr(meta.blueprintId || meta.stationClass || meta.shipClass || meta.shipType || meta.class || unit.type)}" style="display:block;width:100%;height:150px;object-fit:contain;margin:8px 0 14px;filter:drop-shadow(0 4px 12px rgba(100,181,246,.18))">` : '';
     const adjacentGate = (unit.type === 'ship') && isAdjacentToInterstellarGate(game, unit);
     detailsContainer.innerHTML = `
         <div class="unit-info">
@@ -90,6 +98,16 @@ export function renderUnitDetails(game, unit, options = {}) {
             ` : ''}
         </div>
     `;
+
+    if (unit.type === 'station' && window.SFApi?.State?.stationEffects) {
+        window.SFApi.State.stationEffects(unit.id).then(({ effects }) => {
+            if (!effects || game.selectedUnit?.id !== unit.id) return;
+            const host = effects.hostLabel ? `<div class="stat-item"><span>Host</span><strong>${escapeAttr(effects.hostLabel)}</strong></div>` : '';
+            const tags = effects.hostTags?.length ? `<div class="station-effect-tags">${effects.hostTags.map(tag => `<span class="chip">${escapeAttr(tag)}</span>`).join('')}</div>` : '';
+            const block = `<details class="unit-disclosure station-effects" open><summary>Station role</summary><div><strong>${escapeAttr(effects.role)}</strong><div class="station-effect-scope">Scope: ${escapeAttr(effects.scope)}</div>${host}${tags}<ul>${effects.effects.map(effect => `<li>${escapeAttr(effect)}</li>`).join('')}</ul></div></details>`;
+            detailsContainer.querySelector('.unit-command-groups')?.insertAdjacentHTML('beforebegin', block);
+        }).catch(() => {});
+    }
 
     const unitPanel = detailsContainer;
     if (unitPanel) {

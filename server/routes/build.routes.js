@@ -1,23 +1,54 @@
 const express = require('express');
 const { z } = require('zod');
-const db = require('../db');
-const { CargoManager } = require('../services/game/cargo-manager');
-const { BuildService } = require('../services/game/build.service');
-const { placeNear } = require('../services/world/physical-placement');
+const { BuildService, STRUCTURE_BUILD_COSTS } = require('../services/game/build.service');
 const router = express.Router();
 require('../middleware/auth').protectRouter(router);
 
-router.post('/build-ship', async (req, res) => {
-    const schema = z.object({ stationId: z.coerce.number().int().positive(), blueprintId: z.string().min(1), userId: z.coerce.number().int().positive(), freeBuild: z.boolean().optional() });
+router.get('/structure-costs', (req, res) => res.json({ costs: STRUCTURE_BUILD_COSTS }));
+
+router.post('/build-ship-preview', async (req, res) => {
+    const schema = z.object({ stationId: z.coerce.number().int().positive(), blueprintId: z.string().min(1), userId: z.coerce.number().int().positive() });
     const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
-    const { stationId, blueprintId, userId, freeBuild } = parsed.data;
+    try {
+        const result = await new BuildService().canBuildShip(parsed.data);
+        res.json(result);
+    } catch (e) {
+        console.error('Error previewing ship build:', e);
+        res.status(500).json({ error: 'Failed to preview ship build' });
+    }
+});
+
+router.get('/ship-builds/:stationId', async (req, res) => {
+    try {
+        const result = await new BuildService().listShipBuilds({ stationId: Number(req.params.stationId), userId: req.userId, includeCompleted: req.query.history === '1' });
+        if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error });
+        res.json(result);
+    } catch (e) { console.error('Error listing ship builds:', e); res.status(500).json({ error: 'Failed to list ship builds' }); }
+});
+
+router.post('/cancel-ship-build', async (req, res) => {
+    const schema = z.object({ buildId: z.coerce.number().int().positive(), userId: z.coerce.number().int().positive() });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
+    try {
+        const result = await new BuildService().cancelShipBuild(parsed.data);
+        if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error });
+        res.json(result);
+    } catch (e) { console.error('Error cancelling ship build:', e); res.status(500).json({ error: 'Failed to cancel ship build' }); }
+});
+
+router.post('/build-ship', async (req, res) => {
+    const schema = z.object({ stationId: z.coerce.number().int().positive(), blueprintId: z.string().min(1), userId: z.coerce.number().int().positive(), freeBuild: z.boolean().optional(), clientOrderId: z.string().min(1).max(100).optional() });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
+    const { stationId, blueprintId, userId, freeBuild, clientOrderId } = parsed.data;
     try {
         const svc = new BuildService();
-        const result = await svc.buildShip({ stationId, blueprintId, userId, freeBuild });
+        const result = await svc.buildShip({ stationId, blueprintId, userId, freeBuild, clientOrderId });
         if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error, ...(result.details ? { details: result.details } : {}) });
-        const { shipName, shipId, consumed, warning } = result;
-        const response = { success: true, shipName, shipId };
+        const { shipName, shipId, buildId, completionTurn, consumed, warning } = result;
+        const response = { success: true, shipName, ...(shipId ? { shipId } : {}), ...(buildId ? { buildId, completionTurn, status: 'queued' } : {}) };
         if (consumed) response.consumed = consumed;
         if (warning) response.warning = warning;
         res.json(response);
@@ -28,13 +59,13 @@ router.post('/build-ship', async (req, res) => {
 });
 
 router.post('/build-structure', async (req, res) => {
-    const schema = z.object({ stationId: z.coerce.number().int().positive(), structureType: z.string().min(1), cost: z.coerce.number().int().nonnegative(), userId: z.coerce.number().int().positive() });
+    const schema = z.object({ stationId: z.coerce.number().int().positive(), structureType: z.string().min(1), userId: z.coerce.number().int().positive() });
     const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
-    const { stationId, structureType, cost, userId } = parsed.data;
+    const { stationId, structureType, userId } = parsed.data;
     try {
         const svc = new BuildService();
-        const result = await svc.buildStructure({ stationId, structureType, cost, userId });
+        const result = await svc.buildStructure({ stationId, structureType, userId });
         if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error });
         res.json({ success: true, structureName: result.structureName });
     } catch (e) {
@@ -44,13 +75,13 @@ router.post('/build-structure', async (req, res) => {
 });
 
 router.post('/deploy-structure', async (req, res) => {
-    const schema = z.object({ shipId: z.coerce.number().int().positive(), structureType: z.string().min(1), userId: z.coerce.number().int().positive() });
+    const schema = z.object({ shipId: z.coerce.number().int().positive(), structureType: z.string().min(1), anchorObjectId: z.coerce.number().int().positive().optional(), userId: z.coerce.number().int().positive() });
     const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
-    const { shipId, structureType, userId } = parsed.data;
+    const { shipId, structureType, anchorObjectId, userId } = parsed.data;
     try {
         const svc = new BuildService();
-        const result = await svc.deployStructure({ shipId, structureType, userId });
+        const result = await svc.deployStructure({ shipId, structureType, anchorObjectId, userId });
         if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error });
         const { structureName, structureId, warning } = result;
         const out = { success: true, structureName, structureId };
@@ -62,48 +93,4 @@ router.post('/deploy-structure', async (req, res) => {
     }
 });
 
-router.post('/build-basic-explorer', (req, res) => {
-    const schema = z.object({ stationId: z.coerce.number().int().positive(), userId: z.coerce.number().int().positive() });
-    const parsed = schema.safeParse(req.body || {});
-    if (!parsed.success) return res.status(400).json({ error: 'invalid_payload', issues: parsed.error.issues });
-    const { stationId, userId } = parsed.data;
-    db.get('SELECT * FROM sector_objects WHERE id = ? AND owner_id = ? AND type = ?', [stationId, userId, 'station'], async (err, station) => {
-        if (err) return res.status(500).json({ error: 'Database error' });
-        if (!station) return res.status(404).json({ error: 'Station not found or not owned by player' });
-        try {
-            const currentTurn = await new Promise(r=>db.get('SELECT turn_number FROM turns WHERE game_id = (SELECT game_id FROM sectors WHERE id = ?) ORDER BY turn_number DESC LIMIT 1', [station.sector_id], (e,row)=>r(row?.turn_number || 1)));
-            const gameId = await new Promise(r=>db.get('SELECT game_id FROM sectors WHERE id = ?', [station.sector_id], (e,row)=>r(row?.game_id)));
-            const { computePilotStats } = require('../services/game/game-world.service');
-            const stats = await computePilotStats(gameId, userId, currentTurn);
-            if ((stats.available || 0) < 1) return res.status(400).json({ error: 'No available pilots to command a new ship' });
-        } catch {}
-        let spawnPoint;
-        try {
-            spawnPoint = await placeNear(db, station.sector_id, { type: 'ship', meta: { shipType: 'explorer' } }, station, { maxRadius: 20 });
-        } catch { return res.status(400).json({ error: 'No clear launch area beside this station' }); }
-        CargoManager.removeResourceFromCargo(stationId, 'rock', 1, false)
-            .then(result => {
-                if (!result.success) return res.status(400).json({ error: 'Insufficient resources' });
-                const shipMetaObj = { name: 'Explorer', hp: 50, maxHp: 50, scanRange: 50, movementSpeed: 4, cargoCapacity: 10, abilities: ['dual_light_coilguns','boost_engines','jury_rig_repair','survey_scanner','duct_tape_resilience','prospector_microlasers'], shipType: 'explorer', pilotCost: 1 };
-                const shipMeta = JSON.stringify(shipMetaObj);
-                const spawnX = spawnPoint.x;
-                const spawnY = spawnPoint.y;
-                db.run(
-                    'INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta, scan_range, movement_speed, can_active_scan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [station.sector_id, 'ship', spawnX, spawnY, userId, shipMeta, shipMetaObj.scanRange, shipMetaObj.movementSpeed, 0],
-                    function(shipErr) {
-                        if (shipErr) return res.status(500).json({ error: 'Failed to create ship' });
-                        const shipId = this.lastID;
-                        CargoManager.initializeShipCargo(shipId, shipMetaObj.cargoCapacity)
-                            .then(() => res.json({ success: true, shipName: shipMetaObj.name, shipId }))
-                            .catch(() => res.json({ success: true, shipName: shipMetaObj.name, shipId, warning: 'Ship created but cargo initialization failed' }));
-                    }
-                );
-            })
-            .catch(() => res.status(500).json({ error: 'Failed to consume resources' }));
-    });
-});
-
 module.exports = router;
-
-

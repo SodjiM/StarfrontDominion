@@ -16,8 +16,7 @@ router.get('/cargo/:cargoObjectId', (req, res) => {
         let allowed = Number(object.owner_id) === Number(userId);
         if (!allowed) { try { const m = JSON.parse(object.meta || '{}'); allowed = !!m.publicAccess; } catch {} }
         if (!allowed) return res.status(404).json({ error: 'Object not found or not owned by player' });
-        const useLegacyTable = object.type === 'ship';
-        CargoManager.getObjectCargo(objectId, useLegacyTable)
+        CargoManager.getObjectCargo(objectId)
             .then(cargo => res.json({ cargo }))
             .catch(() => res.status(500).json({ error: 'Failed to get object cargo' }));
     });
@@ -45,5 +44,4 @@ router.post('/transfer', async (req, res) => {
 });
 
 module.exports = router;
-
 

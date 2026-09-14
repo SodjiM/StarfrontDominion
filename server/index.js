@@ -94,7 +94,7 @@ protectedApi.get('/game/sector/:sectorId/trails', async (req, res) => {
     }
 });
     // Combat logs read API (simple fetch)
-    protectedApi.get('/combat/logs/:gameId/:turnNumber', (req, res) => {
+protectedApi.get('/combat/logs/:gameId/:turnNumber', (req, res) => {
         const { gameId, turnNumber } = req.params;
         db.all(
             'SELECT * FROM combat_logs WHERE game_id = ? AND turn_number = ? ORDER BY id ASC',
@@ -105,6 +105,112 @@ protectedApi.get('/game/sector/:sectorId/trails', async (req, res) => {
             }
         );
     });
+
+// Concise, player-scoped summary of the most recently completed turn.
+protectedApi.get('/game/turn-report/:gameId/:turnNumber', async (req, res) => {
+    const gameId = Number(req.params.gameId), turnNumber = Number(req.params.turnNumber), userId = req.userId;
+    const all = (sql, args) => new Promise((resolve, reject) => db.all(sql, args, (e, rows) => e ? reject(e) : resolve(rows || [])));
+    try {
+        await new Promise((resolve) => db.run(`CREATE TABLE IF NOT EXISTS turn_harvest_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, turn_number INTEGER NOT NULL,
+            ship_id INTEGER NOT NULL, resource_type_id INTEGER NOT NULL, amount INTEGER NOT NULL)`, () => resolve()));
+        const [movement, harvest, combat, blocked, builds, pilots] = await Promise.all([
+            all(`SELECT mh.object_id AS shipId, so.meta, mh.to_x AS x, mh.to_y AS y
+                 FROM movement_history mh JOIN sector_objects so ON so.id=mh.object_id
+                 WHERE mh.game_id=? AND mh.turn_number=? AND so.owner_id=?`, [gameId,turnNumber,userId]),
+            all(`SELECT e.ship_id AS shipId, rt.resource_name AS resource, SUM(e.amount) AS amount
+                 FROM turn_harvest_events e JOIN resource_types rt ON rt.id=e.resource_type_id
+                 JOIN sector_objects so ON so.id=e.ship_id
+                 WHERE e.game_id=? AND e.turn_number=? AND so.owner_id=? GROUP BY e.ship_id,rt.resource_name`, [gameId,turnNumber,userId]),
+            all(`SELECT cl.* FROM combat_logs cl
+                 LEFT JOIN sector_objects a ON a.id=cl.attacker_id LEFT JOIN sector_objects t ON t.id=cl.target_id
+                 WHERE cl.game_id=? AND cl.turn_number=? AND (a.owner_id=? OR t.owner_id=?) ORDER BY cl.id`, [gameId,turnNumber,userId,userId]),
+            all(`SELECT mo.object_id AS shipId, mo.blocked_by AS reason, so.x, so.y
+                 FROM movement_orders mo JOIN sector_objects so ON so.id=mo.object_id
+                 WHERE mo.status='blocked' AND so.owner_id=? AND so.sector_id IN (SELECT id FROM sectors WHERE game_id=?)`, [userId,gameId]),
+            all(`SELECT object_id AS objectId, kind, name FROM turn_build_events WHERE game_id=? AND turn_number=? AND user_id=? ORDER BY id`, [gameId,turnNumber,userId]),
+            all(`SELECT recovered, recruited FROM turn_pilot_events WHERE game_id=? AND turn_number=? AND user_id=? ORDER BY id`, [gameId,turnNumber,userId])
+        ]);
+        const pilotSummary = pilots.reduce((sum, row) => ({ recovered: sum.recovered + Number(row.recovered || 0), recruited: sum.recruited + Number(row.recruited || 0) }), { recovered: 0, recruited: 0 });
+        res.json({ gameId, turnNumber, arrivals: movement.map(({shipId,x,y})=>({shipId,x,y})), movement, harvest, combat, blocked, builds, pilots: pilotSummary });
+    } catch (e) { console.error('turn report error:', e); res.status(500).json({ error: 'server_error' }); }
+});
+
+protectedApi.get('/game/station-effects/:stationId', async (req, res) => {
+    try {
+        const station = await new Promise((resolve, reject) => db.get('SELECT * FROM sector_objects WHERE id=? AND owner_id=? AND type IN ("station","starbase")', [req.params.stationId, req.userId], (e,r)=>e?reject(e):resolve(r)));
+        if (!station) return res.status(404).json({ error: 'station_not_found' });
+        const host = station.parent_object_id ? await new Promise((resolve, reject) => db.get('SELECT * FROM sector_objects WHERE id=?', [station.parent_object_id], (e,r)=>e?reject(e):resolve(r))) : null;
+        const { getStationEffects } = require('./services/game/station-effects.service');
+        res.json({ effects: getStationEffects(station, host) });
+    } catch (e) { console.error('station effects error:', e); res.status(500).json({ error: 'server_error' }); }
+});
+
+// Senate state and actions are server-authoritative. The authenticated socket/HTTP
+// identity is always used; clients cannot choose another player here.
+protectedApi.get('/game/senate/:gameId/state', async (req, res) => {
+    try {
+        const senate = require('./services/game/senate.service');
+        const state = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+        res.json({ success: true, ...state });
+    } catch (e) {
+        const status = Number(e.statusCode || 500);
+        console.error('senate state error:', e);
+        res.status(status).json({ error: status === 500 ? 'server_error' : e.message });
+    }
+});
+
+protectedApi.post('/game/senate/:gameId/assign', async (req, res) => {
+    try {
+        const senate = require('./services/game/senate.service');
+        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+        const result = await senate.assignSenator(Number(req.params.gameId), Number(req.userId), Number(req.body?.senatorId), Number(req.body?.stationId), current.currentTurn, db);
+        res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
+    } catch (e) {
+        const status = Number(e.statusCode || 500);
+        console.error('senate assign error:', e);
+        res.status(status).json({ error: status === 500 ? 'server_error' : e.message });
+    }
+});
+
+protectedApi.post('/game/senate/:gameId/select', async (req, res) => {
+    try {
+        const senate = require('./services/game/senate.service');
+        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+        const result = await senate.selectCandidate(Number(req.params.gameId), Number(req.userId), Number(req.body?.candidateId), req.body?.replaceSenatorId ? Number(req.body.replaceSenatorId) : null, Number(req.body?.stationId), current.currentTurn, db);
+        res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
+    } catch (e) {
+        const status = Number(e.statusCode || 500);
+        console.error('senate select error:', e);
+        res.status(status).json({ error: status === 500 ? 'server_error' : e.message });
+    }
+});
+
+protectedApi.post('/game/senate/:gameId/close', async (req, res) => {
+    try {
+        const senate = require('./services/game/senate.service');
+        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+        const result = await senate.closeSession(Number(req.params.gameId), Number(req.userId), current.currentTurn, db);
+        res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
+    } catch (e) {
+        const status = Number(e.statusCode || 500);
+        console.error('senate close error:', e);
+        res.status(status).json({ error: status === 500 ? 'server_error' : e.message });
+    }
+});
+
+protectedApi.post('/game/senate/:gameId/policy', async (req, res) => {
+    try {
+        const senate = require('./services/game/senate.service');
+        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+        const result = await senate.setPolicy(Number(req.params.gameId), Number(req.userId), String(req.body?.policyKey || ''), Boolean(req.body?.active), current.currentTurn, db);
+        res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
+    } catch (e) {
+        const status = Number(e.statusCode || 500);
+        console.error('senate policy error:', e);
+        res.status(status).json({ error: status === 500 ? 'server_error' : e.message });
+    }
+});
 
 // Serve React landing at root
 app.get('/', (req, res) => {
@@ -1344,7 +1450,7 @@ async function processCombatOrders(gameId, turnNumber) {
                 if (gameId && target.owner_id) {
                     await new Promise((resolve) => db.run(
                         'INSERT INTO dead_pilots_queue (game_id, user_id, count, respawn_turn) VALUES (?, ?, ?, ?)',
-                        [gameId, target.owner_id, Math.max(1, pilotCost), Number(turnNumber) + 10],
+                        [gameId, target.owner_id, Math.max(1, pilotCost), Number(turnNumber) + 1],
                         () => resolve()
                     ));
                 }

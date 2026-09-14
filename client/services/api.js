@@ -38,11 +38,14 @@
   };
 
   const Build = {
+    structureCosts: () => getJson('/game/structure-costs'),
     blueprints: () => getJson('/game/blueprints'),
-    buildShip: (stationId, blueprintId, userId, freeBuild) => postJson('/game/build-ship', { stationId, blueprintId, userId, freeBuild }),
-    buildShipLegacy: (stationId, shipType, cost, userId) => postJson('/game/build-ship', { stationId, shipType, cost, userId }),
-    buildStructure: (stationId, structureType, cost, userId) => postJson('/game/build-structure', { stationId, structureType, cost, userId }),
-    deployStructure: (shipId, structureType, userId) => postJson('/game/deploy-structure', { shipId, structureType, userId }),
+    buildShipPreview: (stationId, blueprintId, userId) => postJson('/game/build-ship-preview', { stationId, blueprintId, userId }),
+    buildShip: (stationId, blueprintId, userId, freeBuild, clientOrderId) => postJson('/game/build-ship', { stationId, blueprintId, userId, freeBuild, clientOrderId }),
+    listShipBuilds: (stationId, userId, history=false) => getJson(`/game/ship-builds/${stationId}?history=${history ? '1' : '0'}&userId=${userId}`),
+    cancelShipBuild: (buildId, userId) => postJson('/game/cancel-ship-build', { buildId, userId }),
+    buildStructure: (stationId, structureType, userId) => postJson('/game/build-structure', { stationId, structureType, userId }),
+    deployStructure: (shipId, structureType, userId, anchorObjectId) => postJson('/game/deploy-structure', { shipId, structureType, userId, ...(anchorObjectId ? { anchorObjectId } : {}) }),
     listSectors: (gameId, userId) => getJson(`/game/sectors?gameId=${gameId}&userId=${userId}`),
     deployInterstellarGate: (shipId, destinationSectorId, userId) => postJson('/game/deploy-interstellar-gate', { shipId, destinationSectorId, userId })
   };
@@ -60,6 +63,8 @@
     },
     sectorTrails: (sectorId, currentTurn, maxAge=10) => getJson(`/game/sector/${sectorId}/trails?sinceTurn=${currentTurn}&maxAge=${maxAge}`),
     combatLogs: (gameId, turnNumber) => getJson(`/combat/logs/${gameId}/${turnNumber}`),
+    turnReport: (gameId, turnNumber) => getJson(`/game/turn-report/${gameId}/${turnNumber}`),
+    stationEffects: (stationId) => getJson(`/game/station-effects/${stationId}`),
     switchSector: (gameId, userId, sectorId) => postJson('/game/switch-sector', { gameId, userId, sectorId }),
     itineraries: (gameId, userId, sectorId) => {
       const qs = sectorId ? `?sectorId=${sectorId}` : '';
@@ -67,5 +72,13 @@
     }
   };
 
-  window.SFApi = { getJson, postJson, Cargo, Resources, Abilities, Players, Build, State };
+  const Senate = {
+    state: (gameId) => getJson(`/game/senate/${gameId}/state`),
+    assign: (gameId, senatorId, stationId) => postJson(`/game/senate/${gameId}/assign`, { senatorId, stationId }),
+    select: (gameId, candidateId, stationId, replaceSenatorId) => postJson(`/game/senate/${gameId}/select`, { candidateId, stationId, ...(replaceSenatorId ? { replaceSenatorId } : {}) }),
+    close: (gameId) => postJson(`/game/senate/${gameId}/close`, {}),
+    setPolicy: (gameId, policyKey, active) => postJson(`/game/senate/${gameId}/policy`, { policyKey, active })
+  };
+
+  window.SFApi = { getJson, postJson, Cargo, Resources, Abilities, Players, Build, State, Senate };
 })();

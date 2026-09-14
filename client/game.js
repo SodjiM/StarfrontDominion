@@ -38,7 +38,6 @@ import {
     isAdjacentToInterstellarGate,
     getAdjacentInterstellarGates
 } from './features/warp.js';
-import { showBuildModal as build_showBuildModal } from './features/build.js';
 
 export class GameClient {
     constructor() {
@@ -78,6 +77,7 @@ export class GameClient {
         this.queueReplaceMode = false;
         this._queuedByShipId = new Map();
         this._els = {}; // simple DOM cache
+        this.lastTurnReport = null;
     }
 
     // Safely run when state exists
@@ -88,6 +88,39 @@ export class GameClient {
     }
 
     async fetchSectorTrails() { return trailsFetchSectorTrails(this); }
+
+    async loadTurnReport(turnNumber) {
+        try { this.lastTurnReport = await SFApi.State.turnReport(this.gameId, turnNumber); this.renderTurnReport(); } catch {}
+    }
+    toggleTurnReport() { const panel=document.getElementById('turnReportPanel'); if (!panel) return; panel.hidden=!panel.hidden; const button=document.getElementById('turnReportBtn'); button?.setAttribute('aria-expanded',String(!panel.hidden)); if (!panel.hidden) this.renderTurnReport(); }
+    renderTurnReport() {
+        const panel=document.getElementById('turnReportPanel'); if (!panel) return;
+        const report=this.lastTurnReport; if (!report) { panel.innerHTML='<h3>Last turn</h3><p>No report yet.</p>'; return; }
+        const objectName=id=>this.objects.find(o=>Number(o.id)===Number(id))?.meta?.name || `Object ${id}`;
+        const row=(label,value,id)=>`<div class="turn-report-row">${id?`<button class="turn-report-link" data-report-ship="${id}">${label}</button>`:label}<strong>${value}</strong></div>`;
+        const arrivals=(report.arrivals||[]).map(x=>row(objectName(x.shipId),'Arrived',x.shipId)).join('');
+        const harvest=(report.harvest||[]).map(x=>row(objectName(x.shipId),`+${x.amount} ${x.resource}`,x.shipId)).join('');
+        const blocked=(report.blocked||[]).map(x=>row(objectName(x.shipId),'Blocked',x.shipId)).join('');
+        const builds=(report.builds||[]).map(x=>row(x.name,'Completed',x.objectId)).join('');
+        const combat=(report.combat||[]).map(x=>{
+            let data={};
+            try { data=typeof x.data==='string' ? JSON.parse(x.data||'{}') : (x.data||{}); } catch {}
+            const details=[];
+            if (typeof data.damage==='number') details.push(`${data.damage} damage`);
+            if (typeof data.distance==='number') details.push(`distance ${data.distance}`);
+            if (typeof data.rangeMult==='number' && data.rangeMult < 1) details.push(`${Math.round(data.rangeMult*100)}% range effectiveness`);
+            if (typeof data.damageReduction==='number' && data.damageReduction > 0) details.push(`${Math.round(data.damageReduction*100)}% mitigation`);
+            if (typeof data.evasionTotal==='number' && data.evasionTotal > 0) details.push(`${Math.round(data.evasionTotal*100)}% evasion`);
+            if (data.weaponKey) details.unshift(data.weaponKey);
+            const target=x.target_id ? ` on ${objectName(x.target_id)}` : '';
+            return `<div class="turn-report-row"><span>${x.summary||'Combat event'}${target}${details.length ? ` <small>(${details.join(' · ')})</small>` : ''}</span></div>`;
+        }).join('');
+        const needs=this.objects.filter(o=>o.type==='ship'&&Number(o.owner_id)===Number(this.userId)&&!o.movementActive&&!o.movementRetrying).map(o=>row(o.meta?.name||`Ship ${o.id}`,'Needs orders',o.id)).join('');
+        const pilotChanges = report.pilots && ((report.pilots.recovered||0) + (report.pilots.recruited||0)) > 0 ? `<div class="turn-report-section"><strong>Pilots</strong><div class="turn-report-row"><span>Returned to command</span><strong>+${Number(report.pilots.recovered||0) + Number(report.pilots.recruited||0)}</strong></div></div>` : '';
+        panel.innerHTML=`<h3>Turn ${report.turnNumber} report</h3>${arrivals?`<div class="turn-report-section"><strong>Arrivals</strong>${arrivals}</div>`:''}${harvest?`<div class="turn-report-section"><strong>Harvested</strong>${harvest}</div>`:''}${builds?`<div class="turn-report-section"><strong>Completed builds</strong>${builds}</div>`:''}${combat?`<div class="turn-report-section"><strong>Combat</strong>${combat}</div>`:''}${blocked?`<div class="turn-report-section"><strong>Blocked orders</strong>${blocked}</div>`:''}${pilotChanges}<div class="turn-report-section"><strong>Ships needing orders</strong>${needs||'<div class="turn-report-row">All ships have a plan.</div>'}</div>`;
+        panel.querySelectorAll('[data-report-ship]').forEach(b=>b.addEventListener('click',()=>{this.selectUnit?.(Number(b.dataset.reportShip)); panel.hidden=true;}));
+        const badge=document.getElementById('turnReportBadge'); if (badge) { const count=(report.arrivals?.length||0)+(report.harvest?.length||0)+(report.builds?.length||0)+(report.combat?.length||0)+(report.blocked?.length||0)+((report.pilots?.recovered||0)+(report.pilots?.recruited||0)); badge.textContent=String(count); badge.hidden=count===0; }
+    }
 
     // Lifecycle: init, socket, state, UI bindings
     async initialize(gameId) {
@@ -105,6 +138,9 @@ export class GameClient {
         SenateUI.loadSenateProgress(this);
         this.connectSocket();
         await this.loadGameState();
+        SenateUI.loadSenateProgress(this);
+        const completedTurn = Number(this.gameState?.currentTurn?.turn_number || 1) - 1;
+        if (completedTurn > 0) this.loadTurnReport(completedTurn);
         this.setupEventListeners();
         this.bindUIControls();
         startAmbientLoop(this);
@@ -227,7 +263,13 @@ export class GameClient {
     async updateUI() {
         return this.withState(async () => {
         if (!this.gameState.playerSetup?.setup_completed) {
-            try { const mod = await import('./ui/setup-modal.js'); mod.showSetupModal(this); } catch {}
+            try {
+                const mod = await import('./ui/setup-modal.js');
+                mod.showSetupModal(this);
+            } catch (error) {
+                console.error('Failed to open player setup modal:', error);
+                this.addLogEntry('Unable to open player setup. Please reload the game.', 'error');
+            }
             return;
         }
         uiUpdateTopbar(this);
@@ -343,13 +385,22 @@ export class GameClient {
             try { const data = await SFApi.Abilities.list(); window.AbilityDefs = (data && data.abilities) ? data.abilities : {}; } catch { window.AbilityDefs = {}; }
         }
         uiRenderUnitDetails(this, unit, {
-            onAction: (action) => {
+            onAction: async (action) => {
                 if (action === 'set-move-mode') { this.setMoveMode && this.setMoveMode(); return; }
                 if (action === 'set-warp-mode') { try { const { openMapModal } = require('./ui/map-modal.js'); openMapModal && openMapModal(); } catch { import('./ui/map-modal.js').then(m=>m.openMapModal && m.openMapModal()); } return; }
                 if (action === 'show-travel-options') { this.showInterstellarTravelOptions && this.showInterstellarTravelOptions(); return; }
                 if (action === 'toggle-mining') { try { SFMining.toggleMining(); } catch {} return; }
                 if (action === 'show-cargo') { try { UICargo.showCargo(this); } catch {} return; }
-                if (action === 'show-build') { build_showBuildModal(); return; }
+                if (action === 'show-build') {
+                    try {
+                        const mod = await import('./features/build.js');
+                        await mod.showBuildModal();
+                    } catch (error) {
+                        console.error('Failed to load construction bay:', error);
+                        this.addLogEntry('Construction bay is temporarily unavailable.', 'error');
+                    }
+                    return;
+                }
                 if (action === 'queue-refresh' && unit?.type === 'ship') { this.loadQueueLog && this.loadQueueLog(unit.id, true); return; }
                 if (action === 'queue-clear' && unit?.type === 'ship') { this.clearQueue && this.clearQueue(unit.id); return; }
                 if (action === 'queue-undo' && unit?.type === 'ship') { this.undoQueue && this.undoQueue(unit.id); return; }

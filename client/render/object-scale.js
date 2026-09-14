@@ -11,7 +11,7 @@ export function objectDisplaySize(obj, tileSize) {
     if (isCelestialObject(obj)) return Math.max(1, Number(obj.radius) || 1) * tileSize * 2;
     if (obj.type === 'resource_node') return tileSize * 0.8;
     const meta = obj.meta || {};
-    const key = meta.blueprintId || meta.stationClass || meta.shipType || meta.hull || meta.class || obj.subtype || obj.type;
+    const key = meta.blueprintId || meta.stationClass || meta.shipClass || meta.shipType || meta.hull || meta.class || obj.subtype || obj.type;
     let size;
     if (obj.type === 'station' || String(key).endsWith('-station')) {
         size = key === 'sun-station' ? [13, 104] : key === 'moon-station' ? [5, 72] : [9, 88];

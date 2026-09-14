@@ -63,16 +63,16 @@ class CargoManager {
      * @returns {Object} Cargo status with items, capacity, and space used
      */
     static async getShipCargo(shipId) {
-        return this.getObjectCargo(shipId, true); // Use legacy ship_cargo table for backward compatibility
+        return this.getObjectCargo(shipId);
     }
     
     /**
      * Get object's current cargo status (ships, structures, etc.)
      * @param {number} objectId - Object ID
-     * @param {boolean} useLegacyTable - Whether to use ship_cargo table (default: false, uses object_cargo)
+     * @param {boolean} _legacyFlag - Deprecated compatibility argument. All objects use object_cargo.
      * @returns {Object} Cargo status with items, capacity, and space used
      */
-    static async getObjectCargo(objectId, useLegacyTable = false) {
+    static async getObjectCargo(objectId, _legacyFlag = false) {
         return new Promise((resolve, reject) => {
             // Get object cargo capacity from metadata
             db.get('SELECT meta FROM sector_objects WHERE id = ?', [objectId], (err, object) => {
@@ -81,19 +81,16 @@ class CargoManager {
                     return;
                 }
                 
-                const meta = JSON.parse(object.meta || '{}');
-                const cargoCapacity = meta.cargoCapacity || 10;
-                
-                // Choose table and column names based on legacy flag
-                const tableName = useLegacyTable ? 'ship_cargo' : 'object_cargo';
-                const idColumn = useLegacyTable ? 'ship_id' : 'object_id';
+                let meta = {};
+                try { meta = JSON.parse(object.meta || '{}') || {}; } catch { meta = {}; }
+                const cargoCapacity = meta.cargoCapacity ?? 10;
                 
                 // Get all cargo items for this object
                 db.all(
-                    `SELECT sc.*, rt.resource_name, rt.category, rt.base_size, rt.icon_emoji, rt.color_hex
-                     FROM ${tableName} sc
-                     JOIN resource_types rt ON sc.resource_type_id = rt.id
-                     WHERE sc.${idColumn} = ? AND sc.quantity > 0`,
+                    `SELECT oc.*, rt.resource_key, rt.resource_name, rt.category, rt.base_size, rt.icon_emoji, rt.color_hex
+                     FROM object_cargo oc
+                     JOIN resource_types rt ON oc.resource_type_id = rt.id
+                     WHERE oc.object_id = ? AND oc.quantity > 0`,
                     [objectId],
                     (err, cargoItems) => {
                         if (err) {
@@ -136,7 +133,6 @@ class CargoManager {
                 return { success: false, error: `Unknown resource type: ${resourceName}` };
             }
             
-            // Get current cargo status (use legacy table for ships)
             const cargoStatus = await this.getShipCargo(shipId);
             
             // Calculate space needed
@@ -153,8 +149,7 @@ class CargoManager {
                 };
             }
             
-            // Add or update cargo using legacy table - call the universal method directly
-            await this.addResourceToCargo(shipId, resourceName, quantity, true);
+            await this.addResourceToCargo(shipId, resourceName, quantity);
             
             console.log(`📦 Added ${quantity} ${resourceName} to ship ${shipId} cargo`);
             
@@ -217,47 +212,29 @@ class CargoManager {
      * @param {Record<string, number>} resourceMap
      * @param {boolean} useLegacyTable
      */
-    static async consumeResourcesAtomic(objectId, resourceMap, useLegacyTable = false) {
-        const tableName = useLegacyTable ? 'ship_cargo' : 'object_cargo';
-        const idColumn = useLegacyTable ? 'ship_id' : 'object_id';
-        return new Promise((resolve) => {
-            db.serialize(() => {
-                db.run('BEGIN TRANSACTION');
-                // Verify availability
-                const shortages = [];
-                const getTypeId = (name) => new Promise((res) => {
-                    db.get('SELECT id FROM resource_types WHERE resource_name = ?', [name], (e, row) => res(row?.id || null));
-                });
-                const getQty = (rid) => new Promise((res) => {
-                    db.get(`SELECT quantity FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ?`, [objectId, rid], (e, row) => res(row?.quantity || 0));
-                });
-                (async () => {
-                    const plan = [];
-                    for (const [name, qty] of Object.entries(resourceMap)) {
-                        const rid = await getTypeId(name);
-                        if (!rid) { shortages.push({ resource: name, needed: qty, have: 0 }); continue; }
-                        const have = await getQty(rid);
-                        if (have < qty) shortages.push({ resource: name, needed: qty, have });
-                        plan.push({ rid, qty });
-                    }
-                    if (shortages.length > 0) {
-                        db.run('ROLLBACK');
-                        return resolve({ success: false, shortages });
-                    }
-                    // Deduct
-                    for (const { rid, qty } of plan) {
-                        await new Promise((res, rej) => {
-                            db.run(
-                                `UPDATE ${tableName} SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE ${idColumn} = ? AND resource_type_id = ?`,
-                                [qty, objectId, rid], (err) => err ? rej(err) : res()
-                            );
-                        });
-                        // Cleanup zeros
-                        await new Promise((res) => db.run(`DELETE FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ? AND quantity <= 0`, [objectId, rid], () => res()));
-                    }
-                    db.run('COMMIT', () => resolve({ success: true }));
-                })().catch(err => { console.error('consumeResourcesAtomic error:', err); db.run('ROLLBACK', () => resolve({ success: false, error: 'transaction_failed' })); });
-            });
+    static async consumeResourcesAtomic(objectId, resourceMap, _legacyFlag = false) {
+        const tableName = 'object_cargo';
+        const idColumn = 'object_id';
+        const { withSavepoint } = require('./savepoint');
+        const get = (sql, args) => new Promise((resolve, reject) => db.get(sql, args, (e, row) => e ? reject(e) : resolve(row)));
+        const run = (sql, args) => new Promise((resolve, reject) => db.run(sql, args, e => e ? reject(e) : resolve()));
+        return withSavepoint(db, async () => {
+            const shortages = [], plan = [];
+            for (const [name, qty] of Object.entries(resourceMap)) {
+                if (!Number.isFinite(qty) || qty < 0) throw new Error('Invalid resource quantity');
+                if (qty === 0) continue;
+                const type = await get('SELECT id FROM resource_types WHERE resource_key = ? OR resource_name = ? LIMIT 1', [name, name]);
+                const row = type && await get(`SELECT quantity FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ?`, [objectId, type.id]);
+                const have = row?.quantity || 0;
+                if (have < qty) shortages.push({ resource: name, needed: qty, have });
+                if (type) plan.push({ rid: type.id, qty });
+            }
+            if (shortages.length) return { success: false, shortages };
+            for (const { rid, qty } of plan) {
+                await run(`UPDATE ${tableName} SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE ${idColumn} = ? AND resource_type_id = ?`, [qty, objectId, rid]);
+                await run(`DELETE FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ? AND quantity <= 0`, [objectId, rid]);
+            }
+            return { success: true };
         });
     }
     
@@ -267,8 +244,8 @@ class CargoManager {
     static async getResourceType(resourceName) {
         return new Promise((resolve, reject) => {
             db.get(
-                'SELECT * FROM resource_types WHERE resource_name = ?',
-                [resourceName],
+                'SELECT * FROM resource_types WHERE resource_key = ? OR resource_name = ? LIMIT 1',
+                [resourceName, resourceName],
                 (err, row) => {
                     if (err) {
                         reject(err);
@@ -283,11 +260,11 @@ class CargoManager {
     /**
      * Get current quantity of a resource in ship cargo
      */
-    static async getCurrentCargoQuantity(shipId, resourceTypeId) {
+    static async getCurrentCargoQuantity(objectId, resourceTypeId) {
         return new Promise((resolve, reject) => {
             db.get(
-                'SELECT quantity FROM ship_cargo WHERE ship_id = ? AND resource_type_id = ?',
-                [shipId, resourceTypeId],
+                'SELECT quantity FROM object_cargo WHERE object_id = ? AND resource_type_id = ?',
+                [objectId, resourceTypeId],
                 (err, row) => {
                     if (err) {
                         reject(err);
@@ -302,27 +279,27 @@ class CargoManager {
     /**
      * Update ship cargo quantity (add or subtract)
      */
-    static async updateShipCargoQuantity(shipId, resourceTypeId, quantityDelta) {
+    static async updateShipCargoQuantity(objectId, resourceTypeId, quantityDelta) {
         return new Promise((resolve, reject) => {
             // Use INSERT OR REPLACE with calculated quantity
             db.run(
-                `INSERT INTO ship_cargo (ship_id, resource_type_id, quantity, last_updated)
+                `INSERT INTO object_cargo (object_id, resource_type_id, quantity, last_updated)
                  VALUES (?, ?, 
-                    COALESCE((SELECT quantity FROM ship_cargo WHERE ship_id = ? AND resource_type_id = ?), 0) + ?,
+                    COALESCE((SELECT quantity FROM object_cargo WHERE object_id = ? AND resource_type_id = ?), 0) + ?,
                     CURRENT_TIMESTAMP
                  )
-                 ON CONFLICT(ship_id, resource_type_id) DO UPDATE SET
+                 ON CONFLICT(object_id, resource_type_id) DO UPDATE SET
                     quantity = quantity + ?,
                     last_updated = CURRENT_TIMESTAMP`,
-                [shipId, resourceTypeId, shipId, resourceTypeId, quantityDelta, quantityDelta],
+                [objectId, resourceTypeId, objectId, resourceTypeId, quantityDelta, quantityDelta],
                 function(err) {
                     if (err) {
                         reject(err);
                     } else {
                         // Clean up zero quantities
                         db.run(
-                            'DELETE FROM ship_cargo WHERE ship_id = ? AND resource_type_id = ? AND quantity <= 0',
-                            [shipId, resourceTypeId],
+                            'DELETE FROM object_cargo WHERE object_id = ? AND resource_type_id = ? AND quantity <= 0',
+                            [objectId, resourceTypeId],
                             (err) => {
                                 if (err) {
                                     console.warn('Error cleaning up zero cargo quantities:', err);
@@ -490,7 +467,8 @@ class CargoManager {
             const removed = await this.removeResourceFromCargo(fromObjectId, resourceName, quantity, fromUseLegacy);
             if (!removed?.success) return { success: false, error: removed?.error || 'Unable to remove source cargo' };
             try {
-                await this.addResourceToCargo(toObjectId, resourceName, quantity, toUseLegacy);
+                const added = await this.addResourceToCargo(toObjectId, resourceName, quantity, toUseLegacy);
+                if (!added?.success) throw new Error(added?.error || 'Unable to add destination cargo');
             } catch (error) {
                 await this.addResourceToCargo(fromObjectId, resourceName, quantity, fromUseLegacy).catch(() => {});
                 throw error;
@@ -522,19 +500,36 @@ class CargoManager {
      * @param {boolean} useLegacyTable - Whether to use ship_cargo table
      * @returns {Object} Result with success status
      */
-    static async addResourceToCargo(objectId, resourceName, quantity, useLegacyTable = false) {
+    static async addResourceToCargo(objectId, resourceName, quantity, _legacyFlag = false) {
+        if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('Cargo quantity must be a positive integer');
         const resourceType = await this.getResourceType(resourceName);
         if (!resourceType) {
             throw new Error(`Unknown resource type: ${resourceName}`);
         }
-        
-        const tableName = useLegacyTable ? 'ship_cargo' : 'object_cargo';
-        const idColumn = useLegacyTable ? 'ship_id' : 'object_id';
+
+        const capacity = await new Promise((resolve, reject) => db.get(
+            'SELECT meta FROM sector_objects WHERE id = ?', [objectId], (e, row) => {
+                if (e) return reject(e);
+                let meta = {};
+                try { meta = JSON.parse(row?.meta || '{}') || {}; } catch {}
+                resolve(Number(meta.cargoCapacity ?? 10));
+            }
+        ));
+        const used = await new Promise((resolve, reject) => db.get(
+            `SELECT COALESCE(SUM(oc.quantity * rt.base_size), 0) AS used
+             FROM object_cargo oc JOIN resource_types rt ON rt.id = oc.resource_type_id
+             WHERE oc.object_id = ?`, [objectId], (e, row) => e ? reject(e) : resolve(Number(row?.used || 0))
+        ));
+        const required = quantity * Number(resourceType.base_size || 1);
+        if (used + required > capacity) {
+            return { success: false, error: `Insufficient cargo space. Need ${required}, have ${Math.max(0, capacity - used)}` };
+        }
         
         return new Promise((resolve, reject) => {
             db.run(
-                `INSERT OR REPLACE INTO ${tableName} (${idColumn}, resource_type_id, quantity, last_updated) 
-                 VALUES (?, ?, COALESCE((SELECT quantity FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ?), 0) + ?, CURRENT_TIMESTAMP)`,
+                `INSERT OR REPLACE INTO object_cargo (object_id, resource_type_id, quantity, last_updated)
+                 VALUES (?, ?, COALESCE((SELECT quantity FROM object_cargo WHERE object_id = ? AND resource_type_id = ?), 0) + ?, CURRENT_TIMESTAMP)
+                `,
                 [objectId, resourceType.id, objectId, resourceType.id, quantity],
                 function(err) {
                     if (err) {
@@ -555,19 +550,17 @@ class CargoManager {
      * @param {boolean} useLegacyTable - Whether to use ship_cargo table
      * @returns {Object} Result with success status
      */
-    static async removeResourceFromCargo(objectId, resourceName, quantity, useLegacyTable = false) {
+    static async removeResourceFromCargo(objectId, resourceName, quantity, _legacyFlag = false) {
+        if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('Cargo quantity must be a positive integer');
         const resourceType = await this.getResourceType(resourceName);
         if (!resourceType) {
             throw new Error(`Unknown resource type: ${resourceName}`);
         }
         
-        const tableName = useLegacyTable ? 'ship_cargo' : 'object_cargo';
-        const idColumn = useLegacyTable ? 'ship_id' : 'object_id';
-        
         return new Promise((resolve, reject) => {
             // First check current quantity
             db.get(
-                `SELECT quantity FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ?`,
+                'SELECT quantity FROM object_cargo WHERE object_id = ? AND resource_type_id = ?',
                 [objectId, resourceType.id],
                 (err, row) => {
                     if (err) {
@@ -585,7 +578,7 @@ class CargoManager {
                     if (newQuantity <= 0) {
                         // Remove the row if quantity becomes 0 or negative
                         db.run(
-                            `DELETE FROM ${tableName} WHERE ${idColumn} = ? AND resource_type_id = ?`,
+                            'DELETE FROM object_cargo WHERE object_id = ? AND resource_type_id = ?',
                             [objectId, resourceType.id],
                             function(err) {
                                 if (err) reject(err);
@@ -595,7 +588,7 @@ class CargoManager {
                     } else {
                         // Update with new quantity
                         db.run(
-                            `UPDATE ${tableName} SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE ${idColumn} = ? AND resource_type_id = ?`,
+                            'UPDATE object_cargo SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE object_id = ? AND resource_type_id = ?',
                             [newQuantity, objectId, resourceType.id],
                             function(err) {
                                 if (err) reject(err);

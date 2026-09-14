@@ -1605,6 +1605,7 @@
                     <button class="sf-btn sf-btn-secondary" id="playersStatusBtn" title="Show Players">
                         👥 Players
                     </button>
+                    <button class="sf-btn sf-btn-secondary turn-report-button" id="turnReportBtn" type="button" aria-label="Open last turn report" aria-expanded="false" title="Last turn report">🔔<span id="turnReportBadge" class="turn-report-badge" hidden>0</span></button>
                     <div class="workspace-launcher" aria-label="Open workspace panels">
                         <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="fleet">Fleet</button>
                         <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="details">Selected unit</button>
@@ -1612,6 +1613,7 @@
                     </div>
                 </div>
             </div>
+            <div id="turnReportPanel" class="turn-report-panel sf-card" hidden aria-label="Last turn report"></div>
             <div class="topbar-utilities" aria-label="Game utilities">
                 <button class="map-btn sf-btn sf-btn-secondary" id="centerActiveShipBtn" title="Center on active ship" aria-label="Center on active ship">⌖</button>
                 <button class="map-btn sf-btn sf-btn-secondary" id="floatingMiniBtn" title="Toggle minimap" aria-label="Toggle minimap">🎯</button>

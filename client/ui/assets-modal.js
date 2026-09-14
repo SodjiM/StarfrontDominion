@@ -7,6 +7,12 @@ export async function showAssets() {
             const playerObjects = client.gameState.objects.filter(obj => obj.owner_id === client.userId);
             if (playerObjects.length === 0) { UI.showAlert('No assets found'); return; }
             const assetsDisplay = document.createElement('div'); assetsDisplay.className = 'player-assets-display';
+            const pilots = client.gameState.pilotStats;
+            if (pilots) {
+                const pilotSection = document.createElement('div'); pilotSection.className = 'assets-summary-section';
+                pilotSection.innerHTML = `<h3>🧑‍✈️ Pilot Pool</h3><div class="resource-summary-grid"><div class="resource-summary-item"><span class="resource-name">Available</span><span class="resource-quantity">${pilots.available}/${pilots.capacity}</span></div><div class="resource-summary-item"><span class="resource-name">Deployed</span><span class="resource-quantity">${pilots.deployed ?? pilots.active ?? 0}</span></div><div class="resource-summary-item"><span class="resource-name">Recovering</span><span class="resource-quantity">${pilots.recovering ?? pilots.dead ?? 0}</span></div></div>`;
+                assetsDisplay.appendChild(pilotSection);
+            }
             const systemName = client.gameState.sector.name || 'Your System';
             const systemSection = document.createElement('div'); systemSection.className = 'assets-system-section'; systemSection.innerHTML = `<h3>🌌 ${systemName}</h3>`;
             const assetPromises = playerObjects.map(async (obj) => {
@@ -51,5 +57,4 @@ export async function showAssets() {
             UI.showModal({ title: '📊 Player Assets', content: assetsDisplay, actions: [{ text:'Close', style:'primary', action:()=>true }], className:'player-assets-modal' });
         } catch (e) { console.error('Error showing player assets:', e); client.addLogEntry?.('Failed to load player assets', 'error'); }
 }
-
 

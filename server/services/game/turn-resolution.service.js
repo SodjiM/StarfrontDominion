@@ -64,11 +64,21 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             const { processCombatOrders, cleanupExpiredEffectsAndWrecks } = require('./combat-impl');
             await processCombatOrders(gameId, turnNumber);
             await cleanupExpiredEffectsAndWrecks(gameId, turnNumber);
+            await require('./pilot.service').processPilotTurn(gameId, turnNumber, db);
             await regenerateShipEnergy(gameId, turnNumber);
 
             // 6.2 Region health tick (upkeep/decay + history)
             const { tickRegionHealth } = require('../world/region-health.tick');
             await tickRegionHealth(gameId, turnNumber);
+            await require('./political-influence.service').processPoliticalInfluence(gameId, turnNumber, db);
+            const { BuildService } = require('./build.service');
+            const buildService = new BuildService();
+            await buildService.processShipUpkeep(gameId, turnNumber);
+
+            // Complete ship construction whose material and pilot reservations
+            // were made earlier. The build service retries only placement
+            // failures; all other failures abort the turn transaction.
+            const completedBuilds = await buildService.completeDueShipBuilds(gameId, turnNumber);
 
             // 6.5. Materialize the next generic action for each eligible ship.
             const { QueuedActionService } = require('./queued-action.service');
@@ -80,6 +90,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
 
             // Create next turn and mark current as completed
             const nextTurn = turnNumber + 1;
+            const senateSessions = Number(nextTurn) % 100 === 0
+                ? await require('./senate.service').openSessionsAtTurn(gameId, nextTurn, db)
+                : [];
             await new Promise((resolve, reject) => {
                 db.run(
                     'INSERT INTO turns (game_id, turn_number, status) VALUES (?, ?, ?)',
@@ -100,6 +113,13 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
 
             for (const shipId of queueResult?.changedShipIds || []) {
                 io.to(`game-${gameId}`).emit('queue:updated', { shipId });
+            }
+            for (const build of completedBuilds || []) io.to(`game-${gameId}`).emit('ship-build:completed', build);
+            if (senateSessions.length) {
+                io.to(`game-${gameId}`).emit('senate-session-available', {
+                    openedTurn: nextTurn,
+                    expiresTurn: nextTurn + 9
+                });
             }
 
             const resolutionDurationMs = Date.now() - resolutionStartedAt;
@@ -291,43 +311,52 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
     }
 
     async function regenerateShipEnergy(gameId, turnNumber) {
-        const ships = await new Promise((resolve) => {
-            db.all(
-                `SELECT so.id, so.meta FROM sector_objects so
-                 JOIN sectors s ON s.id = so.sector_id
-                 WHERE s.game_id = ? AND so.type = 'ship'`,
-                [gameId],
-                (e, rows) => resolve(rows || [])
-            );
-        });
+        const ships = await new Promise((resolve, reject) => db.all(
+            `SELECT so.id, so.meta FROM sector_objects so JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.type = 'ship'`, [gameId],
+            (e, rows) => e ? reject(e) : resolve(rows || [])
+        ));
         for (const ship of ships) {
-            try {
-                const meta = JSON.parse(ship.meta || '{}');
-                const regen = Number(meta.energyRegen || 0);
-                if (regen > 0) {
-                    const current = Number(meta.energy || 0);
-                    const cap = (typeof meta.maxEnergy === 'number') ? Number(meta.maxEnergy) : undefined;
-                    const next = cap != null ? Math.min(cap, current + regen) : current + regen;
-                    if (next !== current) {
-                        meta.energy = next;
-                        const effects = await new Promise((resolve) => db.all('SELECT * FROM ship_status_effects WHERE ship_id = ? AND (expires_turn IS NULL OR expires_turn >= ?)', [ship.id, turnNumber], (e, rows) => resolve(rows || [])));
-                        const hasRegen = effects.some(eff => { try { const d = eff.effect_data ? JSON.parse(eff.effect_data) : {}; return eff.effect_key === 'repair_over_time' && d.healPercentPerTurn; } catch { return false; } });
-                        if (hasRegen && typeof meta.maxHp === 'number' && typeof meta.hp === 'number') {
-                            const healPct = effects.reduce((acc, eff) => { try { const d = eff.effect_data ? JSON.parse(eff.effect_data) : {}; return acc + (eff.effect_key === 'repair_over_time' ? (d.healPercentPerTurn || 0) : 0); } catch { return acc; } }, 0);
-                            const heal = Math.max(1, Math.floor((meta.maxHp || 0) * healPct));
-                            meta.hp = Math.min(meta.maxHp, meta.hp + heal);
-                        }
-                        // Clear expired UI hints on tick
-                        try {
-                            if (typeof meta.scanBoostExpires === 'number' && Number(meta.scanBoostExpires) <= Number(turnNumber)) { delete meta.scanRangeMultiplier; delete meta.scanBoostExpires; }
-                            if (typeof meta.movementBoostExpires === 'number' && Number(meta.movementBoostExpires) <= Number(turnNumber)) { delete meta.movementBoostMultiplier; delete meta.movementBoostExpires; }
-                            if (typeof meta.movementFlatExpires === 'number' && Number(meta.movementFlatExpires) <= Number(turnNumber)) { delete meta.movementFlatBonus; delete meta.movementFlatExpires; }
-                            if (typeof meta.evasionExpires === 'number' && Number(meta.evasionExpires) <= Number(turnNumber)) { delete meta.evasionBonus; delete meta.evasionExpires; }
-                        } catch {}
-                        await new Promise((resolve) => db.run('UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?', [JSON.stringify(meta), new Date().toISOString(), ship.id], () => resolve()));
-                    }
+            const meta = JSON.parse(ship.meta || '{}');
+            const before = JSON.stringify(meta);
+            let regen = Number(meta.energyRegen || 0);
+            let stationBonuses = {};
+            try { stationBonuses = await require('./station-effects.service').getOperationalBonuses(db, ship); } catch {}
+            regen *= 1 + Math.min(0.25, Number(stationBonuses.energyRegenMultiplier || 0));
+            if (regen > 0) {
+                const current = Number(meta.energy || 0);
+                meta.energy = typeof meta.maxEnergy === 'number'
+                    ? Math.min(meta.maxEnergy, current + regen) : current + regen;
+            }
+            const effects = await new Promise((resolve, reject) => db.all(
+                `SELECT effect_data FROM ship_status_effects WHERE ship_id = ?
+                 AND effect_key = 'repair_over_time' AND (expires_turn IS NULL OR expires_turn >= ?)`,
+                [ship.id, turnNumber], (e, rows) => e ? reject(e) : resolve(rows || [])
+            ));
+            const healPercent = effects.reduce((total, effect) => {
+                const value = Number(JSON.parse(effect.effect_data || '{}').healPercentPerTurn || 0);
+                return total + (Number.isFinite(value) && value > 0 ? value : 0);
+            }, 0);
+            if (healPercent > 0 && typeof meta.hp === 'number' && typeof meta.maxHp === 'number' && meta.hp > 0) {
+                meta.hp = Math.min(meta.maxHp, meta.hp + Math.max(1, Math.floor(meta.maxHp * healPercent * (1 + Math.min(0.25, Number(stationBonuses.repairMultiplier || 0))))));
+            }
+            for (const [expiry, field] of [
+                ['scanBoostExpires', 'scanRangeMultiplier'],
+                ['movementBoostExpires', 'movementBoostMultiplier'],
+                ['movementFlatExpires', 'movementFlatBonus'],
+                ['evasionExpires', 'evasionBonus']
+            ]) {
+                if (typeof meta[expiry] === 'number' && meta[expiry] <= turnNumber) {
+                    delete meta[expiry];
+                    delete meta[field];
                 }
-            } catch {}
+            }
+            if (JSON.stringify(meta) !== before) {
+                await new Promise((resolve, reject) => db.run(
+                    'UPDATE sector_objects SET meta = ?, updated_at = ? WHERE id = ?',
+                    [JSON.stringify(meta), new Date().toISOString(), ship.id], e => e ? reject(e) : resolve()
+                ));
+            }
         }
     }
 
@@ -335,4 +364,3 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
 }
 
 module.exports = { createTurnResolver };
-

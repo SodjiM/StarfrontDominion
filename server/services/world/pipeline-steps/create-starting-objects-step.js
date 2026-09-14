@@ -66,7 +66,7 @@ class CreateStartingObjectsStep extends BaseStep {
                 const shipMetaObj = {
                     name: `${bp.name}`,
                     ...bp,
-                    shipType: bp.class,
+                    shipClass: bp.class,
                     blueprintId: bp.id || 'explorer'
                 };
                 if (!Array.isArray(shipMetaObj.abilities)) shipMetaObj.abilities = [];
@@ -99,4 +99,3 @@ class CreateStartingObjectsStep extends BaseStep {
 }
 
 module.exports = { CreateStartingObjectsStep };
-

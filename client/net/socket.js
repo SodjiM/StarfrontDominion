@@ -121,6 +121,7 @@ function buildHandlers(game) {
             game.addLogEntry(`Turn ${data.turnNumber} is resolving...`, 'warning');
         },
         'turn-resolved': (data) => {
+            game.loadTurnReport && game.loadTurnReport(data.turnNumber);
             Promise.resolve()
                 .then(() => game.loadGameState())
                 .then(() => {
@@ -152,6 +153,10 @@ function buildHandlers(game) {
                         } catch {}
                     }, 0);
                 });
+        },
+        'senate-session-available': (data) => {
+            game.addLogEntry(`Senate session available for turn ${data?.openedTurn || 'next'}.`, 'info');
+            try { import('../ui/senate.js').then(mod => mod.showSenate(game)); } catch {}
         },
         'harvesting-started': (data) => { game.addLogEntry(data.message, 'success'); game.loadGameState && game.loadGameState(); },
         'harvesting-stopped': (data) => { game.addLogEntry(data.message, 'info'); game.loadGameState && game.loadGameState(); },

@@ -6,7 +6,7 @@ const db=require('../server/db');
 const {NavigationService}=require('../server/services/game/navigation.service');
 const n=new NavigationService(db),auth=require('../server/middleware/auth');
 const app=express();app.use(express.json());app.use('/auth',require('../server/routes/auth'));app.use('/lobby',require('../server/routes/lobby'));
-const protectedRouter=express.Router();auth.protectRouter(protectedRouter);protectedRouter.get('/:gameId/state/:userId',(req,res)=>res.json({userId:req.userId}));app.use('/game',protectedRouter);
+const protectedRouter=express.Router();auth.protectRouter(protectedRouter);protectedRouter.get('/:gameId/state/:userId',(req,res)=>res.json({userId:req.userId}));app.use('/game',protectedRouter);app.use('/game',require('../server/routes/build.routes'));
 const server=createServer(app),io=new Server(server);auth.protectSockets(io);require('../server/sockets/game.channel').registerGameChannel({io,db,resolveTurn:async()=>{}});
 let base,port,alice,bob,game,ship,sector;const sockets=[];
 async function request(path,body,cookie,method){return fetch(base+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},signal:AbortSignal.timeout(5000),body:body?JSON.stringify(body):undefined});}
@@ -62,4 +62,26 @@ test('logout revokes existing HTTP and socket sessions; login reconnects',async(
  const login=await request('/auth/login',{username:'alice',password:'family-test-password'});assert.equal(login.status,200);
  const fresh=login.headers.get('set-cookie').split(';')[0];const reconnected=await connect(fresh);reconnected.emit('join-game',game,alice.userId);
  assert.equal((await reconnected.call('queue:list',{gameId:game,shipId:ship})).success,true);
+});
+
+test('construction catalog and purchases agree over authenticated HTTP',async()=>{
+ const {CargoManager}=require('../server/services/game/cargo-manager');
+ const {STRUCTURE_BUILD_COSTS}=require('../server/services/game/build.service');
+ assert.equal((await request('/game/structure-costs')).status,401);
+ const catalog=await request('/game/structure-costs',null,bob.cookie);
+ assert.equal(catalog.status,200);assert.deepEqual((await catalog.json()).costs,STRUCTURE_BUILD_COSTS);
+ const stationId=(await n.run("INSERT INTO sector_objects(sector_id,type,x,y,owner_id,meta) VALUES(?,'station',1500,1500,?,'{}')",[sector,bob.userId])).lastID;
+ await CargoManager.addResourceToCargo(stationId,'rock',8);
+ const built=await request('/game/build-structure',{stationId,structureType:'sun-station',cost:0},bob.cookie);
+ assert.equal(built.status,200);
+ const cargo=await CargoManager.getObjectCargo(stationId);
+ assert.equal(cargo.items.find(i=>i.resource_name==='rock'),undefined);
+ assert.equal(cargo.items.find(i=>i.resource_name==='sun-station').quantity,1);
+ const insufficient=await request('/game/build-structure',{stationId,structureType:'sun-station'},bob.cookie);
+ assert.equal(insufficient.status,400);
+ await CargoManager.addResourceToCargo(stationId,'rock',1);
+ await n.run("CREATE TEMP TRIGGER reject_explorer BEFORE INSERT ON sector_objects WHEN NEW.type='ship' BEGIN SELECT RAISE(ABORT,'injected explorer failure'); END");
+ try {assert.equal((await request('/game/build-basic-explorer',{stationId},bob.cookie)).status,500);}
+ finally {await n.run('DROP TRIGGER reject_explorer');}
+ assert.equal((await CargoManager.getObjectCargo(stationId)).items.find(i=>i.resource_name==='rock').quantity,1);
 });

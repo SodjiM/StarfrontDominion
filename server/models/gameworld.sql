@@ -127,3 +127,32 @@ CREATE TABLE IF NOT EXISTS dead_pilots_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dead_pilots_by_turn ON dead_pilots_queue(game_id, user_id, respawn_turn);
+
+-- Authoritative pilot pool. Available pilots are unassigned living pilots;
+-- deployed is derived from live ships and recovering from the death queue.
+CREATE TABLE IF NOT EXISTS pilot_ledgers (
+    game_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    capacity INTEGER NOT NULL DEFAULT 5,
+    available INTEGER NOT NULL DEFAULT 5,
+    regen_rate REAL NOT NULL DEFAULT 1,
+    regen_progress REAL NOT NULL DEFAULT 0,
+    last_regenerated_turn INTEGER NOT NULL DEFAULT 0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (game_id, user_id),
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS turn_pilot_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    turn_number INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    recovered INTEGER NOT NULL DEFAULT 0,
+    recruited INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_turn_pilot_events_player ON turn_pilot_events(game_id,user_id,turn_number);
