@@ -415,15 +415,13 @@ function queuePlannedRoute(route, button) {
     button.dataset.busy = '1';
     button.disabled = true;
     button.textContent = 'Queuing...';
-    const legs = Array.isArray(route.legs) ? route.legs : [];
     client.socket?.emit('travel:confirm', {
         routeId: route.routeId,
         queue: true,
         clientOrderId: `travel-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         gameId: client.gameId,
         sectorId: client.gameState.sector.id,
-        shipId: client.selectedUnit.id,
-        legs
+        shipId: client.selectedUnit.id
     }, (resp) => {
         button.dataset.busy = '0';
         if (!resp?.success) {
@@ -435,7 +433,7 @@ function queuePlannedRoute(route, button) {
         }
         button.textContent = 'Queued';
         setPlannerStatus(resp.mode === 'impulse' ? 'Impulse movement queued for the next turn.' : 'Warp route queued for the next turn.', 'success');
-        client.__laneHighlight = { until: Number.MAX_SAFE_INTEGER, legs };
+        client.__laneHighlight = null;
         client.addLogEntry(resp.mode === 'impulse' ? 'Movement queued' : 'Warp queued', 'success');
         redrawMap();
     });
@@ -657,14 +655,7 @@ function showPlannerRoutes(routes) {
         const container = document.getElementById('routesList'); 
         if (!container) return;
         
-        const rawList = Array.isArray(routes) ? routes.slice(0, 3) : [];
-        const list = rawList.filter(r => {
-            const legs = Array.isArray(r.legs) ? r.legs.map(normalizeLeg) : [];
-            const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-            if (r.mode !== 'impulse' && (!legs.length || !nonZero.length)) return false;
-            r.legs = legs;
-            return true;
-        });
+        const list = filterAndNormalizeRoutes(routes);
         window.__lastPlannedRoutes = list;
         client.__selectedRoute = list[0] || null;
         client.__routeReplanAt = 0;
@@ -678,30 +669,19 @@ function showPlannerRoutes(routes) {
         setPlannerStatus(`${list.length} route option${list.length === 1 ? '' : 's'} available.`, 'success');
         container.innerHTML = '';
         
-        const formatBreakdown = (b) => {
-            if (!b) return '';
-            const labels = [['approach','approach'],['queue','queue'],['merge','merge'],['warp','warp'],['transfer','transfer'],['finalApproach','final'],['offRamp','off-ramp'],['impulse','impulse']];
-            return labels.filter(([key]) => Number(b[key] || 0) > 0.01)
-                .map(([key, label]) => `${label} ${Number(b[key]).toFixed(1)}`).join(' | ');
-        };
-
         list.forEach((r, idx) => {
-            const rho = Number(r.rho || 0);
-            const rhoBadgeClass = rho <= 1.0 ? 'rho-good' : (rho <= 1.5 ? 'rho-warn' : 'rho-bad');
-            
             const card = document.createElement('article');
             card.className = 'route-card' + (idx === 0 ? ' selected' : '');
             card.dataset.routeIndex = idx;
 
-            const routeMode = r.mode === 'impulse' ? 'Direct impulse' : r.legs.map(L => L.entry === 'tap' ? 'Tap entry' : 'Wildcat entry').join(' to ');
+            const routeMode = r.mode === 'impulse' ? 'Direct impulse' : 'Warp route';
             card.innerHTML = `
                 <button class="route-select-btn" type="button" aria-pressed="${idx === 0 ? 'true' : 'false'}">
                     <span class="route-info">
                         <span class="route-name">Option ${idx + 1}${idx === 0 ? ' <span class="route-recommended">Fastest</span>' : ''}</span>
                         <span class="route-meta">${routeMode}</span>
-                        ${formatBreakdown(r.breakdown) ? `<span class="route-breakdown">${formatBreakdown(r.breakdown)}</span>` : ''}
                     </span>
-                    <span class="route-stats"><span class="route-badge eta">${r.eta} turns</span>${r.mode === 'impulse' ? '' : `<span class="route-badge ${rhoBadgeClass}">Load ${rho.toFixed(2)}</span>`}</span>
+                    <span class="route-stats"><span class="route-badge eta">${r.eta} turns</span><span class="route-badge">Risk ${r.risk}</span></span>
                 </button>
                 <button class="route-queue-btn" type="button">Queue route</button>
             `;
@@ -713,11 +693,7 @@ function showPlannerRoutes(routes) {
                 card.classList.add('selected');
                 selectButton.setAttribute('aria-pressed', 'true');
                 client.__selectedRoute = r;
-                client.__laneHighlight = { until: Date.now() + 30000, legs: r.legs };
-                redrawMap();
-            };
-            selectButton.onmouseenter = () => {
-                client.__laneHighlight = { until: Date.now() + 30000, legs: r.legs };
+                client.__laneHighlight = null;
                 redrawMap();
             };
             card.querySelector('.route-queue-btn').onclick = (event) => queuePlannedRoute(r, event.currentTarget);
@@ -725,10 +701,7 @@ function showPlannerRoutes(routes) {
         });
         
         // Highlight first route - use lightweight redraw
-        if (list[0]) {
-            client.__laneHighlight = { until: Date.now() + 30000, legs: list[0].legs };
-            redrawMap();
-        }
+        if (list[0]) redrawMap();
     } catch (e) { console.error('showPlannerRoutes error', e); }
 }
 

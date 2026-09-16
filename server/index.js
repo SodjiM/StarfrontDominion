@@ -1471,6 +1471,7 @@ async function processCombatOrders(gameId, turnNumber) {
 
         // Handle kill → wreck + loot
         if (newHp <= 0) {
+            await new (require('./services/game/infrastructure-lifecycle.service').InfrastructureLifecycleService)(db).markDestroyed(target.id, 'combat_destroyed');
             // Convert to wreck object (keep same position/sector)
             await new Promise((resolve) => db.run('DELETE FROM ship_status_effects WHERE ship_id = ?', [target.id], () => resolve()));
             const wreckMeta = { name: (tMeta.name || 'Wreck'), type: 'wreck', decayTurn: Number(turnNumber) + 7 };

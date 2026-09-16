@@ -84,7 +84,11 @@ function registerGameChannel({ io, db, resolveTurn }) {
                 });
                 // Prefer best ETAs overall; include top 3
                 plannedRoutes.clear();
-                const routes = filtered.sort((a,b)=>a.eta-b.eta).slice(0,3).map(r=>{const routeId=require('node:crypto').randomUUID();plannedRoutes.set(routeId,{mode:r.mode||'lane',legs:r.legs||[],dest:to,shipId,sectorId,gameId,turn:currentTurn,at:Date.now()});return {...r,routeId};});
+                const routes = filtered.sort((a,b)=>a.eta-b.eta).slice(0,3).map(r=>{
+                    const routeId=require('node:crypto').randomUUID();
+                    plannedRoutes.set(routeId,{mode:r.mode||'lane',legs:r.legs||[],dest:to,shipId,sectorId,gameId,turn:currentTurn,at:Date.now()});
+                    return { routeId, mode:r.mode||'lane', eta:Number(r.eta||0), risk:Number(r.risk||0) };
+                });
                 cb && cb({ success:true, routes, currentTurn });
             } catch (e) {
                 cb && cb({ success:false, error:'server_error' });
@@ -109,7 +113,7 @@ function registerGameChannel({ io, db, resolveTurn }) {
                         });
                         plannedRoutes.delete(payload.routeId);
                         if (!queued.duplicate) io.to(`game-${plan.gameId}`).emit('queue:updated', { shipId: plan.shipId });
-                        return cb?.({ success: true, queued: true, duplicate: queued.duplicate, mode: 'impulse', order: queued.order });
+                        return cb?.({ success: true, queued: true, duplicate: queued.duplicate, mode: 'impulse' });
                     }
                     const queued = await queuedActions.enqueue({
                         gameId: plan.gameId,
@@ -120,13 +124,14 @@ function registerGameChannel({ io, db, resolveTurn }) {
                     });
                     plannedRoutes.delete(payload.routeId);
                     if (!queued.duplicate) io.to(`game-${plan.gameId}`).emit('queue:updated', { shipId: plan.shipId });
-                    return cb?.({ success: true, queued: true, duplicate: queued.duplicate, order: queued.order });
+                    return cb?.({ success: true, queued: true, duplicate: queued.duplicate, mode: 'lane' });
                 } catch (e) {
                     return cb?.({ success: false, error: e?.message || 'queue_warp_failed' });
                 }
             }
             const result=await laneService.confirm(plan.shipId,plan.sectorId,plan.legs,plan.dest,plan.turn);
-            plannedRoutes.delete(payload.routeId);cb?.(result);
+            plannedRoutes.delete(payload.routeId);
+            cb?.({ success:result.success, stored:result.stored, started:result.started, mode:plan.mode });
         });
         socket.on('travel:start',async(payload,cb)=>{
             const row=await laneService.get("SELECT id FROM lane_itineraries WHERE ship_id=? AND status='active'",[payload.shipId]);

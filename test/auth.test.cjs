@@ -6,9 +6,9 @@ const db=require('../server/db');
 const {NavigationService}=require('../server/services/game/navigation.service');
 const n=new NavigationService(db),auth=require('../server/middleware/auth');
 const app=express();app.use(express.json());app.use('/auth',require('../server/routes/auth'));app.use('/lobby',require('../server/routes/lobby'));
-const protectedRouter=express.Router();auth.protectRouter(protectedRouter);protectedRouter.get('/:gameId/state/:userId',(req,res)=>res.json({userId:req.userId}));app.use('/game',protectedRouter);app.use('/game',require('../server/routes/build.routes'));
+const protectedRouter=express.Router();auth.protectRouter(protectedRouter);protectedRouter.get('/:gameId/state/:userId',(req,res)=>res.json({userId:req.userId}));app.use('/game',protectedRouter);app.use('/game',require('../server/routes/build.routes'));app.use('/game',require('../server/routes/galaxy.routes'));app.use('/game',require('../server/routes/state.routes'));app.use('/game',require('../server/routes/movement.routes'));
 const server=createServer(app),io=new Server(server);auth.protectSockets(io);require('../server/sockets/game.channel').registerGameChannel({io,db,resolveTurn:async()=>{}});
-let base,port,alice,bob,game,ship,sector;const sockets=[];
+let base,port,alice,bob,game,ship,sector,incident;const sockets=[];
 async function request(path,body,cookie,method){return fetch(base+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},signal:AbortSignal.timeout(5000),body:body?JSON.stringify(body):undefined});}
 async function register(username){const r=await request('/auth/register',{username,password:'family-test-password'});assert.equal(r.status,200);assert.match(r.headers.get('set-cookie'),/HttpOnly/i);return {...await r.json(),cookie:r.headers.get('set-cookie').split(';')[0]};}
 async function connect(cookie){
@@ -18,12 +18,24 @@ async function connect(cookie){
  });await ready;
  return {ws,events,emit(event,...args){ws.send('42'+JSON.stringify([event,...args]));},call(event,payload){return new Promise((resolve,reject)=>{const id=sequence++,timer=setTimeout(()=>reject(new Error('ack timeout: '+event)),3000);waiting.set(id,r=>{clearTimeout(timer);resolve(r)});ws.send('42'+id+JSON.stringify([event,payload]));});}};
 }
-before(async()=>{await db.ready;await new Promise((r,j)=>{server.once('error',j);server.listen(0,'127.0.0.1',r)});port=server.address().port;base=`http://127.0.0.1:${port}`;alice=await register('alice');bob=await register('bob');game=(await n.run("INSERT INTO games(name,status) VALUES('family','active')")).lastID;for(const u of [alice,bob])await n.run('INSERT INTO game_players(game_id,user_id) VALUES(?,?)',[game,u.userId]);await n.run("INSERT INTO turns(game_id,turn_number,status) VALUES(?,1,'waiting')",[game]);sector=(await n.run("INSERT INTO sectors(game_id,name) VALUES(?,'home')",[game])).lastID;ship=(await n.run("INSERT INTO sector_objects(sector_id,type,x,y,owner_id,meta) VALUES(?,'ship',10,10,?,?)",[sector,alice.userId,'{"movementSpeed":4}'])).lastID;});
+before(async()=>{await db.ready;await new Promise((r,j)=>{server.once('error',j);server.listen(0,'127.0.0.1',r)});port=server.address().port;base=`http://127.0.0.1:${port}`;alice=await register('alice');bob=await register('bob');game=(await n.run("INSERT INTO games(name,status) VALUES('family','active')")).lastID;for(const u of [alice,bob])await n.run('INSERT INTO game_players(game_id,user_id) VALUES(?,?)',[game,u.userId]);await n.run("INSERT INTO turns(game_id,turn_number,status) VALUES(?,1,'waiting')",[game]);sector=(await n.run("INSERT INTO sectors(game_id,name) VALUES(?,'home')",[game])).lastID;await n.run("INSERT INTO regions(sector_id,region_id,cells_json,health) VALUES(?,'A',?,50)",[sector,JSON.stringify(Array.from({length:9},(_,i)=>({row:Math.floor(i/3),col:i%3})))]);incident=(await n.run(`INSERT INTO region_incidents(game_id,sector_id,region_id,incident_key,title,summary,utility_role,severity,status,created_turn,due_turn,pressure_turn,pressure_band,pressure_score,generation_roll,generation_version) VALUES(?,?,?,'debris-migration','Debris Migration','Debris threatens traffic','engineering','significant','active',1,5,1,'high',64,0.1,1)`,[game,sector,'A'])).lastID;ship=(await n.run("INSERT INTO sector_objects(sector_id,type,x,y,owner_id,meta) VALUES(?,'ship',10,10,?,?)",[sector,alice.userId,'{"movementSpeed":4}'])).lastID;await n.run("INSERT INTO sector_objects(sector_id,type,x,y,owner_id,meta) VALUES(?,'warp-beacon',3000,3000,?,?)",[sector,bob.userId,'{"structureType":"warp-beacon","hp":100}']);});
 after(async()=>{for(const s of sockets)s.terminate();await new Promise(r=>io.close(r));await new Promise(r=>db.close(r));});
 test('HTTP requires session; cannot impersonate, delete all games, or forge origin',async()=>{
  assert.equal((await request(`/game/${game}/state/${alice.userId}`)).status,401);
  assert.equal((await request(`/game/${game}/state/${alice.userId}`,null,alice.cookie)).status,200);
  assert.equal((await request(`/game/${game}/state/${bob.userId}`,null,alice.cookie)).status,403);
+ assert.equal((await request(`/game/system/${sector}/facts`)).status,401);
+ const factsResponse=await request(`/game/system/${sector}/facts`,null,alice.cookie);assert.equal(factsResponse.status,200);
+ const factsPayload=await factsResponse.json();assert.equal(JSON.stringify(factsPayload).includes('concealedLoad'),false);assert.equal('minerals' in factsPayload,false);assert.equal('laneTapsByEdge' in factsPayload,false);
+ assert.deepEqual(factsPayload.regions[0].incidents[0].response,{status:'unanswered',viewerResponding:false});
+ assert.equal((await request(`/game/system/${sector}/incidents/${incident}/response`,{},alice.cookie,'POST')).status,200);
+ const respondingFacts=await (await request(`/game/system/${sector}/facts`,null,alice.cookie)).json();assert.deepEqual(respondingFacts.regions[0].incidents[0].response,{status:'responding',viewerResponding:true});
+ assert.equal((await request(`/game/system/${sector}/incidents/${incident}/response`,{},alice.cookie,'DELETE')).status,200);
+ const hiddenMapResponse=await request(`/game/${game}/map/${alice.userId}/${sector}/3000/3000?range=5000`,null,alice.cookie);assert.equal(hiddenMapResponse.status,200);
+ const hiddenMap=await hiddenMapResponse.json();assert.equal(hiddenMap.viewRange,250);assert.deepEqual(hiddenMap.objects,[]);assert.equal(JSON.stringify(hiddenMap).includes('warp-beacon'),false);
+ const foreignGame=(await n.run("INSERT INTO games(name,status) VALUES('foreign','active')")).lastID;
+ const foreignSector=(await n.run("INSERT INTO sectors(game_id,name) VALUES(?,'foreign-sector')",[foreignGame])).lastID;
+ assert.equal((await request(`/game/system/${foreignSector}/facts`,null,alice.cookie)).status,403);
  assert.equal((await request('/lobby/games/clear-all',{confirm:'DELETE'},alice.cookie,'DELETE')).status,403);
  const r=await fetch(base+'/auth/login',{method:'POST',headers:{Origin:'https://evil.invalid','Content-Type':'application/json'},body:JSON.stringify({username:'alice',password:'family-test-password'})});assert.equal(r.status,403);
 });
@@ -45,9 +57,9 @@ test('lane confirmation uses server-issued route and ignores edited client legs'
  assert.equal(missingShip.error,'not_owner');
  const plan=await a.call('travel:plan',{gameId:game,sectorId:sector,shipId:ship,from:{x:4000,y:4000},to:{x:400,y:10}});
  assert.equal(plan.success,true);assert(plan.routes.length>0);
- const route=plan.routes[0];assert.equal(route.legs[0].sStart,0);
+ const route=plan.routes[0];assert.deepEqual(Object.keys(route).sort(),['eta','mode','risk','routeId']);
  const result=await a.call('travel:confirm',{gameId:game,sectorId:sector,shipId:ship,routeId:route.routeId,legs:[{edgeId:999999,sStart:0,sEnd:999999}]});
- assert.equal(result.success,true);assert.equal(result.itinerary[0].edgeId,edge);
+ assert.equal(result.success,true);assert.deepEqual(Object.keys(result).sort(),['mode','started','stored','success']);
  assert.equal((await a.call('travel:cancel',{gameId:game,sectorId:sector,shipId:ship})).success,true);
  const nearby=await a.call('travel:plan',{gameId:game,sectorId:sector,shipId:ship,to:{x:12.4,y:10.2}});
  assert.equal(nearby.success,true);assert.equal(nearby.routes[0].mode,'impulse');

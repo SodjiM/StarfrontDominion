@@ -20,25 +20,13 @@ export function normalizeLeg(L) {
 }
 
 export function filterAndNormalizeRoutes(routes) {
-    const list = Array.isArray(routes) ? routes.slice(0,3) : [];
-    return list.filter(r => {
-        const legs = Array.isArray(r.legs) ? r.legs.map(normalizeLeg) : [];
-        const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-        if (!legs.length || !nonZero.length) return false;
-        r.legs = legs; return true;
-    });
+    return (Array.isArray(routes) ? routes : []).slice(0,3).filter((route) => route?.routeId && route?.mode);
 }
 
 export function confirmRoute(client, route, onRedraw) {
     if (!client?.selectedUnit?.id) { client.addLogEntry('Select a ship first to confirm a route', 'warning'); return; }
-    let rawLegs = [];
-    if (Array.isArray(route?.legs) && route.legs.length > 0) rawLegs = route.legs;
-    else return client.addLogEntry('Route data missing legs; cannot confirm', 'error');
-    const legs = rawLegs.map(normalizeLeg).filter(L => Number.isFinite(L.edgeId));
-    const nonZero = legs.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-    if (!nonZero.length) { client.addLogEntry('Route is empty; cannot confirm', 'error'); return; }
+    if (!route?.routeId) return client.addLogEntry('Route expired; recalculate before confirming', 'error');
     const redraw = (typeof onRedraw === 'function') ? onRedraw : (client?.render ? client.render.bind(client) : null);
-    try { client.__laneHighlight = { until: Date.now()+6000, legs }; redraw && redraw(); } catch {}
     const dest = (client && client.__laneHighlight && client.__plannerTarget) ? client.__plannerTarget : (client && client.__plannerTarget) ? client.__plannerTarget : null;
     client.socket && client.socket.emit('travel:confirm', {
         routeId: route.routeId,
@@ -48,19 +36,11 @@ export function confirmRoute(client, route, onRedraw) {
         sectorId: client.gameState.sector.id,
         shipId: client.selectedUnit.id,
         freshnessTurns: 6,
-        legs,
         destX: (dest && typeof dest.x === 'number') ? dest.x : undefined,
         destY: (dest && typeof dest.y === 'number') ? dest.y : undefined
     }, (resp)=>{
         if (!resp || !resp.success) { client.addLogEntry(resp?.error || 'Confirm failed', 'error'); return; }
-        const serverLegs = Array.isArray(resp?.itinerary) ? resp.itinerary : (Array.isArray(resp?.legs) ? resp.legs : null);
-        const confirmed = serverLegs ? serverLegs.map(normalizeLeg).filter(L=>Number.isFinite(L.edgeId)) : legs;
-        const confirmedNonZero = confirmed.filter(L => Math.abs(Number(L.sEnd||0) - Number(L.sStart||0)) > 1e-3);
-        client.addLogEntry(`Itinerary stored (${confirmed.length} leg${confirmed.length!==1?'s':''})`, 'success');
-        try {
-            client.__laneHighlight = { until: Date.now()+6000, legs: confirmedNonZero.length ? confirmed : legs };
-            if (redraw) { redraw(); setTimeout(()=>redraw(), 100); setTimeout(()=>redraw(), 2000); }
-        } catch {}
+        client.addLogEntry(resp.mode === 'impulse' ? 'Movement queued' : 'Warp route queued', 'success');
+        if (redraw) redraw();
     });
 }
-

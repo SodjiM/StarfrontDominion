@@ -6,6 +6,9 @@ const { SHIP_BLUEPRINTS, computeAllRequirements } = require('../registry/bluepri
 const { Abilities } = require('../registry/abilities');
 const { CargoManager } = require('./cargo-manager');
 const { STRUCTURE_TYPES } = require('../../domain/structures');
+const { infrastructureDefinitionForKey } = require('../../domain/infrastructure');
+const { RegionInfrastructureService } = require('../world/region-infrastructure.service');
+const { InfrastructureLifecycleService } = require('./infrastructure-lifecycle.service');
 
 const STRUCTURE_BUILD_COSTS = Object.freeze({
     'storage-box': 1, 'warp-beacon': 2, 'interstellar-gate': 5,
@@ -21,6 +24,12 @@ class BuildService {
     cancelShipBuild(args) { return withSavepoint(db, () => this._cancelShipBuild(args)); }
     deployStructure(args) { return withSavepoint(db, () => this._deployStructure(args)); }
     deployInterstellarGate(args) { return withSavepoint(db, () => this._deployInterstellarGate(args)); }
+    async _checkInfrastructureCapacity(placements) {
+        const check = await new RegionInfrastructureService(db).checkPlacements(placements);
+        if (check.ok) return null;
+        const { ok, error, ...details } = check;
+        return { success: false, httpStatus: error === 'regional_capacity_exceeded' ? 409 : 400, error, details };
+    }
     async _recordBuild(gameId, userId, objectId, kind, name, turnNumber = null) {
         const turn = await new Promise((resolve) => db.get('SELECT turn_number FROM turns WHERE game_id=? ORDER BY turn_number DESC LIMIT 1', [gameId], (e, r) => resolve(r?.turn_number || 1)));
         await new Promise((resolve, reject) => db.run('INSERT INTO turn_build_events(game_id,turn_number,user_id,object_id,kind,name) VALUES(?,?,?,?,?,?)', [gameId,turnNumber || turn,userId,objectId,kind,name], (e) => e ? reject(e) : resolve()));
@@ -208,6 +217,15 @@ class BuildService {
             publicAccess: structureTemplate.publicAccess || false
         });
         const dbStructureType = structureType === 'warp-beacon' ? 'warp-beacon' : 'storage-structure';
+        if (infrastructureDefinitionForKey(structureType)) {
+            const capacityFailure = await this._checkInfrastructureCapacity([{
+                sectorId: ship.sector_id,
+                x: deployX,
+                y: deployY,
+                infrastructureKey: structureType
+            }]);
+            if (capacityFailure) return capacityFailure;
+        }
         const removed = await CargoManager.removeResourceFromCargo(shipId, structureType, 1, true);
         if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Structure not found in ship cargo' };
         const structureId = await new Promise((resolve, reject) => {
@@ -234,13 +252,21 @@ class BuildService {
 
         const gatePairId = `gate_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
         // Gate slots and duplicate connection check
-        const originSector = await new Promise((resolve) => db.get('SELECT gate_slots, gates_used FROM sectors WHERE id = ?', [ship.sector_id], (e, row) => resolve(row || null)));
-        const destSector = await new Promise((resolve) => db.get('SELECT gate_slots, gates_used FROM sectors WHERE id = ?', [destinationSectorId], (e, row) => resolve(row || null)));
+        const originSector = await new Promise((resolve) => db.get('SELECT id, game_id, gate_slots, gates_used FROM sectors WHERE id = ?', [ship.sector_id], (e, row) => resolve(row || null)));
+        const destSector = await new Promise((resolve) => db.get('SELECT id, game_id, gate_slots, gates_used FROM sectors WHERE id = ?', [destinationSectorId], (e, row) => resolve(row || null)));
         if (!originSector) return { success: false, httpStatus: 400, error: 'origin_sector_not_found' };
         if (!destSector) return { success: false, httpStatus: 400, error: 'destination_sector_not_found' };
-        if ((originSector.gates_used || 0) >= (originSector.gate_slots || 3)) return { success: false, httpStatus: 400, error: 'origin_gate_slots_full' };
-        if ((destSector.gates_used || 0) >= (destSector.gate_slots || 3)) return { success: false, httpStatus: 400, error: 'dest_gate_slots_full' };
-        const exists = await new Promise((resolve, reject) => db.get(`SELECT 1 FROM sector_objects WHERE sector_id = ? AND type='interstellar-gate' AND json_extract(meta,'$.destinationSectorId') = ? LIMIT 1`, [ship.sector_id, destinationSectorId], (e, r) => e ? reject(e) : resolve(!!r)));
+        if (Number(originSector.id) === Number(destSector.id)) return { success: false, httpStatus: 400, error: 'same_sector_gate_not_allowed' };
+        if (Number(originSector.game_id) !== Number(destSector.game_id)) return { success: false, httpStatus: 400, error: 'cross_game_gate_not_allowed' };
+        const exists = await new Promise((resolve, reject) => db.get(
+            `SELECT 1 FROM sector_objects
+             WHERE type='interstellar-gate' AND (
+                (sector_id=? AND json_extract(meta,'$.destinationSectorId')=?) OR
+                (sector_id=? AND json_extract(meta,'$.destinationSectorId')=?)
+             ) LIMIT 1`,
+            [ship.sector_id, destinationSectorId, destinationSectorId, ship.sector_id],
+            (e, r) => e ? reject(e) : resolve(!!r)
+        ));
         if (exists) return { success: false, httpStatus: 400, error: 'connection_already_exists' };
 
         let originPoint,destinationPoint;
@@ -250,9 +276,24 @@ class BuildService {
             destinationPoint=nav.findPlacement(destinationObjects,{type:'interstellar-gate'},{x:2500,y:2500},{maxRadius:600});
             if(!destinationPoint)throw new Error('blocked');
         } catch { return {success:false,httpStatus:400,error:'No clear space for both gate footprints'}; }
-        const removed = await CargoManager.removeResourceFromCargo(shipId, 'interstellar-gate', 1, true);
-        if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Interstellar gate not found in ship cargo' };
-
+        const capacityFailure = await this._checkInfrastructureCapacity([
+            { sectorId: ship.sector_id, x: originPoint.x, y: originPoint.y, infrastructureKey: 'interstellar-gate' },
+            { sectorId: destinationSectorId, x: destinationPoint.x, y: destinationPoint.y, infrastructureKey: 'interstellar-gate' }
+        ]);
+        if (capacityFailure) return capacityFailure;
+        const lifecycle = new InfrastructureLifecycleService(db);
+        const pairReservation = await lifecycle.createGateReservation({
+            pairId: gatePairId,
+            gameId: originSector.game_id,
+            originSectorId: ship.sector_id,
+            destinationSectorId
+        });
+        if (!pairReservation.ok) return { success: false, httpStatus: 409, error: pairReservation.error };
+        const slotReservation = await lifecycle.reserveGatePairSlots(gatePairId, pairReservation.sectorAId, pairReservation.sectorBId);
+        if (!slotReservation.ok) {
+            const error = Number(slotReservation.sectorId) === Number(ship.sector_id) ? 'origin_gate_slots_full' : 'dest_gate_slots_full';
+            return { success: false, httpStatus: 409, error };
+        }
         // Create origin gate
         const {x:originGateX,y:originGateY}=originPoint;
         const originGateMeta = JSON.stringify({
@@ -274,8 +315,13 @@ class BuildService {
         const destGateId = await new Promise((resolve, reject) => {
             db.run('INSERT INTO sector_objects (sector_id, type, x, y, owner_id, meta) VALUES (?, ?, ?, ?, ?, ?)', [destinationSectorId, 'interstellar-gate', destGateX, destGateY, userId, destGateMeta], function(err){ if (err) return reject(err); resolve(this.lastID); });
         });
-        // Increment gates_used for both sectors
-        await new Promise((resolve, reject) => db.run('UPDATE sectors SET gates_used = gates_used + 1 WHERE id IN (?, ?)', [ship.sector_id, destinationSectorId], e => e ? reject(e) : resolve()));
+        const removed = await CargoManager.removeResourceFromCargo(shipId, 'interstellar-gate', 1, true);
+        if (!removed?.success) return { success: false, httpStatus: 400, error: removed?.error || 'Interstellar gate not found in ship cargo' };
+        await lifecycle.finalizeGatePair(gatePairId, {
+            sectorAId: ship.sector_id,
+            gateAObjectId: originGateId,
+            gateBObjectId: destGateId
+        });
         return { success: true, structureName: 'Interstellar Gate', originGateId, destGateId, gatePairId };
     }
 

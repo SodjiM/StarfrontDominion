@@ -7,7 +7,7 @@ async function withSavepoint(db, task) {
     await run(`SAVEPOINT ${name}`);
     try {
         const result = await task();
-        if (result?.success === false) await run(`ROLLBACK TO ${name}`);
+        if (result?.success === false || result?.ok === false) await run(`ROLLBACK TO ${name}`);
         await run(`RELEASE ${name}`);
         return result;
     } catch (error) {

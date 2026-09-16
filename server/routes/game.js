@@ -229,7 +229,7 @@ router.post('/deploy-interstellar-gate', async (req, res) => {
         const { BuildService } = require('../services/game/build.service');
         const svc = new BuildService();
         const result = await svc.deployInterstellarGate({ shipId, destinationSectorId, userId });
-        if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error });
+        if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error, ...(result.details || {}) });
         const { originGateId, destGateId, gatePairId } = result;
         res.json({ success: true, structureName: 'Interstellar Gate', originGateId, destGateId, gatePairId });
     } catch (e) {
@@ -240,4 +240,4 @@ router.post('/deploy-interstellar-gate', async (req, res) => {
 
 // Interstellar travel via HTTP has been removed in favor of sockets
 
-module.exports = { router, GameWorldManager }; 
+module.exports = { router, GameWorldManager };

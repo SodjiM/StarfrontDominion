@@ -1,4 +1,5 @@
 const celestialTypes = require('../../../client/render/celestial-types');
+const { regionAt } = require('../world/region-geometry');
 
 const BASE = Object.freeze({
   'sun-station': { scope: 'system', label: 'System command', pilotCapacity: 10, effects: ['+10 pilot capacity', 'System-wide station effects'] },
@@ -52,15 +53,6 @@ function getStationEffects(station, host) {
   };
 }
 
-function regionAt(x, y, regions) {
-  const col = Math.max(0, Math.min(2, Math.floor(Number(x || 0) / 5000 * 3)));
-  const row = Math.max(0, Math.min(2, Math.floor(Number(y || 0) / 5000 * 3)));
-  for (const region of regions || []) {
-    try { if ((JSON.parse(region.cells_json || '[]') || []).some(cell => Number(cell.row) === row && Number(cell.col) === col)) return String(region.region_id); } catch {}
-  }
-  return null;
-}
-
 async function getOperationalBonuses(db, actor, { resourceName = null } = {}) {
   if (!actor?.owner_id || !actor?.sector_id) return {};
   const all = (sql, args) => new Promise((resolve, reject) => db.all(sql, args, (e, rows) => e ? reject(e) : resolve(rows || [])));
@@ -68,7 +60,9 @@ async function getOperationalBonuses(db, actor, { resourceName = null } = {}) {
     FROM sector_objects so LEFT JOIN sector_objects parent ON parent.id=so.parent_object_id
     WHERE so.owner_id=? AND so.type='station'`, [actor.owner_id]);
   const regions = await all('SELECT region_id,cells_json FROM regions WHERE sector_id=?', [actor.sector_id]);
-  const actorRegion = regionAt(actor.x, actor.y, regions);
+  const sectorRows = await all('SELECT width,height FROM sectors WHERE id=?', [actor.sector_id]);
+  const dimensions = { width: Number(sectorRows[0]?.width) || 5000, height: Number(sectorRows[0]?.height) || 5000 };
+  const actorRegion = regionAt(actor.x, actor.y, regions, dimensions);
   const out = { resourceYield: 0, repairMultiplier: 0, energyRegenMultiplier: 0, abilityCostMultiplier: 0, abilityRangeMultiplier: 0, combatDamageMultiplier: 0, scanRangeMultiplier: 0 };
   for (const station of stations) {
     const stationMeta = parseMeta(station.meta), hostMeta = parseMeta(station.host_meta);
@@ -77,7 +71,7 @@ async function getOperationalBonuses(db, actor, { resourceName = null } = {}) {
     const scope = BASE[stationMeta.stationClass]?.scope || 'region';
     let applies = false;
     if (scope === 'system') applies = Number(station.sector_id) === Number(actor.sector_id);
-    else if (scope === 'region') applies = Number(station.sector_id) === Number(actor.sector_id) && regionAt(station.x, station.y, regions) === actorRegion;
+    else if (scope === 'region') applies = actorRegion != null && Number(station.sector_id) === Number(actor.sector_id) && regionAt(station.x, station.y, regions, dimensions) === actorRegion;
     else applies = Number(station.sector_id) === Number(actor.sector_id) && Math.hypot(Number(station.x) - Number(actor.x), Number(station.y) - Number(actor.y)) <= 200;
     if (!applies) continue;
     out.repairMultiplier += Number(host.repairMultiplier || 0);

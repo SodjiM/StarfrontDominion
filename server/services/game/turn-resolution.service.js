@@ -68,6 +68,11 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             await require('./pilot.service').processPilotTurn(gameId, turnNumber, db);
             await regenerateShipEnergy(gameId, turnNumber);
 
+            // Snapshot operational pressure after combat/destruction and
+            // before any future incident system consumes the observation.
+            await new (require('../world/region-pressure-snapshot.service').RegionPressureSnapshotService)(db).snapshotGame(gameId, turnNumber);
+            await new (require('../world/region-incident.service').RegionIncidentService)(db).generateForTurn(gameId, turnNumber);
+
             // 6.2 Region health tick (upkeep/decay + history)
             const { tickRegionHealth } = require('../world/region-health.tick');
             await tickRegionHealth(gameId, turnNumber);

@@ -8,6 +8,7 @@ const { CombatRepository } = require('../../repositories/combat.repo');
 const { computePathBresenham } = require('../../utils/path');
 const { HarvestingManager } = require('../world/harvesting-manager');
 const { isCombatTarget, isLiveShip } = require('./combat-rules');
+const { InfrastructureLifecycleService } = require('./infrastructure-lifecycle.service');
 
 async function processAbilityOrders(gameId, turnNumber) {
     const combatRepo = new CombatRepository();
@@ -585,6 +586,7 @@ async function processCombatOrders(gameId, turnNumber) {
         });
         if (newHp <= 0 && !destroyedTargets.has(target.id)) {
             destroyedTargets.add(target.id);
+            await new InfrastructureLifecycleService(db).markDestroyed(target.id, 'combat_destroyed');
             await combatRepo.clearStatusEffectsForShip(target.id);
             const targetType = String(target.type);
             if (targetType === 'wreck' || targetType === 'cargo_can') {

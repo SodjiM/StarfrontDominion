@@ -82,7 +82,7 @@ router.post('/deploy-structure', async (req, res) => {
     try {
         const svc = new BuildService();
         const result = await svc.deployStructure({ shipId, structureType, anchorObjectId, userId });
-        if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error });
+        if (!result.success) return res.status(result.httpStatus || 400).json({ error: result.error, ...(result.details || {}) });
         const { structureName, structureId, warning } = result;
         const out = { success: true, structureName, structureId };
         if (warning) out.warning = warning;

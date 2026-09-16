@@ -79,6 +79,66 @@ CREATE INDEX IF NOT EXISTS idx_sector_objects_spatial ON sector_objects(sector_i
 -- Index for sector objects by owner (used when finding player units)
 CREATE INDEX IF NOT EXISTS idx_sector_objects_owner ON sector_objects(sector_id, owner_id);
 
+-- One authoritative row per bidirectional gate connection. Canonical sector
+-- ordering prevents A→B and B→A from being represented as separate links.
+CREATE TABLE IF NOT EXISTS interstellar_gate_pairs (
+    pair_id TEXT PRIMARY KEY,
+    game_id INTEGER NOT NULL,
+    sector_a_id INTEGER NOT NULL,
+    sector_b_id INTEGER NOT NULL,
+    gate_a_object_id INTEGER,
+    gate_b_object_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'reserving' CHECK (status IN ('reserving','operational','disabled','removed')),
+    slots_reserved INTEGER NOT NULL DEFAULT 0 CHECK (slots_reserved IN (0,1)),
+    disabled_reason TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CHECK (sector_a_id < sector_b_id),
+    UNIQUE (game_id, sector_a_id, sector_b_id),
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (sector_a_id) REFERENCES sectors(id),
+    FOREIGN KEY (sector_b_id) REFERENCES sectors(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gate_pairs_objects ON interstellar_gate_pairs(gate_a_object_id, gate_b_object_id);
+
+-- Backfill valid legacy pairs. Existing disabled/partial pairs remain legacy
+-- objects and are handled conservatively by the lifecycle fallback.
+INSERT OR IGNORE INTO interstellar_gate_pairs
+    (pair_id,game_id,sector_a_id,sector_b_id,gate_a_object_id,gate_b_object_id,status,slots_reserved)
+SELECT json_extract(first_gate.meta,'$.gatePairId'), first_sector.game_id,
+       MIN(first_gate.sector_id,second_gate.sector_id), MAX(first_gate.sector_id,second_gate.sector_id),
+       CASE WHEN first_gate.sector_id < second_gate.sector_id THEN first_gate.id ELSE second_gate.id END,
+       CASE WHEN first_gate.sector_id < second_gate.sector_id THEN second_gate.id ELSE first_gate.id END,
+       'operational', 1
+FROM sector_objects first_gate
+JOIN sector_objects second_gate
+  ON first_gate.id < second_gate.id
+ AND json_extract(first_gate.meta,'$.gatePairId') = json_extract(second_gate.meta,'$.gatePairId')
+JOIN sectors first_sector ON first_sector.id=first_gate.sector_id
+JOIN sectors second_sector ON second_sector.id=second_gate.sector_id AND second_sector.game_id=first_sector.game_id
+WHERE first_gate.type='interstellar-gate' AND second_gate.type='interstellar-gate'
+  AND first_gate.sector_id <> second_gate.sector_id
+  AND json_extract(first_gate.meta,'$.gatePairId') IS NOT NULL
+  AND COALESCE(json_extract(first_gate.meta,'$.disabled'),0)=0
+  AND COALESCE(json_extract(second_gate.meta,'$.disabled'),0)=0
+  AND COALESCE(json_extract(first_gate.meta,'$.destroyed'),0)=0
+  AND COALESCE(json_extract(second_gate.meta,'$.destroyed'),0)=0
+  AND COALESCE(json_extract(first_gate.meta,'$.operational'),1)<>0
+  AND COALESCE(json_extract(second_gate.meta,'$.operational'),1)<>0;
+
+-- Reconcile the cached slot counter from live operational endpoints at startup.
+UPDATE sectors
+SET gates_used=(
+    SELECT COUNT(*) FROM sector_objects gate_object
+    WHERE gate_object.sector_id=sectors.id
+      AND gate_object.type='interstellar-gate'
+      AND COALESCE(json_extract(gate_object.meta,'$.disabled'),0)=0
+      AND COALESCE(json_extract(gate_object.meta,'$.destroyed'),0)=0
+      AND COALESCE(json_extract(gate_object.meta,'$.operational'),1)<>0
+      AND COALESCE(json_extract(gate_object.meta,'$.hp'),1)>0
+);
+
 -- Removed legacy player_visibility indexes. Visibility is handled via object_visibility and stateless computation.
 
 -- Index for movement orders by object and status
@@ -113,6 +173,25 @@ CREATE INDEX IF NOT EXISTS idx_movement_history_ship ON movement_history(object_
 
 -- Index for movement history by game and turn (for cleanup and queries)
 CREATE INDEX IF NOT EXISTS idx_movement_history_game_turn ON movement_history(game_id, turn_number); 
+
+-- Immutable evidence that a viewer could see an object on a specific turn.
+-- This is intentionally separate from object_visibility, which is mutable
+-- discovery memory and therefore cannot safely authorize historical data.
+CREATE TABLE IF NOT EXISTS object_visibility_history (
+    game_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    sector_id INTEGER NOT NULL,
+    object_id INTEGER NOT NULL,
+    turn_number INTEGER NOT NULL,
+    visibility_level INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (game_id, user_id, sector_id, object_id, turn_number),
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (object_id) REFERENCES sector_objects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_objvis_history_lookup
+    ON object_visibility_history(game_id, user_id, sector_id, turn_number);
 
 -- Pilot system: queue of dead pilots with respawn timers (per game and player)
 CREATE TABLE IF NOT EXISTS dead_pilots_queue (

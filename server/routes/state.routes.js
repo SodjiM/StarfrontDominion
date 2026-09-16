@@ -47,10 +47,14 @@ router.get('/:gameId/state/:userId/sector/:sectorId', async (req, res) => {
 // Visible map window for a user around a position
 router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
     const { gameId, userId, sectorId, x, y } = req.params;
-    const centerX = parseInt(x);
-    const centerY = parseInt(y);
-    const viewRange = parseInt(req.query.range) || 15;
-    const sector = parseInt(sectorId);
+    const centerX = Number(x);
+    const centerY = Number(y);
+    const requestedRange = Number(req.query.range || 15);
+    const sector = Number(sectorId);
+    if (![centerX, centerY, requestedRange, sector].every(Number.isFinite)) {
+        return res.status(400).json({ error: 'Invalid map window' });
+    }
+    const viewRange = Math.max(1, Math.min(250, Math.floor(requestedRange)));
     GameWorldManager.computeCurrentVisibility(gameId, parseInt(userId), sector)
         .then(visibleMap => {
             db.all(
@@ -59,13 +63,13 @@ router.get('/:gameId/map/:userId/:sectorId/:x/:y', (req, res) => {
                 [sector, centerX - viewRange, centerX + viewRange, centerY - viewRange, centerY + viewRange],
                 (err, objects) => {
                     if (err) return res.status(500).json({ error: 'Failed to get map data' });
-                    const mapData = objects.map(o => {
+                    const mapData = objects.flatMap(o => {
                         let meta;
                         if (typeof o.meta === 'string') { try { meta = JSON.parse(o.meta || '{}'); } catch { meta = {}; } }
                         else meta = o.meta || {};
                         const v = visibleMap.get(o.id);
                         const visible = (v && v.level > 0) || o.owner_id == userId || meta.alwaysKnown === true;
-                        return { id: o.id, type: o.type, x: o.x, y: o.y, owner_id: o.owner_id, meta, visible };
+                        return visible ? [{ id: o.id, type: o.type, x: o.x, y: o.y, owner_id: o.owner_id, meta, visible: true }] : [];
                     });
                     res.json({ centerX, centerY, viewRange, objects: mapData });
                 }
@@ -114,4 +118,3 @@ router.get('/:gameId/itineraries/:userId', async (req, res) => {
         res.status(500).json({ error: 'Failed to get itineraries' });
     }
 });
-

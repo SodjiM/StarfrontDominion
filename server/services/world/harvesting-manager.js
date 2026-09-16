@@ -6,19 +6,23 @@ const db = require('../../db');
 const HarvestingManager = {
     async getNearbyResourceNodes(shipId, range = 3) {
         const r = Math.max(1, Math.floor(Number(range) || 3));
-        const ship = await new Promise((resolve) => db.get('SELECT * FROM sector_objects WHERE id = ?', [shipId], (e, r) => resolve(r)));
-        if (!ship) return [];
-        const nodes = await new Promise((resolve) => db.all(
-            `SELECT rn.id, rn.sector_id, rn.x, rn.y, rn.resource_amount, rn.is_depleted,
-                    rt.resource_name AS resource_name, rt.icon_emoji AS icon_emoji,
-                    MAX(ABS(rn.x - ?), ABS(rn.y - ?)) AS distance
-             FROM resource_nodes rn 
-             JOIN resource_types rt ON rn.resource_type_id = rt.id
-             WHERE rn.sector_id = ? AND ABS(rn.x - ?) <= ? AND ABS(rn.y - ?) <= ?
-             ORDER BY distance ASC, rn.id ASC`,
-            [ship.x, ship.y, ship.sector_id, ship.x, r+scale.width(ship), ship.y, r+scale.width(ship)],
-            (e, rows) => resolve(rows || [])
+        const ship = await new Promise((resolve) => db.get(
+            `SELECT so.*, s.game_id
+             FROM sector_objects so JOIN sectors s ON s.id = so.sector_id
+             WHERE so.id = ?`,
+            [shipId], (e, row) => resolve(row)
         ));
+        if (!ship) return [];
+        const reach = r + scale.width(ship);
+        const { GameWorldManager } = require('../game/game-world.service');
+        const nodes = await GameWorldManager.getVisibleResourceNodes(ship.game_id, ship.owner_id, ship.sector_id, {
+            bounds: {
+                minX: ship.x - reach,
+                maxX: ship.x + reach,
+                minY: ship.y - reach,
+                maxY: ship.y + reach
+            }
+        });
         return nodes.map(node=>({...node,distance:scale.gap(ship,node,'chebyshev')})).filter(node=>node.distance<=r).sort((a,b)=>a.distance-b.distance||a.id-b.id);
     },
 

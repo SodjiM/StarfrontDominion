@@ -1,29 +1,29 @@
 const db = require('../../db');
 
 async function tickRegionHealth(gameId, turnNumber) {
-    // For each sector in this game, decay or upkeep region health slightly and write history
-    const sectors = await new Promise((resolve) => db.all('SELECT id FROM sectors WHERE game_id = ?', [gameId], (e, rows) => resolve(rows || [])));
+    // Health changes are event-driven. Until incidents and explicit
+    // stabilization actions exist, a turn records history without passive
+    // drift or station-based automatic healing.
+    const all = (sql, params = []) => new Promise((resolve, reject) => db.all(sql, params, (error, rows) => error ? reject(error) : resolve(rows || [])));
+    const run = (sql, params = []) => new Promise((resolve, reject) => db.run(sql, params, (error) => error ? reject(error) : resolve()));
+    const sectors = await all('SELECT id FROM sectors WHERE game_id = ?', [gameId]);
     for (const s of (sectors || [])) {
         const sectorId = s.id;
-        const regions = await new Promise((resolve) => db.all('SELECT region_id, health FROM regions WHERE sector_id = ?', [sectorId], (e, rows) => resolve(rows || [])));
-        const oceanStations = await new Promise((resolve) => db.all(`SELECT station.x, station.y, station.meta, host.meta AS host_meta, host.celestial_type AS host_type FROM sector_objects station JOIN sector_objects host ON host.id=station.parent_object_id WHERE station.sector_id=? AND station.type='station' AND station.meta LIKE '%planet-station%'`, [sectorId], (e, rows) => resolve(rows || [])));
+        const regions = await all('SELECT region_id, health FROM regions WHERE sector_id = ?', [sectorId]);
         for (const r of (regions || [])) {
             const id = String(r.region_id);
-            let h = Number(r.health || 50);
-            // Simple passive drift toward 55
-            if (h < 55) h = Math.min(55, h + 1);
-            else if (h > 55) h = Math.max(55, h - 1);
-            const oceanCount = (oceanStations || []).filter(s => /ocean/i.test(`${s.host_type || ''} ${s.host_meta || ''}`)).length;
-            if (oceanCount > 0) h = Math.min(100, h + oceanCount);
-            await new Promise((resolve) => db.run('UPDATE regions SET health = ?, updated_at = CURRENT_TIMESTAMP WHERE sector_id = ? AND region_id = ?', [h, sectorId, id], () => resolve()));
-            await new Promise((resolve) => db.run(
-                'INSERT INTO region_health_history (sector_id, region_id, turn_number, health) VALUES (?, ?, ?, ?)',
-                [sectorId, id, turnNumber, h],
-                () => resolve()
-            ));
+            const h = Number(r.health ?? 50);
+            await run(
+                `INSERT INTO region_health_history (sector_id, region_id, turn_number, health)
+                 SELECT ?, ?, ?, ?
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM region_health_history
+                     WHERE sector_id = ? AND region_id = ? AND turn_number = ?
+                  )`,
+                [sectorId, id, turnNumber, h, sectorId, id, turnNumber]
+            );
         }
     }
 }
 
 module.exports = { tickRegionHealth };
-

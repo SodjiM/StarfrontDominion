@@ -1,6 +1,7 @@
 const db = require('../../db');
 const { seedSector } = require('../world/seed-orchestrator');
 const { CargoManager } = require('./cargo-manager');
+const { isObjectOperational } = require('../../domain/infrastructure');
 
 class GameWorldManager {
     static async initializeGame(gameId) {
@@ -96,144 +97,185 @@ class GameWorldManager {
     }
 
     static async calculatePlayerVision(gameId, userId, turnNumber) {
-        return new Promise((resolve, reject) => {
-            db.all('SELECT so.id, so.sector_id, so.x, so.y, so.meta, parent.meta AS host_meta FROM sector_objects so LEFT JOIN sector_objects parent ON parent.id=so.parent_object_id WHERE so.owner_id = ? AND so.type IN ("ship", "station")', [userId], (err, units) => {
-                if (err) return reject(err);
-                if (!units || units.length === 0) return resolve([]);
-                const sectorIdToUnits = new Map();
-                for (const u of units) {
-                    if (!sectorIdToUnits.has(u.sector_id)) sectorIdToUnits.set(u.sector_id, []);
-                    sectorIdToUnits.get(u.sector_id).push(u);
-                }
-                const visibleObjects = new Map();
-                let sectorsProcessed = 0;
-                for (const [sectorId, sectorUnits] of sectorIdToUnits.entries()) {
-                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-                    const sensors = sectorUnits.map(u => {
-                        const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
-                        let scanRange = meta.scanRange || 5;
-                        let hostMeta = {}; try { hostMeta = JSON.parse(u.host_meta || '{}'); } catch {}
-                        if (meta.stationClass === 'moon-station' && (meta.hostGameplayType === 'cratered' || hostMeta.gameplayType === 'cratered' || hostMeta.visualType === 'cratered')) scanRange *= 1.25;
-                        let detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
-                        try {
-                            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
-                                scanRange = Math.ceil(scanRange * meta.scanRangeMultiplier);
-                                detailedRange = Math.ceil(detailedRange * meta.scanRangeMultiplier);
-                            }
-                        } catch {}
-                        minX = Math.min(minX, u.x - scanRange);
-                        maxX = Math.max(maxX, u.x + scanRange);
-                        minY = Math.min(minY, u.y - scanRange);
-                        maxY = Math.max(maxY, u.y + scanRange);
-                        return { x: u.x, y: u.y, scanRange, detailedRange };
-                    });
-                    db.all('SELECT * FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?', [sectorId, minX, maxX, minY, maxY], (e2, objectsInBox) => {
-                        if (e2) return reject(e2);
-                        for (const obj of objectsInBox) {
-                            for (const s of sensors) {
-                                const dx = obj.x - s.x;
-                                const dy = obj.y - s.y;
-                                const dist = Math.sqrt(dx * dx + dy * dy);
-                                if (dist <= s.scanRange) {
-                                    const lvl = dist <= s.detailedRange ? 2 : 1;
-                                    const existing = visibleObjects.get(obj.id);
-                                    if (!existing || existing.visibilityLevel < lvl) visibleObjects.set(obj.id, { object: obj, visibilityLevel: lvl });
-                                }
-                            }
-                        }
-                        sectorsProcessed++;
-                        if (sectorsProcessed === sectorIdToUnits.size) {
-                            const bySector = new Map();
-                            for (const v of visibleObjects.values()) {
-                                const sid = v.object.sector_id;
-                                if (!bySector.has(sid)) bySector.set(sid, []);
-                                bySector.get(sid).push(v);
-                            }
-                            let done = 0; const total = bySector.size;
-                            if (total === 0) return resolve([]);
-                            for (const [sid, list] of bySector.entries()) {
-                                GameWorldManager.updateObjectVisibilityMemory(gameId, userId, sid, list, turnNumber, () => { if (++done === total) resolve(list.map(v => v.object)); }, reject);
-                            }
-                        }
-                    });
-                }
-            });
-        });
+        const sectors = await new Promise((resolve, reject) => db.all(
+            `SELECT DISTINCT so.sector_id
+             FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             WHERE s.game_id = ? AND so.owner_id = ?
+               AND so.type IN ('ship', 'station', 'sensor-tower')`,
+            [gameId, userId],
+            (err, rows) => err ? reject(err) : resolve(rows || [])
+        ));
+        const seen = [];
+        for (const { sector_id: sectorId } of sectors) {
+            const sensors = await GameWorldManager.getOperationalSensorCoverage(gameId, userId, sectorId);
+            if (sensors.length === 0) continue;
+            const minX = Math.min(...sensors.map(s => s.x - s.scanRange));
+            const maxX = Math.max(...sensors.map(s => s.x + s.scanRange));
+            const minY = Math.min(...sensors.map(s => s.y - s.scanRange));
+            const maxY = Math.max(...sensors.map(s => s.y + s.scanRange));
+            const objects = await new Promise((resolve, reject) => db.all(
+                'SELECT * FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?',
+                [sectorId, minX, maxX, minY, maxY],
+                (err, rows) => err ? reject(err) : resolve(rows || [])
+            ));
+            const visible = objects.map(object => ({
+                object,
+                visibilityLevel: GameWorldManager.visibilityLevelAt(sensors, object.x, object.y)
+            })).filter(entry => entry.visibilityLevel > 0);
+            if (visible.length === 0) continue;
+            await new Promise((resolve, reject) => GameWorldManager.updateObjectVisibilityMemory(
+                gameId, userId, sectorId, visible, turnNumber, resolve, reject
+            ));
+            seen.push(...visible.map(entry => entry.object));
+        }
+        return seen;
     }
 
     static updateObjectVisibilityMemory(gameId, userId, sectorId, visibleObjects, turnNumber, resolve, reject) {
         if (visibleObjects.length === 0) return resolve([]);
-        const stmt = db.prepare(
+        const memoryStmt = db.prepare(
             `INSERT INTO object_visibility (game_id, user_id, sector_id, object_id, last_seen_turn, last_seen_at, best_visibility_level)
              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
              ON CONFLICT(game_id, user_id, sector_id, object_id)
              DO UPDATE SET last_seen_turn=excluded.last_seen_turn, last_seen_at=CURRENT_TIMESTAMP,
                            best_visibility_level=MAX(object_visibility.best_visibility_level, excluded.best_visibility_level)`
         );
+        const historyStmt = db.prepare(
+            `INSERT INTO object_visibility_history
+                (game_id, user_id, sector_id, object_id, turn_number, visibility_level)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(game_id, user_id, sector_id, object_id, turn_number)
+             DO UPDATE SET visibility_level=MAX(object_visibility_history.visibility_level, excluded.visibility_level)`
+        );
         let count = 0;
         let failed = false;
         visibleObjects.forEach(({object, visibilityLevel}) => {
-            stmt.run([gameId, userId, sectorId, object.id, turnNumber, visibilityLevel], (err) => {
-                if (err && !failed) { failed = true; stmt.finalize(); return reject(err); }
-                count++;
-                if (count === visibleObjects.length && !failed) {
-                    stmt.finalize((finErr) => finErr ? reject(finErr) : resolve());
+            memoryStmt.run([gameId, userId, sectorId, object.id, turnNumber, visibilityLevel], (memoryErr) => {
+                if (memoryErr && !failed) {
+                    failed = true;
+                    memoryStmt.finalize();
+                    historyStmt.finalize();
+                    return reject(memoryErr);
                 }
+                historyStmt.run([gameId, userId, sectorId, object.id, turnNumber, visibilityLevel], (historyErr) => {
+                    if (historyErr && !failed) {
+                        failed = true;
+                        memoryStmt.finalize();
+                        historyStmt.finalize();
+                        return reject(historyErr);
+                    }
+                    count++;
+                    if (count === visibleObjects.length && !failed) {
+                        memoryStmt.finalize((memoryFinalizeErr) => {
+                            if (memoryFinalizeErr) return reject(memoryFinalizeErr);
+                            historyStmt.finalize((historyFinalizeErr) => historyFinalizeErr ? reject(historyFinalizeErr) : resolve());
+                        });
+                    }
+                });
             });
         });
     }
 
-    static async computeCurrentVisibility(gameId, userId, sectorId) {
-        return new Promise((resolve, reject) => {
-            db.all(
-                'SELECT so.id, so.x, so.y, so.meta, parent.meta AS host_meta FROM sector_objects so LEFT JOIN sector_objects parent ON parent.id=so.parent_object_id WHERE so.sector_id = ? AND so.owner_id = ? AND so.type IN ("ship", "station", "sensor-tower")',
-                [sectorId, userId],
-                (err, units) => {
-                    if (err) return reject(err);
-                    if (!units || units.length === 0) return resolve(new Map());
-                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-                    const sensors = units.map(u => {
-                        const meta = (() => { try { return JSON.parse(u.meta || '{}'); } catch { return {}; } })();
-                        let scanRange = meta.scanRange || 5;
-                        let hostMeta = {}; try { hostMeta = JSON.parse(u.host_meta || '{}'); } catch {}
-                        if (meta.stationClass === 'moon-station' && (meta.hostGameplayType === 'cratered' || hostMeta.gameplayType === 'cratered' || hostMeta.visualType === 'cratered')) scanRange *= 1.25;
-                        let detailedRange = meta.detailedScanRange || Math.floor((scanRange || 1) / 3);
-                        try {
-                            if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
-                                scanRange = Math.ceil(scanRange * meta.scanRangeMultiplier);
-                                detailedRange = Math.ceil(detailedRange * meta.scanRangeMultiplier);
-                            }
-                        } catch {}
-                        minX = Math.min(minX, u.x - scanRange);
-                        maxX = Math.max(maxX, u.x + scanRange);
-                        minY = Math.min(minY, u.y - scanRange);
-                        maxY = Math.max(maxY, u.y + scanRange);
-                        return { x: u.x, y: u.y, scanRange, detailedRange };
-                    });
-                    db.all(
-                        `SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?`,
-                        [sectorId, minX, maxX, minY, maxY],
-                        (e2, objectsInBox) => {
-                            if (e2) return reject(e2);
-                            const visible = new Map();
-                            for (const obj of objectsInBox) {
-                                for (const s of sensors) {
-                                    const dx = obj.x - s.x;
-                                    const dy = obj.y - s.y;
-                                    const dist = Math.sqrt(dx * dx + dy * dy);
-                                    if (dist <= s.scanRange) {
-                                        const level = dist <= s.detailedRange ? 2 : 1;
-                                        const existing = visible.get(obj.id);
-                                        if (!existing || existing.level < level) visible.set(obj.id, { level });
-                                    }
-                                }
-                            }
-                            resolve(visible);
-                        }
-                    );
-                }
-            );
+    static sensorDescriptor(unit) {
+        const meta = (() => { try { return JSON.parse(unit.meta || '{}'); } catch { return {}; } })();
+        let scanRange = Number(meta.scanRange) || 5;
+        let hostMeta = {}; try { hostMeta = JSON.parse(unit.host_meta || '{}'); } catch {}
+        if (meta.stationClass === 'moon-station' && (meta.hostGameplayType === 'cratered' || hostMeta.gameplayType === 'cratered' || hostMeta.visualType === 'cratered')) scanRange *= 1.25;
+        let detailedRange = Number(meta.detailedScanRange) || Math.floor(scanRange / 3);
+        if (typeof meta.scanRangeMultiplier === 'number' && meta.scanRangeMultiplier > 1) {
+            scanRange = Math.ceil(scanRange * meta.scanRangeMultiplier);
+            detailedRange = Math.ceil(detailedRange * meta.scanRangeMultiplier);
+        }
+        return { x: Number(unit.x), y: Number(unit.y), scanRange, detailedRange };
+    }
+
+    static visibilityLevelAt(sensors, x, y) {
+        let level = 0;
+        for (const sensor of sensors) {
+            const distance = Math.hypot(Number(x) - sensor.x, Number(y) - sensor.y);
+            if (distance <= sensor.detailedRange) return 2;
+            if (distance <= sensor.scanRange) level = 1;
+        }
+        return level;
+    }
+
+    static async getOperationalSensorCoverage(gameId, userId, sectorId) {
+        const units = await new Promise((resolve, reject) => db.all(
+            `SELECT so.id, so.type, so.x, so.y, so.meta, parent.meta AS host_meta
+             FROM sector_objects so
+             JOIN sectors s ON s.id = so.sector_id
+             LEFT JOIN sector_objects parent ON parent.id = so.parent_object_id
+             WHERE s.game_id = ? AND so.sector_id = ? AND so.owner_id = ?
+               AND so.type IN ('ship', 'station', 'sensor-tower')`,
+            [gameId, sectorId, userId],
+            (err, rows) => err ? reject(err) : resolve(rows || [])
+        ));
+        return units.filter(isObjectOperational).map(GameWorldManager.sensorDescriptor);
+    }
+
+    static async getVisibleResourceNodes(gameId, userId, sectorId, options = {}) {
+        const sensors = options.sensors || await GameWorldManager.getOperationalSensorCoverage(gameId, userId, sectorId);
+        if (sensors.length === 0) return [];
+        const sensorBounds = {
+            minX: Math.min(...sensors.map(sensor => sensor.x - sensor.scanRange)),
+            maxX: Math.max(...sensors.map(sensor => sensor.x + sensor.scanRange)),
+            minY: Math.min(...sensors.map(sensor => sensor.y - sensor.scanRange)),
+            maxY: Math.max(...sensors.map(sensor => sensor.y + sensor.scanRange))
+        };
+        const requested = options.bounds || {};
+        const bounds = {
+            minX: Math.max(sensorBounds.minX, Number.isFinite(requested.minX) ? requested.minX : -Infinity),
+            maxX: Math.min(sensorBounds.maxX, Number.isFinite(requested.maxX) ? requested.maxX : Infinity),
+            minY: Math.max(sensorBounds.minY, Number.isFinite(requested.minY) ? requested.minY : -Infinity),
+            maxY: Math.min(sensorBounds.maxY, Number.isFinite(requested.maxY) ? requested.maxY : Infinity)
+        };
+        if (bounds.minX > bounds.maxX || bounds.minY > bounds.maxY) return [];
+        const resources = await new Promise((resolve, reject) => db.all(
+            `SELECT rn.id, 'resource_node' as type, rn.x, rn.y, NULL as owner_id,
+                    JSON_OBJECT('resourceType', rt.resource_name,
+                                'resourceAmount', rn.resource_amount,
+                                'maxResource', rn.max_resource,
+                                'size', rn.size,
+                                'isDepleted', rn.is_depleted,
+                                'iconEmoji', rt.icon_emoji,
+                                'colorHex', rt.color_hex) as meta,
+                    rn.sector_id, rt.category as celestial_type, rn.size as radius,
+                    rn.parent_object_id, rt.resource_name as resource_name,
+                    rt.icon_emoji as icon_emoji, rn.resource_amount, rn.is_depleted
+             FROM resource_nodes rn
+             JOIN resource_types rt ON rn.resource_type_id = rt.id
+             JOIN sectors s ON s.id = rn.sector_id
+             WHERE s.game_id = ? AND rn.sector_id = ?
+               AND rn.resource_amount > 0 AND rn.is_depleted = 0
+               AND rn.x BETWEEN ? AND ? AND rn.y BETWEEN ? AND ?`,
+            [gameId, sectorId, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY],
+            (error, rows) => error ? reject(error) : resolve(rows || [])
+        ));
+        return resources.flatMap(resource => {
+            const visibilityLevel = GameWorldManager.visibilityLevelAt(sensors, resource.x, resource.y);
+            return visibilityLevel > 0 ? [{ ...resource, visibility_level: visibilityLevel }] : [];
         });
+    }
+
+    static async computeCurrentVisibility(gameId, userId, sectorId) {
+        const sensors = await GameWorldManager.getOperationalSensorCoverage(gameId, userId, sectorId);
+        if (sensors.length === 0) return new Map();
+        const minX = Math.min(...sensors.map(s => s.x - s.scanRange));
+        const maxX = Math.max(...sensors.map(s => s.x + s.scanRange));
+        const minY = Math.min(...sensors.map(s => s.y - s.scanRange));
+        const maxY = Math.max(...sensors.map(s => s.y + s.scanRange));
+        const objects = await new Promise((resolve, reject) => db.all(
+            'SELECT id, x, y FROM sector_objects WHERE sector_id = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?',
+            [sectorId, minX, maxX, minY, maxY],
+            (err, rows) => err ? reject(err) : resolve(rows || [])
+        ));
+        const visible = new Map();
+        for (const object of objects) {
+            const level = GameWorldManager.visibilityLevelAt(sensors, object.x, object.y);
+            if (level > 0) visible.set(object.id, { level });
+        }
+        return visible;
     }
 
     static updatePlayerVisibilityOptimized(gameId, userId, sectorId, visibleObjects, turnNumber, resolve, reject) {
@@ -252,8 +294,11 @@ class GameWorldManager {
                 if (err) return reject(err);
                 if (!sector) return reject(new Error('Sector not found for player'));
 
-                GameWorldManager.computeCurrentVisibility(gameId, userId, sector.id)
-                    .then(visibleMap => {
+                Promise.all([
+                    GameWorldManager.computeCurrentVisibility(gameId, userId, sector.id),
+                    GameWorldManager.getOperationalSensorCoverage(gameId, userId, sector.id)
+                ])
+                    .then(([visibleMap, sensors]) => {
                         const visibleIds = Array.from(visibleMap.keys());
                         const ownedQuery = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
                                                     mo.destination_x, mo.destination_y, mo.movement_path, mo.current_step, mo.movement_speed, mo.eta_turns, mo.status as movement_status,
@@ -297,23 +342,7 @@ class GameWorldManager {
                         } else {
                             tasks.push(Promise.resolve([]));
                         }
-                        const resourceQuery = `SELECT rn.id, 'resource_node' as type, rn.x, rn.y, NULL as owner_id,
-                                                        JSON_OBJECT('resourceType', rt.resource_name,
-                                    'resourceAmount', rn.resource_amount,
-                                    'maxResource', rn.max_resource,
-                                    'size', rn.size,
-                                    'isDepleted', rn.is_depleted,
-                                    'iconEmoji', rt.icon_emoji,
-                                    'colorHex', rt.color_hex,
-                                                                    'alwaysKnown', 1) as meta,
-                                rn.sector_id, rt.category as celestial_type, rn.size as radius,
-                                                        rn.parent_object_id
-                         FROM resource_nodes rn
-                         JOIN resource_types rt ON rn.resource_type_id = rt.id
-                                                 WHERE rn.sector_id = ? AND rn.resource_amount > 0 AND rn.is_depleted = 0`;
-                        tasks.push(new Promise((res, rej) => {
-                            db.all(resourceQuery, [sector.id], (e, rows) => e ? rej(e) : res(rows || []));
-                        }));
+                        tasks.push(GameWorldManager.getVisibleResourceNodes(gameId, userId, sector.id, { sensors }));
 
                         const celestialQuery = `SELECT so.id, so.type, so.x, so.y, so.owner_id, so.meta, so.sector_id, so.celestial_type, so.radius, so.parent_object_id,
                                                           NULL as destination_x, NULL as destination_y, NULL as movement_path, NULL as eta_turns, NULL as movement_status,
@@ -330,22 +359,14 @@ class GameWorldManager {
                                 const objects = [...owned, ...nonOwnedVisible, ...resources, ...celestials];
                                 objects.forEach(o => {
                                     if (o.type === 'resource_node') {
-                                        o.visibility_level = 1;
-                                        o.last_seen_turn = null;
-                                    } else if (o.meta && typeof o.meta === 'string') {
-                                        try { o.meta = JSON.parse(o.meta); } catch {}
-                                        const alwaysKnown = o.meta?.alwaysKnown === true;
-                                        if (alwaysKnown) {
-                                            o.visibility_level = 1;
-                                            o.last_seen_turn = null;
-                                            return;
-                                        }
-                                    } else if (o.owner_id === userId) {
-                                        o.visibility_level = 2;
                                         o.last_seen_turn = null;
                                     } else {
-                                        const v = visibleMap.get(o.id);
-                                        o.visibility_level = v ? v.level : 0;
+                                        if (o.meta && typeof o.meta === 'string') {
+                                            try { o.meta = JSON.parse(o.meta); } catch { o.meta = {}; }
+                                        }
+                                        if (o.meta?.alwaysKnown === true) o.visibility_level = 1;
+                                        else if (Number(o.owner_id) === Number(userId)) o.visibility_level = 2;
+                                        else o.visibility_level = visibleMap.get(o.id)?.level || 0;
                                         o.last_seen_turn = null;
                                     }
                                 });
