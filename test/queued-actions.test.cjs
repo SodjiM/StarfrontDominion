@@ -93,3 +93,26 @@ test('replace removes future actions while preserving action history', { concurr
     const history = await queue.list(gameId, shipId, { history: true });
     assert(history.some(row => row.id === old.order.id && row.status === 'cancelled'));
 });
+
+test('stopping harvesting releases the ship for movement', { concurrency: false }, async () => {
+    const queue = new QueuedActionService(db);
+    const shipId = await createShip();
+    const resourceType = await get('SELECT id FROM resource_types LIMIT 1');
+    const nodeId = (await run(
+        "INSERT INTO resource_nodes(sector_id,resource_type_id,x,y,size,resource_amount,max_resource,harvest_difficulty,is_depleted,meta) VALUES(?,?,12,10,2,100,100,1,0,'{}')",
+        [sectorId, resourceType.id]
+    )).lastID;
+    const start = await queue.enqueue({ gameId, shipId, actionType: 'harvest.start', payload: { nodeId } });
+    await queue.materializeForTurn(gameId, 4);
+    assert.equal((await get('SELECT status FROM harvesting_tasks WHERE ship_id=?', [shipId])).status, 'active');
+
+    const stop = await queue.enqueue({ gameId, shipId, actionType: 'harvest.stop', payload: {} });
+    await queue.materializeForTurn(gameId, 5);
+    assert.equal((await get('SELECT status FROM harvesting_tasks WHERE ship_id=?', [shipId])).status, 'cancelled');
+    assert.equal((await get('SELECT status FROM queued_orders WHERE id=?', [stop.order.id])).status, 'completed');
+
+    const move = await queue.enqueue({ gameId, shipId, actionType: 'movement.move', payload: { destination: { x: 14, y: 10 } } });
+    await queue.materializeForTurn(gameId, 6);
+    assert.equal((await get('SELECT status FROM queued_orders WHERE id=?', [move.order.id])).status, 'completed');
+    assert.equal((await get('SELECT status FROM queued_orders WHERE id=?', [start.order.id])).status, 'completed');
+});

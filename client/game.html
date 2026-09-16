@@ -1589,38 +1589,39 @@
         .stat-chip .icon { opacity: 0.9; }
         .player-actions { display: flex; gap: 8px; justify-content: flex-end; }
     </style>
+    <link rel="stylesheet" href="command-shell.css">
 </head>
 <body class="text-slate-100">
     <div class="game-container">
         <!-- Top Bar -->
         <div class="top-bar sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
             <div class="game-info">
-                <div class="game-title" id="gameTitle">🌌 Starfront: Dominion</div>
+                <div class="game-title game-brand" aria-label="Starfront Dominion">
+                    <img class="brand-mark" src="assets/branding/starfront-mark.svg" alt="" aria-hidden="true">
+                    <span class="brand-wordmark"><span>STARFRONT</span><i>/</i><strong>DOMINION</strong></span>
+                </div>
                 <div class="turn-status">
-                    <div class="turn-counter" id="turnCounter">Turn 1</div>
+                    <button class="turn-counter" id="turnCounter" type="button" aria-haspopup="dialog" aria-controls="turnActivityDialog" aria-expanded="false">
+                        <span id="turnCounterLabel">Turn 1</span><span class="turn-activity-indicator" aria-hidden="true">!</span>
+                    </button>
                     <div class="turn-countdown" id="turnCountdown" style="margin-left:8px;color:var(--muted);font-size:12px;display:none;">Next in --:--</div>
-                    <button class="lock-turn-btn sf-btn sf-btn-primary" id="lockTurnBtn">
-                        🔓 Lock Turn
+                    <button class="lock-turn-btn sf-btn sf-btn-primary" id="lockTurnBtn" aria-label="Lock turn">
+                        <span class="button-icon" aria-hidden="true">🔓</span><span class="button-label">Lock Turn</span>
                     </button>
-                    <button class="sf-btn sf-btn-secondary" id="playersStatusBtn" title="Show Players">
-                        👥 Players
-                    </button>
-                    <button class="sf-btn sf-btn-secondary turn-report-button" id="turnReportBtn" type="button" aria-label="Open last turn report" aria-expanded="false" title="Last turn report">🔔<span id="turnReportBadge" class="turn-report-badge" hidden>0</span></button>
-                    <div class="workspace-launcher" aria-label="Open workspace panels">
-                        <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="fleet">Fleet</button>
-                        <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="details">Selected unit</button>
-                        <button class="sf-btn sf-btn-secondary" type="button" data-open-panel="command">Command</button>
-                    </div>
                 </div>
             </div>
-            <div id="turnReportPanel" class="turn-report-panel sf-card" hidden aria-label="Last turn report"></div>
             <div class="topbar-utilities" aria-label="Game utilities">
-                <button class="map-btn sf-btn sf-btn-secondary" id="centerActiveShipBtn" title="Center on active ship" aria-label="Center on active ship">⌖</button>
-                <button class="map-btn sf-btn sf-btn-secondary" id="floatingMiniBtn" title="Toggle minimap" aria-label="Toggle minimap">🎯</button>
-                <button class="map-btn sf-btn sf-btn-secondary" id="openMapBtn" title="Open strategic map" aria-label="Open strategic map">🗺️</button>
-                <button class="map-btn sf-btn sf-btn-secondary" id="openEncyclopediaBtn" title="Encyclopedia" aria-label="Open encyclopedia">📖</button>
-                <button class="map-btn sf-btn sf-btn-secondary" id="settingsBtn" title="Settings" aria-label="Open settings">⚙️</button>
-                <button class="map-btn sf-btn sf-btn-danger" id="exitGameBtn" title="Quit game" aria-label="Quit game">❌</button>
+                <button class="header-map-control sf-btn sf-btn-secondary" id="centerActiveShipHeaderBtn" type="button" title="Focus active unit" aria-label="Focus active unit">⌖</button>
+                <button class="header-map-control sf-btn sf-btn-secondary" id="openMapBtn" type="button" title="Strategic map" aria-label="Open strategic map">▦</button>
+                <button class="header-map-control desktop-only-control sf-btn sf-btn-secondary" id="floatingMiniBtn" type="button" title="Toggle minimap" aria-label="Toggle minimap">⊙</button>
+                <button class="menu-trigger sf-btn sf-btn-secondary" id="menuBtn" type="button" aria-label="Open menu" aria-haspopup="menu" aria-expanded="false"><span class="menu-icon" aria-hidden="true">☰</span><span class="menu-label">Menu</span></button>
+                <div class="utility-menu" id="utilityMenu" role="menu" hidden>
+                    <button class="utility-menu-item" id="openEncyclopediaBtn" type="button" role="menuitem">Encyclopedia</button>
+                    <button class="utility-menu-item" id="settingsBtn" type="button" role="menuitem">Settings</button>
+                    <button class="utility-menu-item utility-menu-danger" id="exitGameBtn" type="button" role="menuitem">Exit game</button>
+                    <button class="utility-menu-item mobile-menu-map-entry" id="mobileStrategicMapBtn" type="button" role="menuitem">Strategic map</button>
+                    <button class="utility-menu-item mobile-menu-map-entry" id="mobileMiniMapBtn" type="button" role="menuitem">Mini-map</button>
+                </div>
             </div>
         </div>
         
@@ -1661,6 +1662,9 @@
         <!-- Center Map -->
         <div class="map-container sf-card rounded-2xl border border-white/10 backdrop-blur-xl">
             <canvas id="gameCanvas"></canvas>
+            <div id="systemContext" class="system-context" aria-live="polite"></div>
+            <button class="mobile-focus-control" id="centerActiveShipBtn" type="button" title="Focus active unit" aria-label="Focus active unit">⌖ <span>Focus</span></button>
+            <div id="touchOrderActions" class="touch-order-actions" hidden><span id="touchOrderLabel"></span><button id="confirmTouchOrder" type="button" class="sf-btn sf-btn-primary">Queue move</button><button id="cancelTouchOrder" type="button" class="sf-btn sf-btn-secondary">Cancel</button></div>
             <div class="map-controls">
                 <button class="map-btn sf-btn sf-btn-secondary" id="zoomInBtn">🔍+</button>
                 <button class="map-btn sf-btn sf-btn-secondary" id="zoomOutBtn">🔍-</button>
@@ -1719,6 +1723,8 @@
             <div class="comms-tabs" role="tablist" aria-label="Communications panels">
                 <button class="comms-tab is-active" type="button" role="tab" aria-selected="true" data-comms-tab="chat">Chat</button>
                 <button class="comms-tab" type="button" role="tab" aria-selected="false" data-comms-tab="activity">Activity</button>
+                <button class="comms-tab" type="button" role="tab" aria-selected="false" data-comms-tab="players">Players</button>
+                <button class="panel-dismiss" type="button" data-close-panel="comms" aria-label="Close communications">×</button>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 100%; min-height: 0;">
                 <div class="comms-chat-pane" style="display:grid; grid-template-rows: auto 1fr auto; gap:6px; min-height:0;">
@@ -1733,11 +1739,12 @@
                         </div>
                     </div>
                     <div class="comms-activity-pane" style="display:grid; grid-template-rows: auto 1fr; gap:6px; min-height:0;">
-                        <div class="panel-title" style="margin:0;">📜 Activity Log</div>
+                        <div class="panel-title" style="margin:0;">Session log <button type="button" id="commsActivityBtn" class="sf-btn sf-btn-secondary">Turn history</button></div>
                         <div id="activityLog" style="overflow:auto; min-height:0;">
                             <div class="log-entry info">Game initialized. Welcome to your sector, Commander!</div>
                         </div>
                     </div>
+                    <div class="comms-players-pane" id="commsPlayers" role="tabpanel" aria-label="Players"><p>Open Players to load the roster.</p></div>
                 </div>
         </section>
     </div>
@@ -1747,7 +1754,6 @@
         <button type="button" data-open-panel="comms">Comms</button>
         <button type="button" data-open-panel="command">Command</button>
     </nav>
-
     <script src="/socket.io/socket.io.js"></script>
     <script>
       // Dev mode initializer: set to '1' to enable client dev features
@@ -1957,6 +1963,7 @@
                         tabButton.classList.toggle('is-active', active);
                         tabButton.setAttribute('aria-selected', String(active));
                     });
+                    if (tab === 'players') import('./ui/players-modal.js').then(mod => mod.showPlayers(comms.querySelector('#commsPlayers'))).catch(() => {});
                 });
             });
             document.addEventListener('keydown', (event) => {

@@ -65,6 +65,22 @@ app.use('/game', gameRoutes);
 const protectedApi = express.Router();
 require('./middleware/auth').protectRouter(protectedApi);
 app.use(protectedApi);
+// Durable player-scoped activity inbox. The authenticated identity supplied by
+// middleware is authoritative; clients may only choose pagination parameters.
+protectedApi.get('/game/:gameId/activity', async (req, res) => {
+    try {
+        const activity = require('./services/game/activity.service');
+        const result = await activity.open(db, { gameId: Number(req.params.gameId), userId: Number(req.userId), limit: req.query.limit, afterId: req.query.afterId, snapshotBoundary: req.query.snapshotBoundary });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'server_error' }); }
+});
+protectedApi.post('/game/:gameId/activity/ack', async (req, res) => {
+    try {
+        const activity = require('./services/game/activity.service');
+        const result = await activity.ack(db, { gameId: Number(req.params.gameId), userId: Number(req.userId), boundary: req.body?.boundary });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'server_error' }); }
+});
 // Sector trails: always-visible movement history (last N turns)
 // Ability cooldowns endpoint
 protectedApi.get('/game/ability-cooldowns/:shipId', async (req, res) => {
@@ -94,16 +110,30 @@ protectedApi.get('/game/sector/:sectorId/trails', async (req, res) => {
     }
 });
     // Combat logs read API (simple fetch)
-protectedApi.get('/combat/logs/:gameId/:turnNumber', (req, res) => {
-        const { gameId, turnNumber } = req.params;
-        db.all(
-            'SELECT * FROM combat_logs WHERE game_id = ? AND turn_number = ? ORDER BY id ASC',
-            [gameId, turnNumber],
-            (err, rows) => {
-                if (err) return res.status(500).json({ error: 'db_error' });
-                res.json({ logs: rows || [] });
+    protectedApi.get('/combat/logs/:gameId/:turnNumber', async (req, res) => {
+        const gameId = Number(req.params.gameId), turnNumber = Number(req.params.turnNumber), userId = Number(req.userId);
+        try {
+            const sanitizeCombatLogRow = require('./services/game/activity.service').sanitizeCombatLogRow;
+            const rows = await new Promise((resolve, reject) => db.all(`
+                SELECT cl.*, a.owner_id AS attacker_owner_id, t.owner_id AS target_owner_id
+                FROM combat_logs cl
+                LEFT JOIN sector_objects a ON a.id=cl.attacker_id
+                LEFT JOIN sector_objects t ON t.id=cl.target_id
+                WHERE cl.game_id=? AND cl.turn_number=?
+                  AND (a.owner_id=? OR t.owner_id=?) ORDER BY cl.id ASC`,
+                [gameId, turnNumber, userId, userId], (e, r) => e ? reject(e) : resolve(r || [])));
+            const visible = [];
+            for (const row of rows) {
+                const attackerOwn = Number(row.attacker_owner_id) === userId;
+                const targetOwn = Number(row.target_owner_id) === userId;
+                // object_visibility is memory of ever-seen objects, not proof
+                // of current visibility. Keep opponent identity redacted in
+                // this legacy report; owned targets remain safe to identify.
+                const targetKnown = targetOwn;
+                visible.push(sanitizeCombatLogRow(row, { attackerVisible: attackerOwn, targetVisible: targetKnown }));
             }
-        );
+            res.json({ logs: visible });
+        } catch (e) { res.status(500).json({ error: 'db_error' }); }
     });
 
 // Concise, player-scoped summary of the most recently completed turn.
@@ -122,7 +152,7 @@ protectedApi.get('/game/turn-report/:gameId/:turnNumber', async (req, res) => {
                  FROM turn_harvest_events e JOIN resource_types rt ON rt.id=e.resource_type_id
                  JOIN sector_objects so ON so.id=e.ship_id
                  WHERE e.game_id=? AND e.turn_number=? AND so.owner_id=? GROUP BY e.ship_id,rt.resource_name`, [gameId,turnNumber,userId]),
-            all(`SELECT cl.* FROM combat_logs cl
+            all(`SELECT cl.*, a.owner_id AS attacker_owner_id, t.owner_id AS target_owner_id FROM combat_logs cl
                  LEFT JOIN sector_objects a ON a.id=cl.attacker_id LEFT JOIN sector_objects t ON t.id=cl.target_id
                  WHERE cl.game_id=? AND cl.turn_number=? AND (a.owner_id=? OR t.owner_id=?) ORDER BY cl.id`, [gameId,turnNumber,userId,userId]),
             all(`SELECT mo.object_id AS shipId, mo.blocked_by AS reason, so.x, so.y
@@ -132,7 +162,12 @@ protectedApi.get('/game/turn-report/:gameId/:turnNumber', async (req, res) => {
             all(`SELECT recovered, recruited FROM turn_pilot_events WHERE game_id=? AND turn_number=? AND user_id=? ORDER BY id`, [gameId,turnNumber,userId])
         ]);
         const pilotSummary = pilots.reduce((sum, row) => ({ recovered: sum.recovered + Number(row.recovered || 0), recruited: sum.recruited + Number(row.recruited || 0) }), { recovered: 0, recruited: 0 });
-        res.json({ gameId, turnNumber, arrivals: movement.map(({shipId,x,y})=>({shipId,x,y})), movement, harvest, combat, blocked, builds, pilots: pilotSummary });
+        const sanitizeCombatLogRow = require('./services/game/activity.service').sanitizeCombatLogRow;
+        const safeCombat = combat.map(row => sanitizeCombatLogRow(row, {
+            attackerVisible: Number(row.attacker_owner_id) === Number(userId),
+            targetVisible: Number(row.target_owner_id) === Number(userId)
+        }));
+        res.json({ gameId, turnNumber, arrivals: movement.map(({shipId,x,y})=>({shipId,x,y})), movement, harvest, combat: safeCombat, blocked, builds, pilots: pilotSummary });
     } catch (e) { console.error('turn report error:', e); res.status(500).json({ error: 'server_error' }); }
 });
 

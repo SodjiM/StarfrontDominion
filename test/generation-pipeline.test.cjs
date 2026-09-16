@@ -48,5 +48,20 @@ test('asteroid-heavy resources include dense hubs and diffuse pockets', async ()
 test('generation manifest records orbital geometry and version', async () => {
     const rows = await all('SELECT generator_version,manifest_json FROM generation_manifests WHERE sector_id = ?', [sectorId]);
     assert.equal(rows[0].generator_version, 'physical-scale-v1');
-    assert.equal(JSON.parse(rows[0].manifest_json).orbitalRings.length, (await all('SELECT 1 FROM orbital_rings WHERE sector_id = ?', [sectorId])).length);
+    const manifest = JSON.parse(rows[0].manifest_json);
+    assert.equal(manifest.orbitalRings.length, (await all('SELECT 1 FROM orbital_rings WHERE sector_id = ?', [sectorId])).length);
+    assert.equal(manifest.resourceProfileVersion, 'resource-profile-v2');
+    assert.equal(manifest.resourceProfile.version, 'resource-profile-v2');
+    assert.equal(manifest.resourceProfile.signatureMinerals.length, 2);
+    assert.equal(manifest.resourceProfile.randomSpecialties.length, 5);
+    assert.equal(manifest.resourceProfile.availableMinerals.length, 12);
+    const generatedMinerals = await all(
+        `SELECT DISTINCT rt.resource_name
+           FROM resource_nodes rn
+           JOIN resource_types rt ON rt.id = rn.resource_type_id
+          WHERE rn.sector_id = ?`,
+        [sectorId]
+    );
+    const generatedNames = new Set(generatedMinerals.map((row) => row.resource_name));
+    assert.ok(manifest.resourceProfile.availableMinerals.every((mineral) => generatedNames.has(mineral)));
 });

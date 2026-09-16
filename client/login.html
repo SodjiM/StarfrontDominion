@@ -1,145 +1,145 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Starfront: Dominion</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display:flex; align-items:center; justify-content:center; min-height: 100vh; }
-      .container { max-width: 420px; padding: 24px; margin: 8vh 16px; }
-      h1 { text-align:center; margin-bottom: 18px; }
-      .form-group { margin-bottom: 18px; }
-      label { color: var(--muted); }
-      input { width:100%; }
-      .back-link { text-align:center; margin-top: 14px; }
-      .back-link a { color: var(--primary); text-decoration:none; }
-      .back-link a:hover { text-decoration: underline; }
-      /* Hide loading row by default; JS toggles on submit */
-      .loading { display: none; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Log in · Starfront Dominion</title>
+  <link rel="stylesheet" href="login.css">
 </head>
-<body class="sf-page sf-auth-page min-h-screen bg-[#070912] text-slate-100 flex items-center justify-center relative">
-    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(14,165,233,0.08),transparent_60%),radial-gradient(ellipse_at_bottom_left,rgba(99,102,241,0.08),transparent_55%)]"></div>
-    <style>
-      :root { --stars1: ""; --stars2: ""; --stars3: ""; }
-      .stars:after, .stars:before { content: ""; position: absolute; inset: 0; background-repeat: repeat; }
-      .stars.s1:after { background-image: var(--stars1); animation: twinkle 12s linear infinite; opacity: .4 }
-      .stars.s2:after { background-image: var(--stars2); animation: twinkle 18s linear infinite; opacity: .6 }
-      .stars.s3:after { background-image: var(--stars3); animation: twinkle 24s linear infinite; opacity: .9 }
-      @keyframes twinkle { 0%{ transform: translateY(0)} 50%{ transform: translateY(-10px)} 100%{ transform: translateY(0)} }
-    </style>
-    <div class="stars s1 absolute inset-0"></div>
-    <div class="stars s2 absolute inset-0"></div>
-    <div class="stars s3 absolute inset-0"></div>
-    <main class="container sf-auth-card sf-card max-w-md w-full mx-4 my-10 rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-6 sm:p-8 relative z-10">
-        <div class="text-center mb-2">
-            <div class="sf-title" style="font-size: 26px; line-height:1; display:inline-flex; align-items:center; gap:8px;">
-                <span class="emoji" aria-hidden="true">🌌</span>
-                <span>Starfront: Dominion</span>
-            </div>
-        </div>
-        <h1 class="sf-title text-center text-2xl font-bold">Login</h1>
-        
-        <form id="loginForm">
-            <div class="form-group">
-                <label for="username" class="block text-slate-300 mb-1">Username</label>
-                <input class="sf-input w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60" type="text" id="username" name="username" required>
-            </div>
-            
-            <div class="form-group">
-                <label for="password" class="block text-slate-300 mb-1">Password</label>
-                <input class="sf-input w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60" type="password" id="password" name="password" required>
-            </div>
-            
-            <button class="sf-btn sf-btn-primary w-full inline-flex items-center justify-center rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-4 py-2 font-semibold shadow-lg shadow-cyan-500/30 transition" type="submit" id="loginBtn">Login</button>
-            <div class="loading text-center text-slate-300 mt-2" id="loading">🚀 Connecting to the galaxy...</div>
-            <div class="error text-center text-rose-400 mt-2" id="error"></div>
-        </form>
-        
-        <div class="back-link mt-4 text-center">
-            <a class="text-cyan-300 hover:text-cyan-200" href="register.html">Don't have an account? Register</a><br>
-            <a class="text-cyan-300 hover:text-cyan-200" href="/">← Back to Main Menu</a>
-        </div>
-    </main>
+<body class="login-page">
+  <a class="skip-link" href="#loginForm">Skip to login</a>
+  <main class="login-shell">
+    <a class="login-brand" href="/" aria-label="Starfront Dominion home">
+      <img src="assets/branding/starfront-mark.svg" alt="">
+      <span><strong>STARFRONT</strong><small>/ DOMINION</small></span>
+    </a>
 
-    <script src="main.js"></script>
-    <script>
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const loginBtn = document.getElementById('loginBtn');
-            const loading = document.getElementById('loading');
-            const error = document.getElementById('error');
-            
-            // Show loading state
-            loginBtn.disabled = true;
-            loading.style.display = 'block';
-            error.textContent = '';
-            
-            try {
-                const response = await fetch('/auth/login', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ username, password }),
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    // Store user data in localStorage
-                    localStorage.setItem('userId', data.userId);
-                    localStorage.setItem('username', data.username);
-                    
-                    // Redirect to lobby
-                    window.location.href = 'lobby.html';
-                } else {
-                    error.textContent = data.error || 'Login failed';
-                }
-            } catch (err) {
-                error.textContent = 'Connection failed. Please try again.';
-            } finally {
-                // Hide loading state
-                loginBtn.disabled = false;
-                loading.style.display = 'none';
-            }
+    <section class="login-card" aria-labelledby="login-title">
+      <header class="login-heading">
+        <p>Command access</p>
+        <h1 id="login-title">Welcome back, Commander.</h1>
+      </header>
+
+      <form id="loginForm" novalidate>
+        <div class="login-field">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Enter your username" aria-describedby="error">
+        </div>
+
+        <div class="login-field">
+          <label for="password">Password</label>
+          <div class="password-control">
+            <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Enter your password" aria-describedby="error">
+            <button id="togglePassword" class="password-toggle" type="button" aria-controls="password" aria-pressed="false" aria-label="Show password">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-5.5 9.5-5.5 9.5 5.5 9.5 5.5-3.4 5.5-9.5 5.5S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="error" class="login-message" role="alert" tabindex="-1" hidden></div>
+
+        <button class="login-submit" type="submit" id="loginBtn">
+          <span class="login-spinner" aria-hidden="true"></span>
+          <span id="loginBtnLabel">Log in</span>
+        </button>
+        <p id="loginStatus" class="sr-only" role="status" aria-live="polite"></p>
+      </form>
+
+      <nav class="login-links" aria-label="Account options">
+        <a href="register.html">Create an account</a>
+        <span aria-hidden="true"></span>
+        <a href="/">Back to main menu</a>
+      </nav>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const username = document.getElementById('username');
+    const password = document.getElementById('password');
+    const loginBtn = document.getElementById('loginBtn');
+    const loginBtnLabel = document.getElementById('loginBtnLabel');
+    const loginStatus = document.getElementById('loginStatus');
+    const error = document.getElementById('error');
+    const togglePassword = document.getElementById('togglePassword');
+
+    function clearError() {
+      error.hidden = true;
+      error.textContent = '';
+      username.removeAttribute('aria-invalid');
+      password.removeAttribute('aria-invalid');
+    }
+
+    function showError(message, fields, focusTarget) {
+      error.textContent = message;
+      error.hidden = false;
+      fields.forEach((field) => field.setAttribute('aria-invalid', 'true'));
+      (focusTarget || error).focus();
+    }
+
+    function setBusy(isBusy) {
+      loginBtn.disabled = isBusy;
+      loginBtn.setAttribute('aria-busy', String(isBusy));
+      loginBtn.classList.toggle('is-busy', isBusy);
+      loginBtnLabel.textContent = isBusy ? 'Logging in…' : 'Log in';
+      loginStatus.textContent = isBusy ? 'Logging in.' : '';
+    }
+
+    togglePassword.addEventListener('click', () => {
+      const showing = password.type === 'text';
+      password.type = showing ? 'password' : 'text';
+      togglePassword.setAttribute('aria-pressed', String(!showing));
+      togglePassword.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      password.focus({ preventScroll: true });
+    });
+
+    username.addEventListener('input', clearError);
+    password.addEventListener('input', clearError);
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      clearError();
+
+      const enteredUsername = username.value.trim();
+      const enteredPassword = password.value;
+      if (!enteredUsername || !enteredPassword) {
+        const missing = [username, password].filter((field) => !field.value.trim());
+        showError('Enter your username and password.', missing, missing[0]);
+        return;
+      }
+
+      setBusy(true);
+      try {
+        const response = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: enteredUsername, password: enteredPassword }),
         });
-        
-        // Auto-focus username field
-        document.getElementById('username').focus();
-    </script>
-    <script>
-      (function(){
-        function generateStars(count){
-          var size = 1200;
-          var cvs = document.createElement('canvas');
-          cvs.width = size; cvs.height = size;
-          var ctx = cvs.getContext('2d');
-          if(!ctx) return '';
-          ctx.fillStyle = 'rgba(255,255,255,0)'; ctx.fillRect(0,0,size,size);
-          for (var i=0;i<count;i++){
-            var x = Math.random()*size;
-            var y = Math.random()*size;
-            var r = Math.random()*1.2 + 0.3;
-            var g = ctx.createRadialGradient(x,y,0,x,y,r*3);
-            var huePick = Math.random() < 0.85 ? 0 : 220;
-            var col = huePick === 0 ? '255,255,255' : '150,200,255';
-            g.addColorStop(0,'rgba('+col+',0.95)');
-            g.addColorStop(1,'rgba('+col+',0.0)');
-            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x,y,r*3,0,Math.PI*2); ctx.fill();
-          }
-          return 'url('+cvs.toDataURL()+')';
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          password.value = '';
+          showError(
+            response.status === 401 ? 'Username or password is incorrect.' : (data.error || 'Login could not be completed. Try again.'),
+            [username, password],
+            password,
+          );
+          return;
         }
-        var root = document.documentElement;
-        root.style.setProperty('--stars1', generateStars(80));
-        root.style.setProperty('--stars2', generateStars(60));
-        root.style.setProperty('--stars3', generateStars(40));
-      })();
-    </script>
+
+        localStorage.setItem('userId', data.userId);
+        localStorage.setItem('username', data.username);
+        loginStatus.textContent = 'Login successful. Opening the lobby.';
+        window.location.href = 'lobby.html';
+      } catch (requestError) {
+        showError('Connection failed. Check your connection and try again.', [username, password], error);
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    username.focus();
+  </script>
 </body>
 </html>

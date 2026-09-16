@@ -4,6 +4,7 @@ export function showSettingsModal() {
     const container = document.createElement('div');
     const currentVolume = Math.round((getMusicVolume() || 0.25) * 100);
     const enabled = !!isMusicEnabled();
+    let alwaysGrid = false; try { alwaysGrid = localStorage.getItem('ui.alwaysGrid') === '1'; } catch {}
 
     container.innerHTML = `
         <div class="form-section">
@@ -12,6 +13,10 @@ export function showSettingsModal() {
                 <label style="display:flex; align-items:center; gap:10px;">
                     <input id="musicEnabledToggle" type="checkbox" ${enabled ? 'checked' : ''} />
                     <span>Enable Background Music</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:10px;">
+                    <input id="alwaysGridToggle" type="checkbox" ${alwaysGrid ? 'checked' : ''} />
+                    <span>Always show tactical grid</span>
                 </label>
                 <div>
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
@@ -28,6 +33,7 @@ export function showSettingsModal() {
     const range = container.querySelector('#musicVolumeRange');
     const label = container.querySelector('#musicVolumeLabel');
     const toggle = container.querySelector('#musicEnabledToggle');
+    const gridToggle = container.querySelector('#alwaysGridToggle');
     if (range && label) {
         range.addEventListener('input', () => {
             const v = Number(range.value) || 0;
@@ -40,6 +46,11 @@ export function showSettingsModal() {
             setMusicEnabled(!!toggle.checked);
         });
     }
+    if (gridToggle) gridToggle.addEventListener('change', () => {
+        try { localStorage.setItem('ui.alwaysGrid', gridToggle.checked ? '1' : '0'); } catch {}
+        window.dispatchEvent(new CustomEvent('sf:always-grid-change', { detail: { enabled: gridToggle.checked } }));
+        window.gameClient?.render?.();
+    });
 
     UI.showModal({
         title: '⚙️ Settings',
@@ -48,5 +59,4 @@ export function showSettingsModal() {
         className: 'settings-modal'
     });
 }
-
 

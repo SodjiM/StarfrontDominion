@@ -6,22 +6,32 @@ export function updateTopbar(game) {
         // Turn counter
         const turn = game.gameState?.currentTurn?.turn_number || 1;
         const turnEl = game._els.turnCounter || (game._els.turnCounter = document.getElementById('turnCounter'));
-        if (turnEl) turnEl.textContent = `Turn ${turn}`;
+        const turnLabel = document.getElementById('turnCounterLabel');
+        if (turnLabel) turnLabel.textContent = `Turn ${turn}`;
+        else if (turnEl) turnEl.textContent = `Turn ${turn}`;
 
         // Title
         const title = game.gameState?.sector?.name || 'Your System';
-        const titleEl = game._els.gameTitle || (game._els.gameTitle = document.getElementById('gameTitle'));
-        if (titleEl) titleEl.innerHTML = `🌌 ${title}`;
+        const titleEl = document.getElementById('systemContext');
+        if (titleEl) titleEl.textContent = `${title} · ${String(game.gameState?.sector?.archetype || 'standard').replace(/-/g,' ')}`;
 
         // Lock state
         const lockBtn = game._els.lockTurnBtn || (game._els.lockTurnBtn = document.getElementById('lockTurnBtn'));
         if (lockBtn) {
+            const lockIcon = lockBtn.querySelector('.button-icon');
+            const lockLabel = lockBtn.querySelector('.button-label');
             if (game.gameState?.turnLocked) {
-                lockBtn.textContent = '🔒 Turn Locked';
+                if (lockIcon) lockIcon.textContent = '🔒';
+                if (lockLabel) lockLabel.textContent = 'Turn Locked';
+                if (!lockLabel) lockBtn.textContent = '🔒 Turn Locked';
+                lockBtn.setAttribute('aria-label', 'Unlock turn');
                 lockBtn.classList.add('locked');
                 game.turnLocked = true;
             } else {
-                lockBtn.textContent = '🔓 Lock Turn';
+                if (lockIcon) lockIcon.textContent = '🔓';
+                if (lockLabel) lockLabel.textContent = 'Lock Turn';
+                if (!lockLabel) lockBtn.textContent = '🔓 Lock Turn';
+                lockBtn.setAttribute('aria-label', 'Lock turn');
                 lockBtn.classList.remove('locked');
                 game.turnLocked = false;
             }
@@ -84,5 +94,3 @@ export function updateSectorOverviewTitle(game) {
         }
     } catch {}
 }
-
-

@@ -4,6 +4,7 @@
     function metaOf(o) { if (typeof o?.meta === 'string') { try { return JSON.parse(o.meta) || {}; } catch { return {}; } } return o?.meta || {}; }
     function width(o) {
         const m = metaOf(o), key = String(m.blueprintId || m.stationClass || m.structureType || m.shipClass || m.shipType || m.hull || m.class || o?.type || '').toLowerCase();
+        if (o?.type === 'resource_node') return 2;
         if (o?.type === 'station' || o?.type === 'starbase' || key.endsWith('-station')) return key === 'sun-station' || key === 'shipyard' ? 13 : key === 'moon-station' || key === 'outpost' ? 5 : 9;
         if (o?.type === 'ship' || o?.type === 'wreck') {
             if (/carrier|capital|battleship|dreadnought/.test(key)) return 5;

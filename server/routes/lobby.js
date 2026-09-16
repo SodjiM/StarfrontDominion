@@ -2,8 +2,33 @@ const express = require('express');
 const db = require('../db');
 const router = express.Router();
 require('../middleware/auth').protectRouter(router, {lobby:true});
-const { GamesRepository } = require('../repositories/games.repo');
+const { GamesRepository, GAME_ARTWORK_KEYS } = require('../repositories/games.repo');
+const { LobbyMessagesRepository, LobbyMessageValidationError } = require('../repositories/lobby-messages.repo');
 const gamesRepo = new GamesRepository();
+const lobbyMessagesRepo = new LobbyMessagesRepository();
+
+// Lobby-wide communications. These endpoints require authentication but do
+// not require membership in any particular game.
+router.get('/comms', async (req, res) => {
+    try {
+        res.json(await lobbyMessagesRepo.list({ limit: req.query.limit, before: req.query.before }));
+    } catch (e) {
+        if (e instanceof LobbyMessageValidationError) return res.status(400).json({ error: e.message });
+        return res.status(500).json({ error: 'Failed to fetch lobby messages' });
+    }
+});
+
+router.post('/comms', async (req, res) => {
+    try {
+        // req.userId is assigned by auth middleware and cannot be overridden by
+        // a client-supplied body userId.
+        const message = await lobbyMessagesRepo.create({ userId: req.userId, text: req.body?.text });
+        res.status(201).json({ message });
+    } catch (e) {
+        if (e instanceof LobbyMessageValidationError) return res.status(400).json({ error: e.message });
+        return res.status(500).json({ error: 'Failed to send lobby message' });
+    }
+});
 
 // Get all games + highlight games user is in (include current turn for active games)
 router.get('/games/:userId', async (req, res) => {
@@ -66,13 +91,16 @@ router.post('/leave', async (req, res) => {
 
 // Create a new game (supports auto turn interval)
 router.post('/create', async (req, res) => {
-    const { name, mode, creatorId, turnLockMinutes } = req.body;
+    const { name, mode, creatorId, turnLockMinutes, artworkKey } = req.body;
     if (!name || !mode) return res.status(400).json({ error: 'Game name and mode required' });
+    if (artworkKey != null && !GAME_ARTWORK_KEYS.includes(artworkKey)) {
+        return res.status(400).json({ error: 'Invalid artwork key' });
+    }
     const autoTurn = (turnLockMinutes === null || turnLockMinutes === undefined || turnLockMinutes === 'none') ? null : parseInt(turnLockMinutes, 10);
     try {
-        const { id: gameId } = await gamesRepo.createGame({ name, mode, status: 'recruiting', autoTurnMinutes: autoTurn });
+        const { id: gameId, artworkKey: assignedArtworkKey } = await gamesRepo.createGame({ name, mode, status: 'recruiting', autoTurnMinutes: autoTurn, artworkKey });
         if (creatorId) await gamesRepo.addPlayerToGame(creatorId, gameId);
-        res.json({ gameId, success: true });
+        res.json({ gameId, artworkKey: assignedArtworkKey, success: true });
     } catch (e) {
         return res.status(500).json({ error: 'Failed to create game' });
     }
@@ -111,4 +139,3 @@ router.delete('/games/clear-all', async (req, res) => {
 });
 
 module.exports = router;
-

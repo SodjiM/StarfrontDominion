@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS region_projects (
 
 CREATE INDEX IF NOT EXISTS idx_region_projects_sector ON region_projects(sector_id, region_id, key);
 
--- Mineral weighting rules per region (for gated secondaries)
+-- Legacy-compatible mineral weighting rules per region. The gated and
+-- unlock_threshold columns are retained for old saves, but resource-profile-v2
+-- treats these rows as abundance biases rather than health-based unlocks.
 CREATE TABLE IF NOT EXISTS mineral_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sector_id INTEGER NOT NULL,
@@ -56,5 +58,4 @@ CREATE TABLE IF NOT EXISTS mineral_rules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mineral_rules_sector_region ON mineral_rules(sector_id, region_id, mineral_name);
-
 

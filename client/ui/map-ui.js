@@ -2,8 +2,7 @@
 
 import { openMapModal } from './map-modal.js';
 
-export function openMap() {
-    try { openMapModal(); } catch {}
+export function openMap(tab = 'solar-system') {
+    try { openMapModal(tab); } catch {}
 }
-
 

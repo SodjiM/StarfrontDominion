@@ -64,6 +64,8 @@
     sectorTrails: (sectorId, currentTurn, maxAge=10) => getJson(`/game/sector/${sectorId}/trails?sinceTurn=${currentTurn}&maxAge=${maxAge}`),
     combatLogs: (gameId, turnNumber) => getJson(`/combat/logs/${gameId}/${turnNumber}`),
     turnReport: (gameId, turnNumber) => getJson(`/game/turn-report/${gameId}/${turnNumber}`),
+    activity: (gameId, limit=50, afterId=null, snapshotBoundary=null) => getJson(`/game/${gameId}/activity?limit=${encodeURIComponent(limit)}${afterId != null ? `&afterId=${encodeURIComponent(afterId)}` : ''}${snapshotBoundary != null ? `&snapshotBoundary=${encodeURIComponent(snapshotBoundary)}` : ''}`),
+    ackActivity: (gameId, boundary) => postJson(`/game/${gameId}/activity/ack`, { boundary }),
     stationEffects: (stationId) => getJson(`/game/station-effects/${stationId}`),
     switchSector: (gameId, userId, sectorId) => postJson('/game/switch-sector', { gameId, userId, sectorId }),
     itineraries: (gameId, userId, sectorId) => {

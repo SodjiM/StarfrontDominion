@@ -110,7 +110,7 @@ function isCelestialObject(game, obj) {
 
 // Strategic Map modal (ESM)
 
-export function openMapModal() {
+export function openMapModal(initialTab = 'solar-system') {
         const client = window.gameClient; if (!client) return;
         const sectorName = client.gameState?.sector?.name || 'Current System';
         const modalContent = document.createElement('div');
@@ -226,6 +226,7 @@ export function openMapModal() {
         
         // Map tab switching
         bindTabEvents(modalContent);
+        if (initialTab === 'galaxy') modalContent.querySelector('[data-tab="galaxy"]')?.click();
         
         // POI filter chips
         modalContent.querySelectorAll('.poi-filter').forEach(chip => {

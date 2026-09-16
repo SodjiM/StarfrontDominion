@@ -10,7 +10,7 @@ function bindUI() {
         const client = window.gameClient;
         if (!client || !client.selectedUnit) { client?.addLogEntry('No ship selected', 'warning'); return; }
         const ship = client.selectedUnit;
-        if (ship.harvestingStatus === 'active') {
+        if (ship.harvestingStatus === 'active' || ship.harvestingStatus === 'paused') {
             import('./queue-controller.js').then(Queue => Queue.addHarvestStop(client, ship.id, (resp) => {
                 if (!resp?.success) client.addLogEntry(`Failed to plan stop mining: ${resp?.error || 'error'}`, 'error');
             }));
@@ -54,4 +54,3 @@ function bindUI() {
     }
 
 bindUI();
-

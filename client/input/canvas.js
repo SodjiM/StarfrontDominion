@@ -7,13 +7,95 @@ export function bindCanvasInputs(game) {
     if (!canvas || canvas._canvasBound) return;
     canvas._canvasBound = true;
 
-    canvas.addEventListener('mousemove', (e) => handleMouseMove(game, e));
-    canvas.addEventListener('mousedown', (e) => startDragPan(game, e));
-    canvas.addEventListener('mouseup', () => stopDragPan(game));
-    canvas.addEventListener('mouseleave', () => { stopDragPan(game); hideMapTooltip(game); });
-    canvas.addEventListener('mousemove', (e) => handleDragPan(game, e));
-    canvas.addEventListener('wheel', (e) => handleWheel(game, e));
-    canvas.addEventListener('click', (e) => handleLeftClick(game, e));
+    canvas.tabIndex = 0;
+    canvas.setAttribute('aria-label', 'Tactical map. Arrow keys pan, plus and minus zoom. Select a ship from Fleet to issue orders.');
+    canvas.style.touchAction = 'none';
+    const pointers = new Map(); let pinch = null;
+    canvas.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, {x:e.clientX,y:e.clientY});
+        if (pointers.size === 2) {
+            const [a,b] = [...pointers.values()];
+            const rect = canvas.getBoundingClientRect();
+            const mx = ((a.x+b.x)/2 - rect.left) * (canvas.width / Math.max(1, rect.width));
+            const my = ((a.y+b.y)/2 - rect.top) * (canvas.height / Math.max(1, rect.height));
+            pinch = {
+                distance: Math.hypot(a.x-b.x,a.y-b.y), size:game.tileSize,
+                worldX: game.camera.x + (mx - canvas.width/2) / game.tileSize,
+                worldY: game.camera.y + (my - canvas.height/2) / game.tileSize
+            };
+            stopDragPan(game); if (game._dragPan) game._dragPan.movedEnough = true;
+        } else startDragPan(game,e);
+    });
+    canvas.addEventListener('pointermove', e => {
+        if (pointers.has(e.pointerId)) pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+        if (pinch && pointers.size >= 2) {
+            const [a,b] = [...pointers.values()];
+            const nextSize = Math.max(8,Math.min(40,pinch.size*Math.hypot(a.x-b.x,a.y-b.y)/Math.max(1,pinch.distance)));
+            const rect = canvas.getBoundingClientRect();
+            const mx = ((a.x+b.x)/2 - rect.left) * (canvas.width / Math.max(1, rect.width));
+            const my = ((a.y+b.y)/2 - rect.top) * (canvas.height / Math.max(1, rect.height));
+            game.tileSize = nextSize;
+            game.camera.x = Math.max(0, Math.min(5000, pinch.worldX - (mx - canvas.width/2) / nextSize));
+            game.camera.y = Math.max(0, Math.min(5000, pinch.worldY - (my - canvas.height/2) / nextSize));
+            game.render(); return;
+        }
+        handleDragPan(game,e); handleMouseMove(game,e);
+    });
+    canvas.addEventListener('pointerup', e => {
+        const wasPinch = !!pinch;
+        pointers.delete(e.pointerId); stopDragPan(game);
+        if (!pointers.size) pinch = null;
+        if (e.pointerType !== 'mouse' && !wasPinch) {
+            game._suppressTouchClick = true;
+            setTimeout(() => { game._suppressTouchClick = false; }, 450);
+            if (game._dragPan?.movedEnough) { game._dragPan.movedEnough=false; return; }
+            handleMouseMove(game,e);
+            const rect=canvas.getBoundingClientRect();
+            const hit=pickMapObject(game,e.clientX-rect.left,e.clientY-rect.top);
+            if (!hit && game.selectedUnit?.type==='ship' && !game.pendingAbility && !game.turnLocked) {
+                game.touchDestination={...game.hoverWorld};
+                game.touchShipId = Number(game.selectedUnit.id);
+                game._suppressTouchClick = true;
+                document.getElementById('touchOrderActions').hidden=false;
+                document.getElementById('touchOrderLabel').textContent=`Move to ${game.touchDestination.x}, ${game.touchDestination.y}`;
+                game.render();
+            } else { cancelTouchOrder(); handleLeftClick(game,e); }
+        }
+    });
+    canvas.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinch=null; stopDragPan(game); });
+    canvas.addEventListener('pointerleave', () => { if (!pointers.size) { game.hoverWorld=null; hideMapTooltip(game); game.render(); } });
+    canvas.addEventListener('wheel', (e) => handleWheel(game, e), {passive:false});
+    canvas.addEventListener('click', e => {
+        if (game._suppressTouchClick) { game._suppressTouchClick = false; return; }
+        if (!e.pointerType || e.pointerType==='mouse') handleLeftClick(game,e);
+    });
+    function cancelTouchOrder() { game.touchDestination=null; game.touchShipId=null; const el=document.getElementById('touchOrderActions'); if(el)el.hidden=true; game.render(); }
+    document.getElementById('cancelTouchOrder')?.addEventListener('click',cancelTouchOrder);
+    document.getElementById('confirmTouchOrder')?.addEventListener('click',async e => {
+        if (!game.touchDestination || !game.selectedUnit || game.turnLocked) return;
+        if (Number(game.selectedUnit.id) !== Number(game.touchShipId)) { cancelTouchOrder(); game.addLogEntry?.('Order preview cleared because the selected ship changed.', 'info'); return; }
+        const button=e.currentTarget; button.disabled=true;
+        try {
+            const queue=await import('../features/queue-controller.js');
+            const shipId = Number(game.touchShipId), destination = { ...game.touchDestination };
+            const response = await new Promise(resolve => queue.addMove(game, shipId, destination.x, destination.y, resolve));
+            if (response?.success) {
+                game.addLogEntry?.(`Queued: Move to (${destination.x}, ${destination.y})`, 'success');
+                cancelTouchOrder();
+            } else {
+                game.addLogEntry?.(response?.error || 'Could not queue movement. Try again.', 'error');
+            }
+        } catch (error) { game.addLogEntry?.('Could not queue movement. Try again.', 'error'); }
+        finally { button.disabled=false; }
+    });
+    window.addEventListener('sf:always-grid-change',()=>game.render());
+    canvas.addEventListener('keydown',e => {
+        const pan={ArrowLeft:[-5,0],ArrowRight:[5,0],ArrowUp:[0,-5],ArrowDown:[0,5]}[e.key];
+        if(pan){e.preventDefault();game.camera.x=Math.max(0,Math.min(5000,game.camera.x+pan[0]));game.camera.y=Math.max(0,Math.min(5000,game.camera.y+pan[1]));game.render();}
+        if(['+','=','-'].includes(e.key)){e.preventDefault();game.tileSize=Math.max(8,Math.min(40,game.tileSize+(e.key==='-'?-2:2)));game.render();}
+        if(e.key==='Escape'){game.pendingAbility=null;game.abilityHover=null;cancelTouchOrder();}
+    });
     canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); handleRightClick(game, e); });
 }
 
@@ -26,6 +108,7 @@ export function handleMouseMove(game, e) {
     const centerY = game.canvas.height / 2;
     const worldX = Math.round(game.camera.x + (x - centerX) / game.tileSize);
     const worldY = Math.round(game.camera.y + (y - centerY) / game.tileSize);
+    game.hoverWorld = { x: worldX, y: worldY };
 
     const hoveredObject = pickMapObject(game, x, y);
 
@@ -202,4 +285,3 @@ export function handleRightClick(game, e) {
         game.addLogEntry('Use an ability to target enemies', 'info');
     }
 }
-

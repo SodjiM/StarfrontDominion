@@ -1,10 +1,10 @@
-// Resource node generation with belt wedge density, mineral gating, and centroid clustering
+// Resource node generation with seeded system profiles, regional abundance,
+// belt wedge density, and centroid clustering.
 const db = require('../../db');
 const { createRngStreams, randFloat, randInt, choice } = require('./rng');
-
-// Core minerals are always available; two primaries are emphasized
-const CORE_MINERALS = ['Ferrite Alloy', 'Crytite', 'Ardanium', 'Vornite', 'Zerothium'];
-const DEFAULT_PRIMARIES = ['Fluxium', 'Auralite'];
+const { CORE_MINERALS } = require('./mineral-catalog');
+const { createResourceProfile } = require('./resource-profile');
+const { getArchetypeContract } = require('./unified-archetype-registry');
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 
@@ -15,18 +15,14 @@ async function spawnNodesForSector(sectorId, options = {}) {
     const sun = await new Promise((resolve) => db.get('SELECT x, y FROM sector_objects WHERE sector_id = ? AND celestial_type = "star" ORDER BY id LIMIT 1', [sectorId], (e, r) => resolve(r || { x: 2500, y: 2500 })));
     const center = { x: Number(sun.x || 2500), y: Number(sun.y || 2500) };
 
-    // Load region health for gating
-    const regionHealth = new Map();
-    const regions = await new Promise((resolve) => db.all('SELECT region_id, health FROM regions WHERE sector_id = ?', [sectorId], (e, rows) => resolve(rows || [])));
-    for (const r of regions) regionHealth.set(String(r.region_id), Number(r.health || 50));
-
-    // Load mineral rules/weights per region (may include gated secondaries)
-    const rules = await new Promise((resolve) => db.all('SELECT region_id, mineral_name, weight, gated, unlock_threshold FROM mineral_rules WHERE sector_id = ?', [sectorId], (e, rows) => resolve(rows || [])));
+    // Legacy regional rules may still bias abundance, but regional health no
+    // longer gates whether a generated system has access to a mineral.
+    const rules = await new Promise((resolve) => db.all('SELECT region_id, mineral_name, weight FROM mineral_rules WHERE sector_id = ?', [sectorId], (e, rows) => resolve(rows || [])));
     const byRegion = new Map();
     for (const r of rules) {
         const key = String(r.region_id);
         if (!byRegion.has(key)) byRegion.set(key, new Map());
-        byRegion.get(key).set(r.mineral_name, { weight: Number(r.weight || 0), gated: !!r.gated, unlock: r.unlock_threshold != null ? Number(r.unlock_threshold) : null });
+        byRegion.get(key).set(r.mineral_name, { weight: Number(r.weight || 0) });
     }
 
     // Belt wedge geometry and density hints
@@ -39,15 +35,16 @@ async function spawnNodesForSector(sectorId, options = {}) {
     // Helper: map mineral name -> resource_type id
     const getTypeId = async (name) => new Promise((resolve) => db.get('SELECT id FROM resource_types WHERE resource_key = ? OR resource_name = ? LIMIT 1', [name, name], (e, r) => resolve(r?.id || null)));
 
-    // Determine primaries/secondaries by archetype
-    let primaryMinerals = DEFAULT_PRIMARIES;
-    let secondaryMinerals = [];
-    try {
-        const { getArchetypeModule } = require('./unified-archetype-registry');
-        const mod = getArchetypeModule(archetypeKey);
-        if (mod && Array.isArray(mod.MINERALS?.primary)) primaryMinerals = mod.MINERALS.primary.slice();
-        if (mod && Array.isArray(mod.MINERALS?.secondary)) secondaryMinerals = mod.MINERALS.secondary.slice();
-    } catch {}
+    const streams = createRngStreams(options.seed ?? sectorRow?.generation_seed ?? sectorId);
+    const contract = getArchetypeContract(archetypeKey);
+    const resourceProfile = options.resourceProfile || createResourceProfile({
+        archetypeKey: contract.key,
+        signatureMinerals: contract.signatureMinerals,
+        randomSpecialtyCount: contract.randomSpecialtyCount,
+        rng: streams.resourceProfile
+    });
+    const primaryMinerals = resourceProfile.signatureMinerals;
+    const secondaryMinerals = resourceProfile.randomSpecialties;
 
     // Node count per density tier
     const DENSITY_BASE = { high: 8, med: 5, low: 3 };
@@ -69,12 +66,9 @@ async function spawnNodesForSector(sectorId, options = {}) {
 
     // For each belt wedge, build weighted bag and spawn nodes
     for (const s of beltSectors) {
-        const health = regionHealth.get(String(s.region_id)) ?? 50;
         const densityKey = String(s.density || 'med').toLowerCase();
         const base = DENSITY_BASE[densityKey] ?? DENSITY_BASE.med;
-        // Slight health modulation (0.8x at 20hp → 1.2x at 80hp)
-        const healthFactor = 0.8 + clamp(health, 0, 100) * 0.004;
-        let nodeCount = Math.max(3, Math.round(base * healthFactor));
+        const nodeCount = Math.max(3, base);
 
         // Build mineral weight bag
         const weights = new Map();
@@ -90,11 +84,6 @@ async function spawnNodesForSector(sectorId, options = {}) {
         const regionRules = byRegion.get(String(s.region_id));
         if (regionRules) {
             for (const [mineral, cfg] of regionRules.entries()) {
-                const threshold = (cfg.unlock != null ? cfg.unlock : 55);
-                if (cfg.gated && health < threshold) {
-                    // Defer spawn for gated minerals below threshold
-                    continue;
-                }
                 if (allowed.has(mineral)) weights.set(mineral, (weights.get(mineral) || 0) + Math.max(0, Number(cfg.weight || 0)));
             }
         }
@@ -117,7 +106,7 @@ async function spawnNodesForSector(sectorId, options = {}) {
             if (!resTypeId) return;
             const x = Math.max(1, Math.min(4999, Math.round(center.x + Math.cos(angle) * radius)));
             const y = Math.max(1, Math.min(4999, Math.round(center.y + Math.sin(angle) * radius)));
-            const size = randInt(rng, 1, 2);
+            const size = 2;
             const amt = randInt(rng, 160, 379);
             const parentKey = `${s.belt_key}-${s.sector_index}`;
             const parentId = beltCentroids.get(parentKey) || null;
@@ -191,7 +180,7 @@ async function spawnNodesForSector(sectorId, options = {}) {
             const meta = JSON.stringify({ mineral, resourceType: mineral, category: 'mineral', fieldType: 'diffuse-pocket' });
             await new Promise((resolve, reject) => db.run(
                 `INSERT INTO resource_nodes (sector_id, parent_object_id, resource_type_id, x, y, size, resource_amount, max_resource, harvest_difficulty, is_depleted, meta)
-                 VALUES (?, NULL, ?, ?, ?, 1, ?, ?, 1.0, 0, ?)`,
+                 VALUES (?, NULL, ?, ?, ?, 2, ?, ?, 1.0, 0, ?)`,
                 [sectorId, typeId, x, y, amount, amount, meta], (e) => e ? reject(e) : resolve()
             ));
         }
@@ -205,11 +194,51 @@ async function spawnNodesForSector(sectorId, options = {}) {
             const typeId=await getTypeId(CORE_MINERALS[i]); if(!typeId)continue;
             const angle=randFloat(rng,0,Math.PI*2),distance=Number(planet.radius)+60+randInt(rng,0,50);
             const x=Math.round(planet.x+Math.cos(angle)*distance),y=Math.round(planet.y+Math.sin(angle)*distance);
-            await new Promise((resolve,reject)=>db.run('INSERT INTO resource_nodes(sector_id,resource_type_id,x,y,size,resource_amount,max_resource,harvest_difficulty,is_depleted,meta) VALUES(?,?,?,?,1,120,120,1,0,?)',[sectorId,typeId,x,y,JSON.stringify({resourceType:CORE_MINERALS[i],fieldType:'planetary-pocket'})],e=>e?reject(e):resolve()));
+            await new Promise((resolve,reject)=>db.run('INSERT INTO resource_nodes(sector_id,resource_type_id,x,y,size,resource_amount,max_resource,harvest_difficulty,is_depleted,meta) VALUES(?,?,?,?,2,120,120,1,0,?)',[sectorId,typeId,x,y,JSON.stringify({resourceType:CORE_MINERALS[i],fieldType:'planetary-pocket'})],e=>e?reject(e):resolve()));
         }
     }
 
-    return { success: true };
+    // A generated resource profile is a system-level availability guarantee,
+    // not merely a weighting hint. Fill any minerals missed by random node
+    // placement, including specialty access in archetypes without belts.
+    const presentRows = await new Promise((resolve, reject) => db.all(
+        `SELECT DISTINCT rt.resource_name
+           FROM resource_nodes rn
+           JOIN resource_types rt ON rt.id = rn.resource_type_id
+          WHERE rn.sector_id = ?`,
+        [sectorId], (e, rows) => e ? reject(e) : resolve(rows || [])
+    ));
+    const present = new Set(presentRows.map((row) => row.resource_name));
+    const missing = resourceProfile.availableMinerals.filter((mineral) => !present.has(mineral));
+    if (missing.length) {
+        const anchors = await new Promise((resolve, reject) => db.all(
+            `SELECT x, y, radius FROM sector_objects
+              WHERE sector_id = ? AND celestial_type = 'planet'
+              ORDER BY id`,
+            [sectorId], (e, rows) => e ? reject(e) : resolve(rows || [])
+        ));
+        for (let i = 0; i < missing.length; i++) {
+            const mineral = missing[i];
+            const typeId = await getTypeId(mineral);
+            if (!typeId) throw new Error(`Missing resource type for generated mineral ${mineral}`);
+            const anchor = anchors.length ? anchors[i % anchors.length] : center;
+            const ring = Number(anchor.radius || 12) + 85 + Math.floor(i / Math.max(1, anchors.length)) * 18;
+            const angle = randFloat(rng, 0, Math.PI * 2);
+            const x = Math.max(1, Math.min(4999, Math.round(Number(anchor.x) + Math.cos(angle) * ring)));
+            const y = Math.max(1, Math.min(4999, Math.round(Number(anchor.y) + Math.sin(angle) * ring)));
+            const amount = randInt(rng, 100, 160);
+            const meta = JSON.stringify({ mineral, resourceType: mineral, category: 'mineral', fieldType: 'profile-guarantee' });
+            await new Promise((resolve, reject) => db.run(
+                `INSERT INTO resource_nodes
+                    (sector_id, resource_type_id, x, y, size, resource_amount, max_resource, harvest_difficulty, is_depleted, meta)
+                 VALUES (?, ?, ?, ?, 2, ?, ?, 1.0, 0, ?)`,
+                [sectorId, typeId, x, y, amount, amount, meta],
+                (e) => e ? reject(e) : resolve()
+            ));
+        }
+    }
+
+    return { success: true, resourceProfile };
 }
 
 module.exports = { spawnNodesForSector };

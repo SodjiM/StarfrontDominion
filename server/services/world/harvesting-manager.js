@@ -43,7 +43,9 @@ const HarvestingManager = {
     },
 
     async stopHarvesting(shipId) {
-        await new Promise((resolve) => db.run('UPDATE harvesting_tasks SET status = ? WHERE ship_id = ?', ['paused', shipId], () => resolve()));
+        // An explicit stop is terminal. Keeping the task paused makes every
+        // movement/queue guard treat the ship as still occupied forever.
+        await new Promise((resolve) => db.run('UPDATE harvesting_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE ship_id = ? AND status IN (\'active\', \'paused\')', ['cancelled', shipId], () => resolve()));
         return { success: true };
     },
 

@@ -16,6 +16,8 @@ import { connectSocket as netConnectSocket } from './net/socket.js';
 import { fetchSectorTrails as trailsFetchSectorTrails, handleLingeringTrailsOnTurn, applyTurnTrails } from './features/Trails.js';
 import { renderObjects as renderMapObjects } from './render/objects.js';
 import { startAmbientLoop } from './render/ambient-loop.js';
+import { drawSystemBackground } from './render/system-background.js';
+import { refreshActivity, openActivity } from './ui/turn-activity.js';
 import { drawSelection as renderSelectionOverlay } from './render/selection.js';
 import { updateTopbar as uiUpdateTopbar, updateSectorOverviewTitle as uiUpdateSectorOverviewTitle } from './ui/topbar.js';
 import { computeRemainingTurns as utilComputeRemainingTurns } from './utils/turns.js';
@@ -89,38 +91,8 @@ export class GameClient {
 
     async fetchSectorTrails() { return trailsFetchSectorTrails(this); }
 
-    async loadTurnReport(turnNumber) {
-        try { this.lastTurnReport = await SFApi.State.turnReport(this.gameId, turnNumber); this.renderTurnReport(); } catch {}
-    }
-    toggleTurnReport() { const panel=document.getElementById('turnReportPanel'); if (!panel) return; panel.hidden=!panel.hidden; const button=document.getElementById('turnReportBtn'); button?.setAttribute('aria-expanded',String(!panel.hidden)); if (!panel.hidden) this.renderTurnReport(); }
-    renderTurnReport() {
-        const panel=document.getElementById('turnReportPanel'); if (!panel) return;
-        const report=this.lastTurnReport; if (!report) { panel.innerHTML='<h3>Last turn</h3><p>No report yet.</p>'; return; }
-        const objectName=id=>this.objects.find(o=>Number(o.id)===Number(id))?.meta?.name || `Object ${id}`;
-        const row=(label,value,id)=>`<div class="turn-report-row">${id?`<button class="turn-report-link" data-report-ship="${id}">${label}</button>`:label}<strong>${value}</strong></div>`;
-        const arrivals=(report.arrivals||[]).map(x=>row(objectName(x.shipId),'Arrived',x.shipId)).join('');
-        const harvest=(report.harvest||[]).map(x=>row(objectName(x.shipId),`+${x.amount} ${x.resource}`,x.shipId)).join('');
-        const blocked=(report.blocked||[]).map(x=>row(objectName(x.shipId),'Blocked',x.shipId)).join('');
-        const builds=(report.builds||[]).map(x=>row(x.name,'Completed',x.objectId)).join('');
-        const combat=(report.combat||[]).map(x=>{
-            let data={};
-            try { data=typeof x.data==='string' ? JSON.parse(x.data||'{}') : (x.data||{}); } catch {}
-            const details=[];
-            if (typeof data.damage==='number') details.push(`${data.damage} damage`);
-            if (typeof data.distance==='number') details.push(`distance ${data.distance}`);
-            if (typeof data.rangeMult==='number' && data.rangeMult < 1) details.push(`${Math.round(data.rangeMult*100)}% range effectiveness`);
-            if (typeof data.damageReduction==='number' && data.damageReduction > 0) details.push(`${Math.round(data.damageReduction*100)}% mitigation`);
-            if (typeof data.evasionTotal==='number' && data.evasionTotal > 0) details.push(`${Math.round(data.evasionTotal*100)}% evasion`);
-            if (data.weaponKey) details.unshift(data.weaponKey);
-            const target=x.target_id ? ` on ${objectName(x.target_id)}` : '';
-            return `<div class="turn-report-row"><span>${x.summary||'Combat event'}${target}${details.length ? ` <small>(${details.join(' · ')})</small>` : ''}</span></div>`;
-        }).join('');
-        const needs=this.objects.filter(o=>o.type==='ship'&&Number(o.owner_id)===Number(this.userId)&&!o.movementActive&&!o.movementRetrying).map(o=>row(o.meta?.name||`Ship ${o.id}`,'Needs orders',o.id)).join('');
-        const pilotChanges = report.pilots && ((report.pilots.recovered||0) + (report.pilots.recruited||0)) > 0 ? `<div class="turn-report-section"><strong>Pilots</strong><div class="turn-report-row"><span>Returned to command</span><strong>+${Number(report.pilots.recovered||0) + Number(report.pilots.recruited||0)}</strong></div></div>` : '';
-        panel.innerHTML=`<h3>Turn ${report.turnNumber} report</h3>${arrivals?`<div class="turn-report-section"><strong>Arrivals</strong>${arrivals}</div>`:''}${harvest?`<div class="turn-report-section"><strong>Harvested</strong>${harvest}</div>`:''}${builds?`<div class="turn-report-section"><strong>Completed builds</strong>${builds}</div>`:''}${combat?`<div class="turn-report-section"><strong>Combat</strong>${combat}</div>`:''}${blocked?`<div class="turn-report-section"><strong>Blocked orders</strong>${blocked}</div>`:''}${pilotChanges}<div class="turn-report-section"><strong>Ships needing orders</strong>${needs||'<div class="turn-report-row">All ships have a plan.</div>'}</div>`;
-        panel.querySelectorAll('[data-report-ship]').forEach(b=>b.addEventListener('click',()=>{this.selectUnit?.(Number(b.dataset.reportShip)); panel.hidden=true;}));
-        const badge=document.getElementById('turnReportBadge'); if (badge) { const count=(report.arrivals?.length||0)+(report.harvest?.length||0)+(report.builds?.length||0)+(report.combat?.length||0)+(report.blocked?.length||0)+((report.pilots?.recovered||0)+(report.pilots?.recruited||0)); badge.textContent=String(count); badge.hidden=count===0; }
-    }
+    async loadTurnReport() { return refreshActivity(this); }
+    toggleTurnReport() { return openActivity(this); }
 
     // Lifecycle: init, socket, state, UI bindings
     async initialize(gameId) {
@@ -195,19 +167,8 @@ export class GameClient {
                 return;
             }
         }
-        const guess = Array.from(document.querySelectorAll('div')).find(d => /Mini-map/i.test(d.textContent || ''));
-        if (guess) {
-            const canv2 = guess.querySelector('canvas');
-            if (canv2 && canv2 instanceof HTMLCanvasElement) {
-                if (this.miniCanvas !== canv2) {
-                    this.miniCanvas = canv2;
-                    this.miniCtx = this.miniCanvas.getContext('2d');
-                    this._miniBound = false;
-                    this.bindMiniMapInteractions();
-                }
-                return;
-            }
-        }
+        // Only bind known minimap surfaces. Searching ancestor text can match
+        // the new menu entry and accidentally repaint gameCanvas as a minimap.
         if (!byId) {
             this.miniCanvas = null;
             this.miniCtx = null;
@@ -276,8 +237,19 @@ export class GameClient {
         try { const mod = await import('./ui/player-panel.js'); mod.updatePlayerPanel(this); } catch {}
         uiUpdateSectorOverviewTitle(this);
         const lockBtn = (this._els.lockTurnBtn || (this._els.lockTurnBtn = document.getElementById('lockTurnBtn')));
-        if (this.gameState.turnLocked) { lockBtn.textContent = '🔒 Turn Locked'; lockBtn.classList.add('locked'); this.turnLocked = true; }
-        else { lockBtn.textContent = '🔓 Lock Turn'; lockBtn.classList.remove('locked'); this.turnLocked = false; }
+        const lockIcon = lockBtn.querySelector('.button-icon');
+        const lockLabel = lockBtn.querySelector('.button-label');
+        if (this.gameState.turnLocked) {
+            if (lockIcon) lockIcon.textContent = '🔒';
+            if (lockLabel) lockLabel.textContent = 'Turn Locked';
+            if (!lockLabel) lockBtn.textContent = '🔒 Turn Locked';
+            lockBtn.setAttribute('aria-label', 'Unlock turn'); lockBtn.classList.add('locked'); this.turnLocked = true;
+        } else {
+            if (lockIcon) lockIcon.textContent = '🔓';
+            if (lockLabel) lockLabel.textContent = 'Lock Turn';
+            if (!lockLabel) lockBtn.textContent = '🔓 Lock Turn';
+            lockBtn.setAttribute('aria-label', 'Lock turn'); lockBtn.classList.remove('locked'); this.turnLocked = false;
+        }
         try { const mod = await import('./ui/fleet-list.js'); mod.updateFleetList(this); } catch {}
         this.objects = this.gameState.objects;
         SenateUI.applySenateProgressToUI(this);
@@ -421,9 +393,13 @@ export class GameClient {
         if (!this.canvas || !this.objects) return;
         const ctx = this.ctx; const canvas = this.canvas;
         // Background
-        ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawSystemBackground(ctx, canvas, this);
         // Grid
-        SFRenderers.grid.drawGrid(ctx, canvas, this.camera, this.tileSize);
+        SFRenderers.grid.drawGrid(ctx, canvas, this.camera, this.tileSize, {
+            hoverWorld: this.hoverWorld,
+            selectedUnit: this.objects.find(o => Number(o.id) === Number(this.selectedUnit?.id)),
+            destination: this.touchDestination || this.abilityHover || this.__plannerTarget
+        });
         // Objects, paths, selection, fog
         renderMapObjects(this, ctx, canvas);
         SFRenderers.movement.drawMovementPaths.call(this, ctx, canvas, this.objects, this.userId, this.camera, this.tileSize, this.selectedUnit, this.gameState, this.trailBuffer);

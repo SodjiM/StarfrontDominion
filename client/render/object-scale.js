@@ -9,7 +9,9 @@ const SHIP_SIZES = {
 };
 export function objectDisplaySize(obj, tileSize) {
     if (isCelestialObject(obj)) return Math.max(1, Number(obj.radius) || 1) * tileSize * 2;
-    if (obj.type === 'resource_node') return tileSize * 0.8;
+    // Resource nodes occupy a full 2x2 footprint; leave a small inset so the
+    // tile boundary remains legible on the tactical map.
+    if (obj.type === 'resource_node') return tileSize * 2 * 0.86;
     const meta = obj.meta || {};
     const key = meta.blueprintId || meta.stationClass || meta.shipClass || meta.shipType || meta.hull || meta.class || obj.subtype || obj.type;
     let size;

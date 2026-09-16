@@ -1,4 +1,17 @@
+const crypto = require('node:crypto');
 const db = require('../db');
+
+const GAME_ARTWORK_KEYS = Object.freeze([
+    'blue-frontier',
+    'shattered-belt',
+    'twin-dawn',
+    'quiet-expanse',
+    'veil-nebula'
+]);
+
+function randomArtworkKey() {
+    return GAME_ARTWORK_KEYS[crypto.randomInt(GAME_ARTWORK_KEYS.length)];
+}
 
 class GamesRepository {
     async listAllGames() {
@@ -6,7 +19,11 @@ class GamesRepository {
             db.all(`SELECT g.*,
                            (SELECT u.username FROM users u JOIN game_players gp_owner ON gp_owner.user_id = u.id
                             WHERE gp_owner.game_id = g.id ORDER BY gp_owner.joined_at ASC, gp_owner.id ASC LIMIT 1) AS owner_name,
-                           (SELECT COUNT(*) FROM game_players gp2 WHERE gp2.game_id = g.id) AS player_count
+                           (SELECT COUNT(*) FROM game_players gp2 WHERE gp2.game_id = g.id) AS player_count,
+                           (SELECT GROUP_CONCAT(u2.username, ' ')
+                              FROM users u2
+                              JOIN game_players gp3 ON gp3.user_id = u2.id
+                             WHERE gp3.game_id = g.id) AS player_names
                     FROM games g
                     ORDER BY g.created_at DESC`, [], (err, rows) => err ? reject(err) : resolve(rows || []));
         });
@@ -33,18 +50,24 @@ class GamesRepository {
     async listPlayersForGame(gameId) {
         return new Promise((resolve, reject) => {
             db.all(
-                `SELECT u.username, gp.joined_at FROM game_players gp JOIN users u ON gp.user_id = u.id WHERE gp.game_id = ?`,
+                `SELECT u.username, gp.joined_at FROM game_players gp JOIN users u ON gp.user_id = u.id WHERE gp.game_id = ? ORDER BY gp.joined_at ASC, gp.id ASC`,
                 [gameId],
                 (err, rows) => err ? reject(err) : resolve(rows || [])
             );
         });
     }
 
-    async createGame({ name, mode, status = 'recruiting', autoTurnMinutes = null }) {
+    async createGame({ name, mode, status = 'recruiting', autoTurnMinutes = null, artworkKey = null }) {
+        if (artworkKey != null && !GAME_ARTWORK_KEYS.includes(artworkKey)) {
+            const error = new Error('Invalid artwork key');
+            error.status = 400;
+            throw error;
+        }
+        const assignedArtworkKey = artworkKey || randomArtworkKey();
         return new Promise((resolve, reject) => {
-            db.run('INSERT INTO games (name, mode, status, auto_turn_minutes) VALUES (?, ?, ?, ?)', [name, mode, status, autoTurnMinutes], function (err) {
+            db.run('INSERT INTO games (name, mode, status, auto_turn_minutes, artwork_key) VALUES (?, ?, ?, ?, ?)', [name, mode, status, autoTurnMinutes, assignedArtworkKey], function (err) {
                 if (err) return reject(err);
-                resolve({ id: this.lastID });
+                resolve({ id: this.lastID, artworkKey: assignedArtworkKey });
             });
         });
     }
@@ -193,4 +216,4 @@ class GamesRepository {
     }
 }
 
-module.exports = { GamesRepository };
+module.exports = { GamesRepository, GAME_ARTWORK_KEYS };

@@ -70,6 +70,25 @@ const initializeDatabase = async () => {
                 resolve();
             });
         });
+        // Persist the lobby artwork assignment. Existing games receive a
+        // deterministic assignment exactly once so a restart never changes
+        // the visual identity of a campaign.
+        await new Promise((resolve, reject) => {
+            db.run(`ALTER TABLE games ADD COLUMN artwork_key TEXT`, (alterErr) => {
+                // SQLite reports a duplicate-column error for current schemas;
+                // that is expected, but any other error should stop migration.
+                if (alterErr && !String(alterErr.message || '').includes('duplicate column')) return reject(alterErr);
+                db.run(`UPDATE games
+                        SET artwork_key = CASE ((id - 1) % 5)
+                            WHEN 0 THEN 'blue-frontier'
+                            WHEN 1 THEN 'shattered-belt'
+                            WHEN 2 THEN 'twin-dawn'
+                            WHEN 3 THEN 'quiet-expanse'
+                            WHEN 4 THEN 'veil-nebula'
+                        END
+                        WHERE artwork_key IS NULL`, (updateErr) => updateErr ? reject(updateErr) : resolve());
+            });
+        });
         await new Promise((resolve) => {
             db.run(`ALTER TABLE game_players ADD COLUMN political_influence REAL NOT NULL DEFAULT 0`, () => resolve());
         });
@@ -419,6 +438,35 @@ const initializeDatabase = async () => {
                 }
             );
         });
+
+        // Durable, player-scoped activity inbox. Rows are append-only; the
+        // per-player cursor lives separately so reconnects can replay safely.
+        await new Promise((resolve, reject) => db.exec(`
+            CREATE TABLE IF NOT EXISTS activity_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                turn_number INTEGER,
+                event_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'info',
+                summary TEXT NOT NULL,
+                object_id INTEGER,
+                data TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (game_id) REFERENCES games(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_activity_events_cursor ON activity_events(game_id,user_id,id);
+            CREATE TABLE IF NOT EXISTS activity_read_cursors (
+                game_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                last_seen_event_id INTEGER NOT NULL DEFAULT 0,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (game_id,user_id),
+                FOREIGN KEY (game_id) REFERENCES games(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+        `, (err) => err ? reject(err) : resolve()));
 
         // Queued orders table for multi-turn order sequencing
         await new Promise((resolve, reject) => {

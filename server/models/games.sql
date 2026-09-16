@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS games (
     mode TEXT,
     status TEXT, -- 'recruiting', 'active', 'finished'
     auto_turn_minutes INTEGER DEFAULT NULL,
+    artwork_key TEXT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -21,3 +22,14 @@ CREATE TABLE IF NOT EXISTS game_players (
     FOREIGN KEY (game_id) REFERENCES games(id),
     UNIQUE(game_id, user_id)
 );
+
+-- Lobby-wide communications are independent of game membership.
+CREATE TABLE IF NOT EXISTS lobby_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    text TEXT NOT NULL CHECK (length(trim(text)) > 0 AND length(text) <= 500),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lobby_messages_created ON lobby_messages(id DESC);

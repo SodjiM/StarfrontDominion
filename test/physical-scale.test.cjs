@@ -17,6 +17,8 @@ after(()=>new Promise(r=>db.close(r)));
 const ship=(id,x,y,cls='capital')=>({id,x,y,type:'ship',meta:{class:cls,movementSpeed:20}});
 
 test('physical catalog defines exact even/odd tile anchors and hull sizes',()=>{
+ assert.equal(scale.width({type:'resource_node',x:10,y:10}),2);
+ assert.deepEqual(scale.shape({type:'resource_node',x:10,y:10}),{x:10.5,y:10.5,half:0.5,width:2,disk:false});
  assert.equal(scale.width({type:'station',meta:{stationClass:'sun-station'}}),13);
  assert.equal(scale.width({type:'station',meta:{stationClass:'moon-station'}}),5);
  assert.equal(scale.width(ship(1,10,10,'cruiser')),3);

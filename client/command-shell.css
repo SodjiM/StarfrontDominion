@@ -1,0 +1,90 @@
+/* Responsive command shell overrides. Loaded after the legacy game styles. */
+.top-bar { position: relative; z-index: 500; }
+.game-brand { display: inline-flex; align-items: center; gap: .65rem; min-width: 0; }
+.brand-mark { width: 38px; height: 38px; object-fit: contain; flex: 0 0 auto; }
+.brand-wordmark { display: inline-flex; align-items: baseline; gap: .38rem; font-size: .82rem; font-weight: 800; letter-spacing: .18em; white-space: nowrap; }
+.brand-wordmark i { color: var(--muted); font-style: normal; letter-spacing: 0; }
+.brand-wordmark strong { color: var(--primary); }
+.turn-counter { position: relative; border: 1px solid rgba(141,216,255,.22); color: var(--text); background: rgba(100,181,246,.1); cursor: pointer; font: inherit; }
+.turn-counter:hover, .turn-counter:focus-visible { border-color: var(--primary); background: rgba(100,181,246,.18); }
+.turn-activity-indicator { display: none; width: 1.1em; height: 1.1em; margin-left: .35rem; border-radius: 50%; color: #0a101a; background: #f4c95d; font-size: .72em; line-height: 1.1em; text-align: center; font-weight: 900; }
+.turn-counter.has-activity .turn-activity-indicator { display: inline-block; }
+.turn-counter[data-severity="danger"] .turn-activity-indicator { background: #ff6678; color: #210912; }
+.turn-counter[data-severity="warning"] .turn-activity-indicator { background: #f4c95d; }
+.topbar-utilities { position: relative; z-index: 510; display: flex; align-items: center; gap: .35rem; }
+.header-map-control { min-width: 38px; min-height: 38px; padding: .35rem .6rem; }
+.menu-trigger { min-height: 38px; padding-inline: .8rem !important; }
+.button-icon, .menu-icon { display: inline-block; line-height: 1; }
+.menu-icon { display: none; }
+.utility-menu { position: absolute; top: calc(100% + .45rem); right: 0; z-index: 520; display: grid; min-width: 170px; padding: .35rem; border: 1px solid var(--sf-border-strong); border-radius: 10px; background: rgba(8,14,26,.98); box-shadow: 0 16px 34px rgba(0,0,0,.55); }
+.utility-menu[hidden] { display: none; }
+.utility-menu-item { min-height: 40px; padding: .55rem .7rem; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; font: inherit; font-size: .82rem; cursor: pointer; }
+.utility-menu-item:hover, .utility-menu-item:focus-visible { background: rgba(100,181,246,.16); outline: none; }
+.utility-menu-danger { color: #ff8090; }
+.mobile-menu-map-entry { display: none; }
+.mobile-focus-control { display: none; }
+.mobile-command-dock { z-index: 950 !important; grid-template-columns: repeat(4, minmax(120px, 1fr)) !important; }
+.mobile-command-dock button { min-height: 44px; }
+.comms-players-pane { display: none; min-height: 0; overflow: auto; }
+.game-comms[data-active-comms-tab="players"] .comms-chat-pane, .game-comms[data-active-comms-tab="players"] .comms-activity-pane { display: none !important; }
+.game-comms[data-active-comms-tab="players"] .comms-players-pane { display: block; }
+.activity-dialog { width: min(620px, calc(100vw - 24px)); max-height: min(76dvh, 720px); margin: auto; padding: 0; border: 1px solid var(--sf-border-strong); border-radius: 14px; background: rgba(8,14,26,.98); color: var(--text); box-shadow: 0 22px 70px rgba(0,0,0,.62); }
+.activity-dialog::backdrop { background: rgba(2,6,14,.72); backdrop-filter: blur(5px); }
+.activity-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .85rem 1rem; border-bottom: 1px solid var(--border); }
+.activity-dialog > header h2 { margin: 0; color: var(--primary); font-size: 1.1rem; }
+.activity-dialog > .activity-intro { margin: 0; padding: .75rem 1rem; color: var(--muted); font-size: .8rem; }
+.activity-actions { display: flex; gap: .45rem; padding: 0 1rem .7rem; }
+.activity-list { max-height: min(54dvh, 500px); overflow: auto; padding: 0 1rem; }
+.activity-list section { padding: .5rem 0; border-top: 1px solid rgba(255,255,255,.08); }
+.activity-list h3 { margin: 0 0 .35rem; color: var(--primary); font-size: .78rem; }
+.activity-event { display: flex; align-items: center; gap: .5rem; min-height: 36px; padding: .35rem 0; font-size: .8rem; }
+.activity-event .activity-tone { color: #f4c95d; font-size: .7rem; text-transform: uppercase; }
+.activity-status { min-height: 1.2em; margin: .45rem 1rem; color: var(--muted); font-size: .75rem; }
+.activity-dialog > footer.activity-actions { justify-content: flex-end; padding: .7rem 1rem 1rem; border-top: 1px solid var(--border); }
+.activity-dialog button, .touch-order-actions button { min-height: 44px; }
+.touch-order-actions { position: absolute; left: 50%; bottom: 1rem; z-index: 1045; display: flex; align-items: center; gap: .5rem; width: min(520px, calc(100% - 1.5rem)); padding: .55rem .65rem; transform: translateX(-50%); border: 1px solid var(--sf-border-strong); border-radius: 10px; background: rgba(8,14,26,.94); box-shadow: 0 12px 32px rgba(0,0,0,.4); }
+.touch-order-actions[hidden] { display: none !important; }
+.touch-order-actions span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (min-width: 769px) {
+  .game-info { gap: .8rem; }
+  .turn-status { gap: .45rem; }
+  .topbar-utilities { margin-left: auto; }
+}
+
+@media (max-width: 768px) {
+  html, body { max-width: 100%; overflow-x: clip; }
+  .game-container { position: relative; z-index: 0; width: 100%; max-width: 100%; overflow-x: clip; }
+  .top-bar { z-index: 500; }
+  .brand-mark { width: 32px; height: 32px; }
+  .brand-wordmark { display: none; }
+  .topbar-utilities { gap: .25rem; }
+  .header-map-control { display: none; }
+  .menu-trigger { display: inline-flex; align-items: center; justify-content: center; width: 42px; min-width: 42px; min-height: 42px; padding: .35rem !important; font-size: 0 !important; }
+  .menu-trigger .menu-icon { display: inline-block; font-size: 1.05rem; }
+  .menu-trigger .menu-label { display: none; }
+  .lock-turn-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 42px; padding: .35rem !important; overflow: hidden; font-size: 0 !important; }
+  .lock-turn-btn .button-icon { display: inline-block; font-size: 1rem; }
+  .lock-turn-btn .button-label { display: none; }
+  .mobile-menu-map-entry { display: block; }
+  .utility-menu { right: 0; }
+  .mobile-command-dock { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .mobile-focus-control { position: absolute; left: .75rem; bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 1040; display: inline-flex; align-items: center; gap: .3rem; min-height: 42px; padding: .45rem .7rem; border: 1px solid rgba(141,216,255,.3); border-radius: 10px; background: rgba(8,18,32,.9); color: var(--text); font: inherit; font-size: .76rem; font-weight: 700; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .game-comms[data-active-comms-tab="players"] .comms-players-pane { display: block; }
+  .activity-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 12px; }
+  .activity-list { max-height: calc(100dvh - 280px); padding: 0 .8rem; }
+  .activity-dialog > .activity-intro { padding-inline: .8rem; }
+  .activity-actions { padding-inline: .8rem; }
+  .touch-order-actions { bottom: calc(70px + env(safe-area-inset-bottom)); width: calc(100% - 1rem); padding: .5rem; }
+}
+
+@media (max-width: 430px) {
+  .turn-counter { padding-inline: .5rem; }
+  .lock-turn-btn { max-width: 42px; overflow: hidden; white-space: nowrap; font-size: 0 !important; }
+  .lock-turn-btn::first-letter { font-size: 1rem; }
+  .mobile-command-dock button { font-size: .72rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .utility-menu { animation: none !important; }
+}

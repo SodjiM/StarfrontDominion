@@ -42,6 +42,7 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                 message: `Turn ${turnNumber} is now resolving...`
             });
 
+            const activityOwnership = await require('./activity.service').captureOwnership(db, gameId);
             // 1. Abilities first
             const { processAbilityOrders } = require('./combat-impl');
             await processAbilityOrders(gameId, turnNumber);
@@ -107,6 +108,11 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                     }
                 );
             });
+
+            // Materialize the player-scoped activity rows while the turn
+            // transaction is still open, so a completed turn and its inbox
+            // entries become visible atomically.
+            await require('./activity.service').materializeTurn(db, gameId, turnNumber, { ownership: activityOwnership, movementResults, senateSessions });
 
             await new Promise((resolve,reject)=>db.run('COMMIT',e=>e?reject(e):resolve()));
             transactionActive=false;

@@ -15,6 +15,13 @@ class FinalValidateStep extends BaseStep {
         const orbitalRings = await new Promise((resolve)=>db.all('SELECT ring_index, center_x, center_y, radius, width, planet_object_id FROM orbital_rings WHERE sector_id = ? ORDER BY ring_index', [context.sectorId], (e,r)=>resolve(r||[])));
         const lanes = await new Promise((resolve)=>db.all('SELECT id FROM lane_edges WHERE sector_id = ?', [context.sectorId], (e,r)=>resolve(r||[])));
         const taps = await new Promise((resolve)=>db.all('SELECT edge_id FROM lane_taps WHERE edge_id IN (SELECT id FROM lane_edges WHERE sector_id = ?)', [context.sectorId], (e,r)=>resolve(r||[])));
+        const generatedMinerals = await new Promise((resolve) => db.all(
+            `SELECT DISTINCT rt.resource_name
+               FROM resource_nodes rn
+               JOIN resource_types rt ON rt.id = rn.resource_type_id
+              WHERE rn.sector_id = ? AND rn.is_depleted = 0`,
+            [context.sectorId], (e, rows) => resolve(rows || [])
+        ));
         const failures = [];
         if (!star) failures.push('no star present');
         if (planets <= 0) failures.push('no planets present');
@@ -26,9 +33,24 @@ class FinalValidateStep extends BaseStep {
         if (context.archetype === 'asteroid-heavy' && planets < 5) failures.push('asteroid-heavy requires at least 5 planets');
         if (context.archetype === 'asteroid-heavy' && belts < 1) failures.push('asteroid-heavy requires belt sectors');
         if (lanes.some((l) => !taps.some((t) => Number(t.edge_id) === Number(l.id)))) failures.push('lane without taps');
+        if (context.resourceProfile) {
+            const available = new Set(generatedMinerals.map((row) => row.resource_name));
+            const missing = context.resourceProfile.availableMinerals.filter((mineral) => !available.has(mineral));
+            if (missing.length) failures.push(`missing profile minerals: ${missing.join(', ')}`);
+        }
         if (failures.length) throw new Error(`Validation failed: ${failures.join(', ')}`);
         const counts = objects.reduce((acc, o) => { const key = o.celestial_type || o.type; acc[key] = (acc[key] || 0) + 1; return acc; }, {});
-        const manifest = { counts, planets, resourceNodes: nodes, beltSectors: belts, orbitalRings, laneCount: lanes.length, tapCount: taps.length };
+        const manifest = {
+            counts,
+            planets,
+            resourceNodes: nodes,
+            resourceProfileVersion: context.resourceProfile?.version || null,
+            resourceProfile: context.resourceProfile || null,
+            beltSectors: belts,
+            orbitalRings,
+            laneCount: lanes.length,
+            tapCount: taps.length
+        };
         await new Promise((resolve, reject) => db.run(
             `INSERT INTO generation_manifests (sector_id, generation_seed, generator_version, archetype, manifest_json, updated_at)
              VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
