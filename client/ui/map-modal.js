@@ -108,6 +108,44 @@ function isCelestialObject(game, obj) {
     return celestialTypes.includes(obj.celestial_type || obj.type);
 }
 
+function renderIncidentBriefing(root, facts) {
+    const panel = root?.querySelector('#mapIncidents');
+    if (!panel) return;
+    const incidents = (facts?.regions || []).flatMap(region =>
+        (region.incidents || []).filter(incident => incident.status === 'active').map(incident => ({ ...incident, regionId: region.id }))
+    );
+    const signature = JSON.stringify(incidents.map(({ id, status, turnsRemaining, resolution }) => [id, status, turnsRemaining, resolution]));
+    if (panel.dataset.signature === signature) return;
+    panel.dataset.signature = signature;
+    panel.replaceChildren();
+    panel.hidden = incidents.length === 0;
+    if (!incidents.length) return;
+
+    const heading = document.createElement('h3');
+    heading.textContent = incidents.length === 1 ? 'Regional incident' : `${incidents.length} regional incidents`;
+    panel.append(heading);
+    incidents.forEach(incident => {
+        const item = document.createElement('article');
+        item.className = 'incident-briefing-item';
+        const title = document.createElement('h4');
+        title.textContent = `${incident.title} · Region ${incident.regionId}`;
+        const summary = document.createElement('p');
+        summary.textContent = incident.summary;
+        const consequence = document.createElement('p');
+        consequence.className = 'incident-consequence';
+        const deadline = incident.turnsRemaining === 0 ? 'Due this turn' : `${incident.turnsRemaining} turn${incident.turnsRemaining === 1 ? '' : 's'} remaining`;
+        consequence.textContent = `${deadline} · Unresolved: −${incident.healthLoss} regional health`;
+        const objective = document.createElement('p');
+        objective.className = 'incident-objective';
+        const target = incident.resolution?.target || {};
+        const roles = (incident.resolution?.eligibleShips || []).flatMap(selector => selector.roles || []);
+        const roleLabel = roles.includes('courier') ? 'an operational Swift Courier' : 'an eligible operational ship';
+        objective.textContent = `Objective: move ${roleLabel} to (${Number(target.x)}, ${Number(target.y)}). The first qualifying arrival resolves this shared incident.`;
+        item.append(title, summary, consequence, objective);
+        panel.append(item);
+    });
+}
+
 // Strategic Map modal (ESM)
 
 export function openMapModal(initialTab = 'solar-system') {
@@ -147,6 +185,7 @@ export function openMapModal(initialTab = 'solar-system') {
                                 <div class="system-section"><div class="system-section-header">Primary abundance</div><div class="system-chips" id="primaryMinerals">Loading...</div></div>
                             </div>
                             <div id="mapModeHint" class="map-mode-hint" hidden>Choose a point or object. Press Escape to cancel.</div>
+                            <section id="mapIncidents" class="incident-briefing" aria-label="Active regional incidents" hidden></section>
                             <button class="planner-rail-tab" id="plannerDrawerToggle" aria-expanded="false" aria-controls="mapPlannerDrawer">
                                 <span>Select travel destination</span>
                                 <span aria-hidden="true">↑</span>
@@ -1139,7 +1178,11 @@ async function initializeGalaxyMap() {
             });
             systems.forEach(n => {
                 const p = canvas.__galaxyPositions.get(n.id); if (!p) return;
+                if (Number(n.activeIncidentCount) > 0) {
+                    ctx.strokeStyle = '#f4c95d'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x,p.y,11,0,Math.PI*2); ctx.stroke();
+                }
                 ctx.fillStyle = Number(canvas.__galaxySelectedId) === Number(n.id) ? '#ffffff' : '#9ecbff'; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#e3f2fd'; ctx.font='11px Arial'; ctx.textAlign='center'; ctx.fillText(n.name || String(n.id), p.x, p.y-10);
+                if (Number(n.activeIncidentCount) > 0) { ctx.fillStyle='#f4c95d';ctx.font='900 11px Arial';ctx.fillText(`! ${n.activeIncidentCount}`,p.x,p.y+16); }
             });
         } catch (e) { console.error('initializeGalaxyMap error:', e); const el=document.getElementById('galaxyLegend'); if (el) el.innerText='Failed to render galaxy map'; }
 }
@@ -1179,6 +1222,7 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
             }
         } catch {}
         if (drawId !== canvas.__drawId) return;
+        renderIncidentBriefing(canvas.closest('.map-modal'), facts);
         // Enable lanes toggle dynamically if data exists
         try {
             const hasLanes = !!(facts && Array.isArray(facts.lanes) && facts.lanes.length > 0);
@@ -1248,7 +1292,8 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
         if (toggles.regions && client.gameState?.sector?.id) {
             try {
                 if (facts && Array.isArray(facts.regions) && facts.regions.length > 0) {
-                    const cellW = 5000 / 3, cellH = 5000 / 3;
+                    const cellW = Number(facts?.dimensions?.width || 5000) / 3;
+                    const cellH = Number(facts?.dimensions?.height || 5000) / 3;
                     facts.regions.forEach(r => {
                         let baseColor = '100, 149, 237';
                         const id = String(r.id || '').toUpperCase();
@@ -1300,6 +1345,25 @@ async function renderFullMap(ctx, canvas, scaleX, scaleY, toggles, mouse) {
                 }
             } catch {}
         }
+        // Active incidents remain visible strategic information even when the
+        // optional region tint is off. The adjacent DOM briefing carries the
+        // same information for keyboard and assistive-technology users.
+        try {
+            (facts?.regions || []).forEach(region => {
+                const incident = (region.incidents || []).find(item => item.status === 'active');
+                if (!incident?.resolution?.target) return;
+                const x = Number(incident.resolution.target.x) * scaleX;
+                const y = Number(incident.resolution.target.y) * scaleY;
+                ctx.save();
+                ctx.fillStyle = 'rgba(7,11,22,.92)';
+                ctx.strokeStyle = '#f4c95d';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#f4c95d'; ctx.font = '900 14px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', x, y);
+                ctx.font = '700 10px Arial'; ctx.textBaseline = 'top'; ctx.fillText(`${incident.turnsRemaining} turns`, x, y + 15);
+                ctx.restore();
+            });
+        } catch {}
         // Belt polygon rendering removed - only belt POI markers are shown now
         // Wormholes (from facts)
         if (toggles.wormholes && client.gameState?.sector?.id) {

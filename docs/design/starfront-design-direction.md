@@ -33,7 +33,7 @@ Scout → identify opportunity → establish or exploit a route
   → improve, neglect, or contest the spaces that matter
 ```
 
-The political layer remains exploratory and is documented separately in [political-system-design-tenets.md](political-system-design-tenets.md). It must consume physical-world events rather than become a disconnected card game.
+The political layer is staged rather than absent. Its durable rules are documented separately in [political-system-design-tenets.md](political-system-design-tenets.md), with implementation slices in [../plans/political-system-implementation.md](../plans/political-system-implementation.md). It must consume physical-world events rather than become a disconnected card game, and the broad external-agenda layer remains behind the physical-world foundations.
 
 ## Space, regions, and archetypes
 
@@ -75,7 +75,7 @@ Stations anchor persistent presence; they do not confer territorial ownership.
 | Planet station | Serious regional commitment with stronger logistics and production, including frigates and battleships. |
 | Sun station | Extremely expensive industrial commitment that may produce capitals as well as lesser hulls. A foreign sun station signals durable escalation. |
 
-Costs, upgrades, destruction, capture, and exact production limits remain open. Planet biomes, pilots, political influence, and special station effects are future work unless a focused specification defines them.
+Costs, upgrades, destruction, capture, and exact production limits remain open. Planet biomes, pilot balance, and special station effects remain future work. Political influence, senator hosting, and station-based institutional capacity now have a focused specification, but their final balance still depends on the station and pilot implementations.
 
 Deployables may include sensors, resupply, jump infrastructure, mining, repair, navigation, interdiction, environmental stabilization, communications, listening posts, and defenses. Each has a physical position and meaningful lifecycle.
 
@@ -89,11 +89,13 @@ Regional health represents public environmental and navigational stability, not 
 
 Health is event-driven. Infrastructure pressure raises incident likelihood and severity; ignored or failed incidents may later degrade health. Health does not passively decay every turn, health-gate construction or minerals, or normally shut infrastructure off.
 
+Incidents operate independently of player readiness. Each incident publicly states a deadline, target, resolution rule, and deterministic one-time health loss. The prototype resolves when any player's live, operational courier reaches the target through ordinary travel; no player accepts or owns the incident. If no qualifying courier arrives, authoritative turn resolution expires the incident on its due turn and applies the consequence once. Later incident rules may admit other ship subsets, any operational ship, or different world-state requirements such as deploying a structure.
+
 Incidents create a time-windowed choice: respond efficiently, escort vulnerable utility work, delay, ignore, or accept degradation because another objective matters more. Examples include debris migration in asteroid space, aperture instability in wormhole space, sensor-map drift in nebulae, and radiation damage in solar regions.
 
 This common-resource dynamic is intentional. Multiple hostile players may benefit from resolving an incident, free-ride, bargain, or allow conditions to worsen if that hurts a rival more.
 
-Implementation sequencing and response-state rules are in [../plans/regional-operations-and-incidents.md](../plans/regional-operations-and-incidents.md).
+Implementation sequencing and resolution-rule contracts are in [../plans/regional-operations-and-incidents.md](../plans/regional-operations-and-incidents.md).
 
 ## Information, visibility, and reconnaissance
 
@@ -144,7 +146,7 @@ The wider resolver must preserve these invariants:
 - Station costs, upgrades, production limits, and destruction/capture rules.
 - Lane traffic formula, low-health effects, interdiction, and jump-network behavior.
 - Remaining archetypes, regional layouts, signature assignments, and event libraries.
-- Fleets, diplomacy, political systems, organic region boundaries, and full economic simulation.
+- Broad external politics, formal diplomacy, organic region boundaries, and full economic simulation. The initial station-grounded Senate slice is a current implementation workstream; galactic laws, alliances, wars, and shared political externalities remain staged behind it.
 
 ### Superseded
 

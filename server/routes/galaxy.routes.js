@@ -7,7 +7,14 @@ const CONFIG = require('../config').loadConfig ? require('../config').loadConfig
 // Galaxy graph: systems and interstellar gates
 router.get('/:gameId/galaxy-graph', (req, res) => {
     const { gameId } = req.params;
-    db.all('SELECT id, name FROM sectors WHERE game_id = ? ORDER BY id', [gameId], (err, sectors) => {
+    db.all(
+        `SELECT s.id,s.name,
+                COUNT(i.id) AS active_incident_count,
+                MIN(i.due_turn) AS next_incident_due_turn
+         FROM sectors s
+         LEFT JOIN region_incidents i ON i.sector_id=s.id AND i.status='active'
+         WHERE s.game_id=? GROUP BY s.id ORDER BY s.id`,
+        [gameId], (err, sectors) => {
         if (err) return res.status(500).json({ error: 'Failed to fetch sectors' });
         db.all(
             `SELECT so.sector_id as sourceSectorId,
@@ -18,7 +25,12 @@ router.get('/:gameId/galaxy-graph', (req, res) => {
             [gameId],
             (err2, gatesRows) => {
                 if (err2) return res.status(500).json({ error: 'Failed to fetch gates' });
-                const systems = sectors.map(s => ({ id: s.id, name: s.name }));
+                const systems = sectors.map(s => ({
+                    id: s.id,
+                    name: s.name,
+                    activeIncidentCount: Number(s.active_incident_count || 0),
+                    nextIncidentDueTurn: s.next_incident_due_turn == null ? null : Number(s.next_incident_due_turn)
+                }));
                 const validSectorIds = new Set(sectors.map(s => s.id));
                 const edgeSet = new Set();
                 const gates = [];
@@ -53,50 +65,6 @@ router.get('/system/:sectorId/facts', async (req, res) => {
     }
 });
 
-// Declare or withdraw intent to address a shared regional incident. These
-// routes do not resolve incidents; future utility missions provide that proof.
-router.post('/system/:sectorId/incidents/:incidentId/response', async (req, res) => {
-    const sectorId = Number(req.params.sectorId);
-    const incidentId = Number(req.params.incidentId);
-    try {
-        const turn = await currentTurnForSector(sectorId);
-        if (turn == null) return res.status(404).json({ error: 'sector_not_found' });
-        const { RegionIncidentService } = require('../services/world/region-incident.service');
-        const result = await new RegionIncidentService(db).beginResponse({
-            incidentId,
-            sectorId,
-            userId: req.userId,
-            turnNumber: turn
-        });
-        if (!result.success) return res.status(incidentResponseStatus(result.error)).json({ error: result.error });
-        res.json(result);
-    } catch (error) {
-        console.error('incident_response_error:', error);
-        res.status(500).json({ error: 'incident_response_error' });
-    }
-});
-
-router.delete('/system/:sectorId/incidents/:incidentId/response', async (req, res) => {
-    const sectorId = Number(req.params.sectorId);
-    const incidentId = Number(req.params.incidentId);
-    try {
-        const turn = await currentTurnForSector(sectorId);
-        if (turn == null) return res.status(404).json({ error: 'sector_not_found' });
-        const { RegionIncidentService } = require('../services/world/region-incident.service');
-        const result = await new RegionIncidentService(db).cancelResponse({
-            incidentId,
-            sectorId,
-            userId: req.userId,
-            turnNumber: turn
-        });
-        if (!result.success) return res.status(incidentResponseStatus(result.error)).json({ error: result.error });
-        res.json(result);
-    } catch (error) {
-        console.error('incident_response_cancel_error:', error);
-        res.status(500).json({ error: 'incident_response_error' });
-    }
-});
-
 // Admin: re-run resource node spawning for a sector (on-demand)
 router.post('/system/:sectorId/respawn-resources', async (req, res) => {
     const { sectorId } = req.params;
@@ -114,21 +82,3 @@ router.post('/system/:sectorId/respawn-resources', async (req, res) => {
 });
 
 module.exports = router;
-
-function currentTurnForSector(sectorId) {
-    return new Promise((resolve, reject) => db.get(
-        `SELECT t.turn_number
-         FROM sectors s
-         JOIN turns t ON t.game_id=s.game_id
-         WHERE s.id=? ORDER BY t.turn_number DESC LIMIT 1`,
-        [sectorId],
-        (error, row) => error ? reject(error) : resolve(row ? Number(row.turn_number) : null)
-    ));
-}
-
-function incidentResponseStatus(error) {
-    if (error === 'not_a_game_member') return 403;
-    if (error === 'incident_not_found' || error === 'response_not_found') return 404;
-    if (error === 'incident_not_active' || error === 'response_already_completed') return 409;
-    return 400;
-}

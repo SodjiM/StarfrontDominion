@@ -71,12 +71,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             // Snapshot operational pressure after combat/destruction and
             // before any future incident system consumes the observation.
             await new (require('../world/region-pressure-snapshot.service').RegionPressureSnapshotService)(db).snapshotGame(gameId, turnNumber);
-            await new (require('../world/region-incident.service').RegionIncidentService)(db).generateForTurn(gameId, turnNumber);
+            const incidentService = new (require('../world/region-incident.service').RegionIncidentService)(db);
+            await incidentService.generateForTurn(gameId, turnNumber);
 
-            // 6.2 Region health tick (upkeep/decay + history)
-            const { tickRegionHealth } = require('../world/region-health.tick');
-            await tickRegionHealth(gameId, turnNumber);
-            await require('./political-influence.service').processPoliticalInfluence(gameId, turnNumber, db);
             const { BuildService } = require('./build.service');
             const buildService = new BuildService();
             await buildService.processShipUpkeep(gameId, turnNumber);
@@ -92,6 +89,16 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
 
             // Lane tick (Phase 1)
             await tickLanes(gameId, turnNumber);
+            // Shared objectives inspect authoritative world state only after
+            // ordinary and lane movement. A qualifying arrival on the due
+            // turn resolves before unresolved incidents expire.
+            await incidentService.resolveActiveIncidents(gameId, turnNumber);
+            await incidentService.expireDueIncidents(gameId, turnNumber);
+
+            // Record the final regional state after incident outcomes.
+            const { tickRegionHealth } = require('../world/region-health.tick');
+            await tickRegionHealth(gameId, turnNumber);
+            await require('./political-influence.service').processPoliticalInfluence(gameId, turnNumber, db);
             await updateAllPlayersVisibility(gameId, turnNumber);
 
             // Create next turn and mark current as completed

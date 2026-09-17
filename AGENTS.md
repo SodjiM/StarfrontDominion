@@ -38,3 +38,17 @@ The root execution agent owns architecture, integration, consequential decisions
 Prefer workers with no inherited conversation history. Give each worker a compact assignment, relevant paths, constraints, and a requested output. Use recent history only when it is genuinely necessary; do not fork the entire parent conversation by default. Parallelize read-heavy investigation, but serialize or partition overlapping edits. Separate implementation from independent verification when the change is meaningful.
 
 Do not create ordinary top-level threads as a workaround for subagents. For a new execution context, use the handoff template in `docs/codex-execution-handoff.md` and start a fresh `/new` thread.
+
+## Delegation Preference
+
+For non-trivial implementation work, prefer delegating clearly bounded coding tasks to `worker` agents rather than having the root agent implement all changes directly.
+
+The root agent should primarily own architecture, task decomposition, integration, conflict resolution, difficult debugging, and final verification.
+
+Use the root agent for direct implementation when:
+- the change is very small;
+- the implementation is tightly coupled and would be inefficient to delegate;
+- workers have failed or produced conflicting results;
+- the task requires architectural judgment throughout.
+
+Otherwise, push suitable implementation work to `worker` agents.

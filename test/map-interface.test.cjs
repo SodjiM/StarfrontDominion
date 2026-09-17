@@ -77,3 +77,14 @@ test('minimap discovery never mistakes the game canvas for a minimap', () => {
   assert.deepEqual(game.miniCtx, {});
   assert.equal(bindCount, 1);
 });
+
+test('strategic map exposes active incidents in both canvas and accessible briefing UI', () => {
+  const source = fs.readFileSync('client/ui/map-modal.js', 'utf8');
+  assert.match(source, /id="mapIncidents"/);
+  assert.match(source, /aria-label="Active regional incidents"/);
+  assert.match(source, /Unresolved: −\$\{incident\.healthLoss\} regional health/);
+  assert.match(source, /move \$\{roleLabel\} to \(\$\{Number\(target\.x\)\}, \$\{Number\(target\.y\)\}\)/);
+  assert.match(source, /incident\.resolution\.target\.x/);
+  assert.doesNotMatch(source, /Commit selected courier|Cancel response|beginIncidentResponse|cancelIncidentResponse/);
+  assert.match(source, /ctx\.fillText\('!', x, y\)/);
+});

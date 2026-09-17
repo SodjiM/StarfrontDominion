@@ -10,6 +10,8 @@ The political system exists to make the player's physical domain feel governed. 
 
 The political system should not be a disconnected card minigame. Its inputs come from the physical map, and its outputs should change how players build, move, trade, fight, and cooperate.
 
+The primary player-facing purpose is customization and signaling. Politics should let a player commit to a recognizable way of operating—such as moon-based raiding, concentrated industry, trade, exploration, or expansion—and receive meaningful support when their physical actions align with that identity. Other players should be able to infer a broad strategic identity from visible stations, posts, policies, and activity without knowing every implementation detail.
+
 ## The central fantasy
 
 The player is not only commanding ships. The player is building a political domain.
@@ -23,7 +25,7 @@ A player may become:
 - A technologically optimized exploration state.
 - A militarized frontier authority.
 
-No single political identity should be universally correct. The system should make different station portfolios, fleet compositions, economic choices, and political coalitions reinforce one another.
+No single political identity should be universally correct. The system should make different station portfolios, fleet compositions, economic choices, and political coalitions reinforce one another. Politics should mostly reinforce the player's chosen behavior rather than force a player into an unrelated activity; map archetypes, resource access, and expansion opportunities may still create reasons to adapt.
 
 The guiding relationship is:
 
@@ -229,6 +231,20 @@ Mandate represents political alignment. Political capital represents usable leve
 
 Political capital should also support low-stakes civic actions, not only competitive optimization. Domain naming rights are one intended use.
 
+### Initial political-capital rule
+
+At the end of a Senate session, each senator contributes political capital from their happiness band. The current provisional bands are:
+
+| Happiness | Capital from that senator |
+|---:|---:|
+| 20 | 1 |
+| 40 | 2 |
+| 60 | 3 |
+| 80 | 4 |
+| 100 | 5 |
+
+The player's award is the sum across active senators. Unspent capital rolls over. This is an implementation-ready accumulation rule with provisional numbers; it makes senator happiness useful beyond policy eligibility and gives players a reason to maintain a stable cabinet.
+
 ## Civic naming rights
 
 Political control should allow players to leave a visible cultural mark on the shared map.
@@ -242,22 +258,24 @@ A player may spend political capital to name or rename:
 - Major stations.
 - Important warp lanes or corridors.
 
-Naming rights should require meaningful control rather than mere discovery. Requirements may include owning an anchored station, maintaining presence for a defined number of turns, meeting a local influence threshold, controlling a majority of relevant stations, and spending political capital appropriate to the object's importance.
+The first naming rule is intentionally permissive: a player who has previously seen an object through authorized visibility may propose a name. Discovery is therefore the minimum eligibility to put a naming item on the docket, not proof of ownership. A deployed station or local infrastructure may later determine stakeholder weight, but there is no settled binary ownership requirement for naming.
+
+Naming proposals should consume a small amount of political capital to enter the docket; five capital is a provisional starting point. The proposal then becomes a vote or bid at the object's appropriate scope. The proposer does not automatically win, and other players may spend capital to support or oppose the name.
 
 ```text
-Moon or asteroid belt: low cost
-Planet: moderate cost
-Solar system: high cost
-Major lane or political region: very high cost
+Moon, asteroid belt, or minor object: low proposal cost
+Planet or sun: moderate proposal cost
+Solar system: higher proposal cost
+Major lane or political region: deferred
 ```
 
-Names should persist as historical identity even if the original player loses control. A successor may preserve the name, add a local designation, or spend political capital to rename the object officially.
+Names should persist as historical identity even if the proposer loses their stations or leaves the system. A later proposal may rename the object, but the previous name remains discoverable in history. Naming has no direct combat, production, or ownership effect in the current direction.
 
 Renaming should create a visible historical record rather than erase the past. The UI may show the current official name, previous names, naming player or authority, and the turn and reason for each change.
 
 Naming rights are primarily expressive and historical, not a direct combat advantage. They are still politically meaningful because they communicate legitimacy, ownership, legacy, and cultural influence.
 
-Safeguards should include a visible cost and confirmation step, a renaming cooldown, historical names remaining discoverable, multiplayer name-safety filtering, and higher costs to overwrite an established historical name.
+The first version needs a visible cost and confirmation step, historical names remaining discoverable, and a server-authoritative vote record. Cooldowns, name-safety filtering, and higher costs to overwrite established names are future safeguards; moderation is not a current prototype prerequisite.
 
 ## Senators
 
@@ -357,7 +375,7 @@ Only sun, planet, and moon stations host senators in the current design. Deep-sp
 
 ### Local and global influence
 
-Senator influence should have both empire-wide and local components.
+Senator influence may have both empire-wide and local components, but station type is not a universal ranking. The primary current rule is that the post changes which local station/region effects and objectives are available; any global-versus-local weighting remains a balance choice.
 
 ```text
 Senator contribution =
@@ -366,19 +384,19 @@ Senator contribution =
   + local region and system contribution
 ```
 
-| Post | Global contribution | Local contribution | Main strength |
-|---|---:|---:|---|
-| Sun | High | Medium | System-wide administration |
-| Planet | Medium | High | Regional development |
-| Moon | Low | Very high | Tactical frontier control |
+| Post | Typical local identity |
+|---|---|
+| Sun | Capital administration, broad production, and capital-class ship operations. |
+| Planet | Industry, regional health, and frigate/battleship operations. |
+| Moon | Reconnaissance or raiding footholds, forward logistics, and contested frontier operations. |
 
-These are strategic profiles, not a simple ranking. A moon senator may be less useful for a galactic policy but decisive in keeping a contested region operational. A sun senator may unlock broader policies while providing less specialized tactical value in one frontier.
+These are strategic profiles, not a simple ranking. A senator's tags, happiness, objective, and specific station context determine the useful combination. A moon post is not inherently weaker than a sun post; it is valuable when the player's chosen identity depends on forward operations, reconnaissance, or raiding.
 
 ### Station loss and political vacancies
 
 If a station hosting a senator is destroyed, the senator is killed. The senator is permanently removed from the active cabinet, their station assignment ends, and the seat becomes vacant. The game must explain the death and its political consequences; the senator must not silently disappear.
 
-There is no emergency reassignment after station loss. Senators may only be assigned or reassigned during Senate sessions. The player must wait until the next session to appoint a replacement or reorganize the cabinet.
+There is no emergency reassignment after station loss. A replacement may be appointed during the next Senate session. An active senator's station post is otherwise fixed until the senator's term ends or the senator dies; changing the post requires removing/replacing that senator during a session rather than freely moving them mid-term.
 
 When a senator dies, the system should:
 
@@ -393,19 +411,18 @@ Policies should not be silently deleted in the middle of turn resolution. They s
 
 ### Senator seat progression
 
-The intended maximum is five active senators. The player should begin with a small cabinet and grow into a more complex government through station development.
+The current implementation target is four active senators. The player should begin with a small cabinet and grow into a more complex government through pilot access and deployed station development.
 
 A possible progression is:
 
 - Start with one senator assigned to the starting station.
 - Add additional senators as the player establishes additional qualifying stations.
 - Reach two or three senators through early station development.
-- Reach four senators through meaningful regional or system expansion.
-- Reach five senators as a late-game political maximum supported by a five-station domain.
+- Reach four senators through meaningful pilot capacity and station expansion.
 
-Once the player has five seats, new candidates are primarily replacement and succession choices rather than simple additions.
+Once the player has four seats, new candidates are primarily replacement and succession choices rather than simple additions.
 
-The default relationship should be direct and legible: one active senator requires one qualifying station. A player with five active senators therefore needs at least five viable stations. The exact eligibility rules may still use station quality, sun-station ownership, regional control, or political milestones, but the player should understand that Senate breadth is grounded in physical infrastructure.
+The default relationship should be direct and legible: one active senator requires one deployed qualifying station. A player with four active senators therefore needs at least four viable stations. Senate breadth is also tied to available pilots: station types and station development provide pilot capacity/access, which represents the population and operational base that the Senate serves. The exact thresholds remain balance variables.
 
 Station count should be encouraged, not made trivially exploitable. Qualifying stations may need to be supplied, maintained, connected, or operational before they can host a senator. A disposable station should not create a permanent political seat at no meaningful cost.
 
@@ -422,20 +439,11 @@ Terms should increase a senator's effectiveness:
 
 The player should always be able to see the senator's current term, remaining term count, and expected retirement session.
 
-The four-term limit creates political succession as a strategic system. A player may enjoy a period where all five senators are experienced and powerful, but should anticipate that several may retire around the same time. Station loss can create an earlier succession problem by removing a senator's post before their term is complete.
+The four-term limit creates political succession as a strategic system. A player may enjoy a period where all four senators are experienced and powerful, but should anticipate that several may retire around the same time. Station loss can create an earlier succession problem by removing a senator's post before their term is complete.
 
-Players should be able to retire, replace, or reassign a senator only during a Senate session. Early retirement should have a cost, such as:
+Players should be able to retire or replace a senator only during a Senate session. Early retirement has no separate political-capital cost in the current direction; its cost is losing the senator's accumulated term strength and replacing them with a first-term senator. It may also create temporary mandate weakness.
 
-- Loss of accumulated experience.
-- Temporary mandate disruption.
-- Reduced happiness among compatible senators.
-- Reduced political capital.
-
-Reassignment should also be a real choice. Moving a senator from a sun station to a moon station may reduce their global mandate contribution while improving their local tactical effects and changing their objectives. The station post should be part of the cabinet build, not merely an administrative field.
-
-Reassignment is unavailable between Senate sessions. This creates a predictable political cadence and makes station placement a commitment rather than a freely switchable bonus.
-
-It may also provide a legacy benefit if the senator served long enough.
+- A player may change a senator's post by removing that senator and appointing a replacement at a later session. There is no direct mid-term reassignment action in the current direction.
 
 ### Legacy effects
 
@@ -453,7 +461,7 @@ Legacy effects should be modest. The purpose is to reward long service without m
 
 ## Senator objectives
 
-Each active senator provides one personal objective during a Senate session. With five senators, the player may receive up to five objectives. Objectives are generated from the senator's tags, personality, term history, assigned station, region, and solar system.
+Each active senator provides one personal objective during a Senate session. With four senators, the player may receive up to four objectives. Objectives are generated from the senator's tags, personality, term history, assigned station, region, and solar system.
 
 Players should not be expected to complete every objective. Completing two or three should be meaningful, while completing more should reward highly aligned or highly active players.
 
@@ -508,7 +516,7 @@ Ordinary aligned actions should move happiness gradually. Personal objectives sh
 
 ### Happiness should modify, not fully determine, mandate
 
-A neglected senator should still contribute something. Otherwise one missed objective, station setback, or temporary reassignment can completely invalidate a political build.
+A neglected senator should still contribute something. Otherwise one missed objective or station setback can completely invalidate a political build.
 
 A conceptual contribution model is:
 
@@ -637,14 +645,13 @@ These connect the player's internal government to multiplayer politics.
 
 Players should not activate every eligible policy simultaneously. Active policy slots create a government loadout.
 
-Current baseline: five active policy slots.
+Current implementation target: four total active policy slots, with only one slot initially unlocked. The remaining slots should unlock through additional pilot access/capacity and may later incorporate institutional influence. A five-slot government remains a possible later expansion, not the current baseline.
 
 Possible expansion:
 
-- Five slots at the start of the political system.
-- A sixth slot after a first institutional-influence threshold.
-- A seventh slot after a stronger developed-domain threshold.
-- An eighth slot only for a highly developed late-game government, if playtesting supports it.
+- One slot at the start of the political system.
+- Additional slots as the player's pilot base and political institution grow.
+- A fourth slot as the current first-implementation cap, with a fifth slot reserved for later balance exploration.
 
 The player may have six eligible cards but only three active slots. This creates the important decision between political possibility and current commitment.
 
@@ -654,9 +661,9 @@ Policy effects should be centralized in a modifier layer so movement, constructi
 
 ### Policy capacity and institutional influence
 
-The player begins with five active policy slots. This is the current baseline and should be treated as a government capacity rather than a senator count.
+The player begins with one active policy slot and a current target of four total slots. Policy capacity is government capacity, not senator count. The first expansion rule should use pilot access/capacity because pilots represent the population and operational base being represented by the Senate.
 
-Additional policy slots may unlock through a combined institutional-influence value derived from the player's physical political domain. This value should consider:
+Additional policy slots may later incorporate a combined institutional-influence value derived from the player's physical political domain. Pilot access is the first implementation input; institutional influence should consider:
 
 - The number of developed sun, planet, and moon stations.
 - The base political value of each station type.
@@ -679,11 +686,11 @@ Conceptually:
 
 ```text
 Policy capacity =
-  five baseline slots
-  + slots unlocked by institutional-influence thresholds
+  one initially unlocked slot
+  + slots unlocked by pilot access and later institutional thresholds
 ```
 
-Example thresholds might unlock a sixth, seventh, or eighth slot as the player's domain grows. Exact values and any hard cap are balance variables. The first implementation should use a modest cap so additional slots expand strategic choice without making the policy interface unreadable.
+Exact thresholds and any hard cap are balance variables. The first implementation should use four total slots so policies feel meaningful without making the interface unreadable.
 
 Institutional influence, tag mandate, and political capital are separate:
 
@@ -879,6 +886,17 @@ Proposal
 
 The initial implementation does not need formal contracts. Player-visible proposals, chat, shared objectives, and explicit vote history can support negotiation before a full diplomacy system exists.
 
+The first agenda-board shape should be intentionally small:
+
+- One optional galaxy-wide agenda slot.
+- One optional system-wide agenda slot per solar system.
+- One optional regional agenda slot per region.
+- Any eligible player may submit a proposal by paying its docket cost; simultaneous submissions require a deterministic first-commit rule.
+- Galaxy-wide items are visible and votable by all players. System and regional items prioritize stakeholders with relevant infrastructure or operational presence.
+- Non-stakeholders may be able to inspect the public proposal, but should not receive interruptive notifications for unrelated local votes.
+
+This is a proposed first agenda shape, not a final voting formula. The stakeholder definition, vote weighting, agenda capacity, and law duration remain open.
+
 ## Multiplayer interaction
 
 The political system should support several kinds of interaction beyond direct combat.
@@ -946,9 +964,13 @@ Alliance costs should include political-capital or upkeep requirements, obligati
 
 The first alliance implementation can use a small number of explicit permissions rather than a general-purpose contract language.
 
+The first useful permissions should be attached to individual stations and deployables rather than inferred only from an alliance label. An owner may eventually control who can dock, refuel, repair, use local services, buy from a trade hub, or access a route. Permissions may distinguish free access from paid access and may be revoked without requiring a war declaration. This gives alliances practical value while preserving the possibility of betrayal or hostile action.
+
+Trade hubs and similar large deployables are a future social-risk surface: they may be legitimate markets, access-controlled infrastructure, or dangerous bait. Their reputation and combat consequences should be designed separately from the initial Senate backbone.
+
 ### War as a political condition
 
-War should be an explicit state with consequences beyond permission to attack. War may change lane legality and interdiction rules, station capture and destruction rules, trade and access rights, regional health pressure, pilot recruitment or replacement, political objectives and senator happiness, external agenda priorities, and the value of security, expansionist, industrial, or humanitarian policies.
+War should be an explicit state with consequences beyond permission to attack. War may change lane legality and interdiction rules, station destruction and replacement rules, trade and access rights, regional health pressure, pilot recruitment or replacement, political objectives and senator happiness, external agenda priorities, and the value of security, expansionist, industrial, or humanitarian policies. Station capture is not part of the current station model: a destroyed station's site must be rebuilt or replaced rather than changing owner through capture.
 
 War should also create political opportunities. A Security senator may become happier during a successful defensive war, while a Humanist senator may become unhappy with civilian losses. A Trade Magnate may support a short war that protects a corridor but oppose a prolonged blockade.
 
@@ -987,20 +1009,42 @@ This section is intentionally a placeholder for a later diplomacy design. The fi
 
 ## Senate session structure
 
-The long-term target cadence is approximately one Senate session every 100 turns. The cadence should be configurable for testing and balance work.
+The current target cadence is one shared Senate trigger for every player every 100 turns. The cadence should be configurable for testing and balance work.
+
+The session is a persistent, non-blocking editing window rather than a turn-ending deadline:
+
+1. The session becomes available at the cadence turn, even if the player is offline.
+2. The player may continue ordinary gameplay while the session is pending.
+3. The player may inspect the current domain, change cabinet/policy choices, and revert pending edits before committing.
+4. When the session is resolved, changes lock at the next authoritative boundary defined by the implementation.
+5. If the player never acts, the cabinet and policy loadout remain unchanged.
+6. A later cadence does not stack multiple pending sessions. The exact supersession rule for a player who stays offline across multiple cadences is an implementation question.
 
 Each session may contain:
 
-1. Cabinet management: keep, replace, add, or retire senators.
+1. Cabinet management: keep, replace, add, or retire senators. A replacement is assigned to a station; an active senator is not freely moved during a term.
 2. Candidate presentation: show fixed, server-generated candidates and eligibility.
 3. Personal objectives: one objective per active senator.
 4. Happiness resolution: apply objective, action, synergy, and conflict changes.
 5. Mandate update: recalculate tag strength and policy eligibility.
-6. Policy loadout: select or replace active policies within available slots.
+6. Policy loadout: select or replace active policies within available slots, beginning with one unlocked slot and a current target of four total slots.
 7. External agenda: propose, negotiate, and vote on a broader measure.
-8. Publication: show resulting policies, world effects, and political history.
+8. Political capital: award the session's happiness-based capital and carry unspent capital forward.
+9. Publication: show resulting policies, world effects, political-capital changes, and political history.
 
-The player should be allowed to defer cabinet decisions briefly within the session window. The system should not force an immediate modal decision that blocks ordinary play.
+The player should be allowed to defer cabinet decisions indefinitely until they next engage with the pending session, without stacking additional sessions or blocking ordinary play. The UI should make unresolved vacancies, inactive policies, and missed opportunities visible without forcing a modal decision.
+
+### Senate and command UI
+
+Outside a pending session, the default Senate/command view should prioritize current state over the full policy catalog:
+
+- Active senators, their terms, happiness, tags, posts, and local objectives.
+- The four policy slots, showing locked, empty, active, and at-risk states.
+- Current tag mandate, pilot-based policy capacity, and political-capital balance.
+- A secondary view for all eligible and locked policy cards with visible requirements.
+- Upcoming agenda items and votes that are relevant to the player's stakeholder interests.
+
+Galaxy-wide agendas may be discoverable to everyone, but system and regional proposals should be emphasized through activity and notifications for players with relevant infrastructure or operational presence. Political state should also be readable through the activity log rather than only through a modal.
 
 ## Data and implementation boundaries
 
@@ -1037,7 +1081,7 @@ The authoritative model must enforce:
 - Only sun, planet, and moon stations can host senators.
 - Every active senator has exactly one hosting station.
 - Every senator-hosting station has at most one active senator.
-- Senator reassignment is only legal during an open Senate session.
+- New appointments and replacements are only legal during an open Senate session. An active senator's station post is fixed until term end or death.
 - Destruction of a senator-hosting station kills the assigned senator.
 - A killed senator's seat remains vacant until a later Senate session.
 
@@ -1064,7 +1108,7 @@ Before Senate implementation, the following systems must be trustworthy:
 
 Implement:
 
-- One to three senators.
+- One to four senators.
 - One station assignment per active senator.
 - Sessions and persistence.
 - Candidate selection and replacement.
@@ -1073,7 +1117,7 @@ Implement:
 - One personal objective per senator.
 - A small number of tags.
 
-For this phase, every active senator must be assigned to a sun, planet, or moon station. Reassignment is only available inside the Senate-session flow. Destroying an occupied station kills its senator and leaves the seat vacant until the next session.
+For this phase, every active senator must be assigned to a deployed sun, planet, or moon station. Replacement is only available inside the Senate-session flow; an active senator cannot be moved between stations mid-term. Destroying an occupied station kills its senator and leaves the seat vacant until the next session.
 
 The first station-assignment test should include a sun post, a planet post, and a moon post so the player can see that the same tag behaves differently by location.
 
@@ -1087,7 +1131,7 @@ Implement:
 - Happiness thresholds.
 - Policy-card requirements.
 - Active policy slots.
-- Five baseline policy slots and a first institutional-influence threshold for a sixth slot.
+- One initially unlocked policy slot and a current target of four total slots, with pilot access/capacity as the first expansion input.
 - Centralized policy modifiers.
 - Policy invalidation and grace periods after retirement.
 
@@ -1103,7 +1147,7 @@ Implement:
 - Same-tag reinforcement.
 - A small set of cross-tag synergies.
 - Clear warnings about future retirements and policy risk.
-- Station-loss death, vacancies, and session-bound reassignment.
+- Station-loss death, vacancies, and session-bound replacement.
 - Post-specific influence and objective generation.
 
 ### Phase 4: External agendas
@@ -1179,32 +1223,33 @@ Every policy, happiness change, mandate shift, vote, and externality should be v
 
 The current direction is:
 
-- Up to five active senators.
-- Start with one senator assigned to the starting station and add seats through qualifying station development.
+- Up to four active senators in the current implementation target.
+- Start with one senator assigned to the starting station and add seats through deployed station presence plus pilot access/capacity.
 - Every active senator occupies one owned station.
 - Only sun, planet, and moon stations can host senators.
-- Senator reassignment is available only during Senate sessions.
+- A new or replacement senator is assigned during a Senate session; an active senator remains at that post until term end or death.
 - Destruction of a senator-hosting station kills the assigned senator and creates a vacancy.
-- Station type changes the senator's influence profile, objective pool, and political reach.
+- Station context changes the senator's local effects and objective pool. No station post is universally superior.
 - Senator objectives care about both tags and assigned place.
 - Senators serve up to four 100-turn terms, for approximately 400 turns total.
-- Senators can retire early or be replaced.
+- Senators can retire early or be replaced at a Senate session; early removal costs the player the senator's accumulated term strength, not a separate political-capital fee.
 - Each active senator supplies one session objective.
 - Happiness is senator-specific.
 - Tag mandate is aggregated across relevant senators.
 - Political capital is a separate spendable external resource.
 - Policy cards require tag and happiness conditions.
-- The government begins with five active policy slots.
-- Additional policy slots may unlock through combined institutional influence from the player's developed station network.
+- The government begins with one unlocked policy slot and a current target of four total slots.
+- Additional policy slots initially depend on pilot access/capacity; institutional influence may become a combined later input.
 - Some policy cards may require senators to be happy and assigned to particular station types.
 - Policies include direct bonuses and structural world effects.
 - Same-tag senators reinforce a political movement.
 - Cross-tag combinations create hybrid policy paths.
 - Sun, planet, moon, and deep-space stations support different political identities.
-- Senate sessions also provide a path toward regional and galactic agendas.
+- Senate sessions also provide a path toward regional and galactic agendas, with one optional galaxy slot, one per-system slot, and one per-region slot as the first agenda-board concept.
 - Regional voting should favor players with legitimate local stakes.
 - The physical map remains the source of political meaning.
-- Political capital can purchase civic naming rights and preserve domain legacy.
+- At session resolution, senator happiness bands provisionally generate political capital; unspent capital rolls over.
+- A player who has seen an object may propose a low-cost civic name vote. Names persist historically and have no direct mechanical effect in the current direction.
 - Alliance and war states are explicit diplomatic relationships, not implied combat permissions.
 - Diplomatic history can influence senator happiness, objectives, reputation, and future negotiations.
 
@@ -1212,19 +1257,19 @@ The current direction is:
 
 These questions should remain explicit until playtesting resolves them:
 
-1. What exact station development thresholds unlock seats two through five?
-2. What station quality, supply, or development threshold is required before a station can host a senator?
+1. What exact pilot-capacity thresholds unlock seats two through four?
+2. What supply, deployment, or operational threshold is required before a station can host a senator?
 3. How much pilot capacity and generation should each station type provide?
-4. How much global versus local influence should sun, planet, and moon posts contribute?
+4. Which concrete local effects should each station post provide without making one post universally superior?
 5. How much happiness does an objective provide compared with ordinary aligned actions?
 6. How quickly should tag mandate accumulate?
 7. Should mandate ever decay, or only change through active Senate composition?
-8. What institutional-influence thresholds unlock policy slots six through eight?
-9. What hard cap should policy slots have in the first implementation?
+8. What pilot and later institutional thresholds unlock policy slots two through four?
+9. Should the first implementation eventually expose a fifth policy slot?
 10. How long should policies remain active after a senator retirement or station death invalidates their requirements?
 11. How many policy cards should be visible at each stage?
 12. Which tags are essential for the first playable political build?
-13. How much political capital should a player receive per session?
+13. Should the provisional 20/40/60/80/100 happiness-to-capital bands be linear, and should empty seats contribute nothing?
 14. Should galactic votes be every Senate session or less frequent?
 15. How should a binary system's second sun station affect political legitimacy and senator seats?
 16. Which regional effects are safe for outsiders to vote on?
@@ -1233,10 +1278,10 @@ These questions should remain explicit until playtesting resolves them:
 19. Which alliance permissions belong in the first diplomatic implementation?
 20. What actions escalate a dispute into limited hostilities or declared war?
 21. Which war effects should be automatic, and which require a political resolution?
-22. How much should political capital naming rights cost by object type?
-23. Which objects may be renamed, and what control threshold is required?
-24. How should captured objects display current and historical names?
-25. If an occupied station is captured rather than destroyed, is the senator killed, expelled, or transferred with the station?
+22. What is the exact proposal fee and bidding/voting rule for naming actions?
+23. How should stakeholder voting work when visibility is sufficient to propose but infrastructure is not ownership?
+24. How many local naming proposals may be active at once, and how are current and historical names displayed?
+25. How should station destruction/replacement interact with names when station capture is not a supported mechanic?
 
 ## First proof of fun
 
@@ -1251,10 +1296,11 @@ The first end-to-end political test should be small:
 7. The player activates it in a limited policy slot.
 8. The policy changes an existing behavior such as pilot generation, lane operation, mining, or scouting.
 9. The station hosting one senator is damaged or destroyed and the political consequence is shown.
-10. A later session introduces a replacement or reassignment decision.
-11. The player must decide whether to preserve the current political build or change direction.
+10. A later session introduces a replacement decision, with the new senator assigned to a different station if desired.
+11. The player earns political capital from happiness and can submit a civic naming proposal.
+12. The player must decide whether to preserve the current political build or change direction.
 
-If this loop is satisfying, the larger systems—five-seat cabinets, retirement cycles, cross-tag synergies, political capital, and external agendas—can be added with confidence.
+If this loop is satisfying, the larger systems—four-seat succession cycles, cross-tag synergies, political-capital spending, and external agendas—can be added with confidence.
 
 ## Final design statement
 

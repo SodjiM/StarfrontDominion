@@ -241,6 +241,65 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Older worlds predate persistent incident consequences. The table
+        // creation above is sufficient for new databases; these additive
+        // migrations preserve existing campaigns.
+        await new Promise((resolve, reject) => {
+            const columns = [
+                'health_loss INTEGER NOT NULL DEFAULT 0',
+                'applied_health_delta INTEGER',
+                "resolution_rule TEXT NOT NULL DEFAULT 'ship_arrival'",
+                `resolution_requirements_json TEXT NOT NULL DEFAULT '{"arrivalRadius":0,"eligibleShips":[{"roles":["courier"]}]}'`,
+                'target_x INTEGER',
+                'target_y INTEGER',
+                'resolved_by_object_id INTEGER',
+                'resolved_by_user_id INTEGER'
+            ];
+            const addNext = (index) => {
+                if (index >= columns.length) {
+                    return db.run(
+                        `UPDATE region_incidents SET health_loss=CASE severity
+                            WHEN 'minor' THEN 2 WHEN 'significant' THEN 4 WHEN 'severe' THEN 7 WHEN 'critical' THEN 10 ELSE 2 END
+                         WHERE health_loss=0`,
+                        (error) => {
+                            if (error) return reject(error);
+                            db.run("UPDATE region_incidents SET utility_role='courier' WHERE utility_role<>'courier'", (roleError) => {
+                                if (roleError) return reject(roleError);
+                                db.run(
+                                    `UPDATE region_incidents
+                                     SET resolution_rule='ship_arrival',
+                                         resolution_requirements_json='{"arrivalRadius":0,"eligibleShips":[{"roles":["courier"]}]}'
+                                     WHERE resolution_rule IS NULL OR resolution_rule=''`,
+                                    (resolutionError) => {
+                                        if (resolutionError) return reject(resolutionError);
+                                        db.run(
+                                            `UPDATE region_incidents
+                                             SET target_x=COALESCE(target_x,(
+                                                    SELECT CAST((json_extract(r.cells_json,'$[0].col')+0.5)*(COALESCE(s.width,5000)/3.0) AS INTEGER)
+                                                    FROM regions r JOIN sectors s ON s.id=r.sector_id
+                                                    WHERE r.sector_id=region_incidents.sector_id AND r.region_id=region_incidents.region_id
+                                                )),
+                                                 target_y=COALESCE(target_y,(
+                                                    SELECT CAST((json_extract(r.cells_json,'$[0].row')+0.5)*(COALESCE(s.height,5000)/3.0) AS INTEGER)
+                                                    FROM regions r JOIN sectors s ON s.id=r.sector_id
+                                                    WHERE r.sector_id=region_incidents.sector_id AND r.region_id=region_incidents.region_id
+                                                ))`,
+                                            (targetError) => targetError ? reject(targetError) : resolve()
+                                        );
+                                    }
+                                );
+                            });
+                        }
+                    );
+                }
+                db.run(`ALTER TABLE region_incidents ADD COLUMN ${columns[index]}`, (error) => {
+                    if (error && !String(error.message || '').includes('duplicate column')) return reject(error);
+                    addNext(index + 1);
+                });
+            };
+            addNext(0);
+        });
+
         // Stable resource slugs are the internal contract. Existing databases
         // may predate resource_key, so add and backfill it before validating
         // the blueprint registry.

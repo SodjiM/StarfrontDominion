@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This plan turns the regional-operations design into bounded implementation slices. It covers shared infrastructure capacity, operational lifecycle, pressure snapshots, incident creation, and incident response. It deliberately does not yet apply regional-health consequences.
+This plan turns the regional-operations design into bounded implementation slices. It covers shared infrastructure capacity, operational lifecycle, pressure snapshots, incident creation, shared physical objectives, expiration, and one-time regional-health consequences.
 
 The durable context is [../design/starfront-design-direction.md](../design/starfront-design-direction.md).
 
@@ -13,9 +13,13 @@ The durable context is [../design/starfront-design-direction.md](../design/starf
 - Pressure is nonlinear and evaluated once from committed turn state. It drives incident frequency and severity rather than directly subtracting health.
 - Pressure history is immutable by turn. Player-facing pressure is qualitative; exact contributors remain viewer-scoped.
 - Incidents are persistent, time-bounded regional conditions. They are public at a safe summary level and are not owned by a player.
-- Multiple players may begin a response to the same incident. A response is a commitment, not a claim of regional ownership.
-- An incident is resolved atomically by a valid completed response; competing active responses are cancelled consistently.
-- Current incident work has no health change, automatic expiration effect, cost/reward economy, or physical utility-mission completion rule.
+- Players do not enroll in, own, accept, or cancel an incident. Every eligible object in the game may satisfy its public resolution rule.
+- An incident is resolved atomically when authoritative turn resolution finds a qualifying world state. Simultaneous qualifying objects are reduced to one deterministic result.
+- Incidents do not wait for player readiness. If the public resolution rule is not satisfied by the deadline, the incident expires and applies its stated health loss once.
+- The first physical prototype stores a public target point and resolves when any player's live, operational courier reaches it. Ordinary movement and lane travel are how a courier gets there; losing one courier does not change the incident or prevent another attempt.
+- Resolution rules are data-driven and dispatched by rule type. Eligibility can constrain ship roles, blueprint subsets, or specific objects; an empty selector can admit any operational ship. Later rule handlers may evaluate deployed structures or other world conditions.
+- Incident creation, resolution, and expiration are public strategic events. They appear on system maps and in turn activity for players whose current strategic knowledge includes the system.
+- Current incident work has no cost/reward economy, partial contribution accounting, or recurring health damage.
 
 ## Current implementation foundation
 
@@ -26,8 +30,11 @@ The durable context is [../design/starfront-design-direction.md](../design/starf
 | Paired gates | Endpoints are validated in one game, cannot be self-links or reverse duplicates, and reserve/release slots as one lifecycle unit. |
 | Pressure snapshots | One immutable regional snapshot is created per resolved sector-region-turn after combat/destruction and before health history. |
 | Incident generation | Deterministic, idempotent generation derives at most one active incident per region from its snapshot. |
-| Response state | A player may begin, cancel, or restart one response per incident; completion is an internal atomic transition. |
+| Resolution rules | Each incident persists a rule type, public target, and typed eligibility requirements. No player-specific enrollment is required. |
+| Courier arrival | After ordinary and lane movement, the authoritative resolver checks all game-member ships and resolves when an operational eligible courier occupies the target. |
+| Expiration and health | Severity sets a fixed public deadline and deterministic health loss. Unresolved incidents expire once and update the region atomically. |
 | Player-facing facts | Facts expose safe incident state and qualitative pressure without exact source load, rolls, responder identities, or hidden infrastructure. |
+| Activity | Creation, successful resolution, and expiration produce public turn-activity summaries without responder or route disclosure. |
 
 These foundations are prerequisites, not proof that the player-facing maintenance loop is complete.
 
@@ -48,13 +55,15 @@ These foundations are prerequisites, not proof that the player-facing maintenanc
 - Treat public regional state, friendly exact load, visible hostile load, and concealed hostile information as separate authorization classes.
 - Facts and broadcasts must not disclose source pressure, hidden aggregate load, incident-selection rolls, or responder identity.
 
-### Incident and response state
+### Incident and resolution state
 
 - Generation must be idempotent across retries and duplicate turn-resolution attempts.
 - Only one active incident may occupy a region at a time unless a later design explicitly supports coexistence.
-- Begin/cancel/restart validates game membership, sector/region scope, turn state, and response ownership.
-- Completion is callable only by an authoritative mission or resolution path, not a client claim.
+- Resolution is derived from authoritative world state, never a client completion claim or an accepted-mission record.
+- Rule handlers own their completion evidence and eligibility checks. Shared incident lifecycle and expiration do not contain rule-specific branches.
+- Stored target and requirement data are immutable for the lifetime of an incident so retries evaluate the same objective.
 - Retention of resolved incidents must be bounded and display-safe.
+- A satisfied resolution rule on the due turn resolves before expiration is evaluated. Otherwise expiration applies the incident's stated loss exactly once.
 
 ## Dependencies and interactions
 
@@ -64,37 +73,40 @@ These foundations are prerequisites, not proof that the player-facing maintenanc
 | Build, cargo, and gates | Capacity reservation and paired rollback must be atomic with these mutations. |
 | Infrastructure lifecycle | Determines capacity, pressure, sensor coverage, and operational effects. |
 | Facts and visibility | Publishes safe regional status while protecting exact hostile operations. |
-| Utility ships and movement | Supplies the later physical mission that completes a response. |
+| Utility ships and movement | Ordinary travel moves candidate ships; arrival rules inspect their authoritative final positions. |
 | Regional health and lanes | Consume successful/failed/expired outcomes in a later slice; intentionally unchanged now. |
 | Archetypes | Select incident flavor and future regional rules; semantics must not depend only on cosmetic labels. |
 
-## Next implementation slice: utility-backed response completion
+## Implemented playable incident loop
 
-The next bounded feature is a minimal utility mission that makes response completion physical. It should:
+The bounded prototype makes resolution physical and gives ignored incidents a real consequence. It:
 
-1. require an eligible utility-role ship and valid location/region;
-2. create or associate a server-owned mission/order with the existing response;
-3. remain visible as vulnerable traffic and be interruptible by movement, destruction, disablement, or cancellation;
-4. verify completion during authoritative turn resolution; and
-5. call the existing internal completion transition only after verification.
+1. generates a deterministic, navigable target point inside the affected region;
+2. publishes a `ship_arrival` resolution rule whose first requirement is an operational courier;
+3. lets every player use ordinary movement and lane travel toward the same objective without accepting or owning it;
+4. evaluates all eligible ships during authoritative turn resolution after movement and before the deadline check;
+5. resolves the incident once when any qualifying courier reaches the target; and
+6. expires an unresolved incident on its due turn, applies its public one-time health loss, and records the outcome for facts and activity.
 
-Keep the first version narrow: one utility role, one traversal/arrival rule, one completion condition, and no reward economy. Do not infer broad PvE, escort, fleet, or health mechanics into this slice.
+The first version remains narrow: one rule handler, one eligible ship role, an exact target point, a deterministic one-time health loss, and no reward economy. The rule registry and persisted requirements deliberately allow later incidents to accept other roles, blueprint subsets, any operational ship, or a different handler such as structure deployment.
 
 ### Definition of done
 
-- A response cannot resolve through an API call or client state alone.
-- A valid utility ship can begin and complete a response through a visible server-authoritative mission/order.
-- Invalid location, destroyed/disabled ship, cancellation, competing completion, and transaction failure leave coherent response and incident state.
-- Completion atomically resolves the incident and cancels competing responses.
-- Focused persistence, route/service, and serialized-facts tests cover the contract.
+- An incident cannot resolve through an API call or client state alone.
+- An operational courier reaching the target through ordinary movement resolves the shared incident without enrollment.
+- A courier elsewhere in the region, an ineligible ship, an outsider-owned ship, or a destroyed/disabled ship does not satisfy the rule.
+- Losing or redirecting one ship leaves the incident active and available to every other eligible ship.
+- Completion atomically resolves the incident and records internal evidence without publishing player or ship identity.
+- An ignored incident expires once at its deadline and applies the displayed regional-health loss even when no player has a utility ship or infrastructure present.
+- Strategic facts and turn activity show deadlines, expected consequences, and outcomes without revealing responder identity or hidden operations.
+- Focused persistence, movement/service, and serialized-facts tests cover the contract.
 
 ## Later slices, in dependency order
 
-1. **Expiration and outcome policy:** define unresolved-deadline outcomes; record them before adding health changes.
-2. **Health consequences:** add small, recoverable effects for expiry, failure, and success, with public explanation in turn history.
-3. **Archetype and regional semantics:** replace label-only mappings with structured definitions and a small prototype event library.
-4. **Operational consequences:** add lane friction, hazards, extraction, and infrastructure burden one at a time with counterplay.
-5. **Shared response economy:** add costs, rewards, bargaining, and contribution accounting only after missions are reliable.
+1. **Outcome tuning and recovery:** playtest deadline and health-loss values, then define recovery sources without turning health into passive upkeep.
+2. **Archetype and regional semantics:** replace label-only mappings with structured definitions and a small prototype event library.
+3. **Operational consequences:** add lane friction, hazards, extraction, and infrastructure burden one at a time with counterplay.
+4. **Shared objective economy:** add costs, rewards, bargaining, and contribution accounting only after resolution rules are reliable.
 
 ## Unresolved questions
 
@@ -105,7 +117,7 @@ Keep the first version narrow: one utility role, one traversal/arrival rule, one
 - What qualifies a utility vessel: hull role, module, fitted capability, or order type?
 - How are hostile structures disabled, repaired, captured, or removed?
 - Which anti-spam protections preserve shared-capacity conflict without enabling griefing?
-- Which incident windows, costs, and severity bands are fun in family playtests?
+- Which incident windows, health losses, costs, and severity bands are fun in family playtests?
 
 ## Non-goals
 

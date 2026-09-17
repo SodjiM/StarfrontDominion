@@ -162,19 +162,28 @@ test('system facts expose only the public active-incident contract', async () =>
     const scenario = await createScenario('dark-nebula', 69);
     const chance = incidentChanceForBand('overloaded');
     const turn = await findRollBelow(scenario.gameId, scenario.sectorId, 'A', 'dark-nebula', 500, chance);
+    await run("INSERT INTO turns(game_id,turn_number,status) VALUES(?,?,'waiting')", [scenario.gameId, turn]);
     await addPressure(scenario, turn, 'overloaded');
     await new RegionIncidentService(db).generateForTurn(scenario.gameId, turn);
 
     const facts = await SystemFactsService.getSectorSummary(scenario.sectorId, scenario.userId);
+    assert.deepEqual(facts.dimensions, { width: 5000, height: 5000 });
     assert.equal(facts.regions[0].incidents.length, 1);
     const incident = facts.regions[0].incidents[0];
     assert.deepEqual(Object.keys(incident).sort(), [
-        'createdTurn', 'dueTurn', 'id', 'key', 'response', 'severity', 'status', 'summary', 'title', 'utilityRole'
+        'createdTurn', 'dueTurn', 'healthLoss', 'id', 'key', 'resolution', 'severity', 'status', 'summary', 'title', 'turnsRemaining', 'utilityRole'
     ]);
     assert.equal(incident.key, 'sensor-map-drift');
+    assert.equal(incident.utilityRole, 'courier');
     assert.equal(incident.status, 'active');
-    assert.deepEqual(incident.response, { status: 'unanswered', viewerResponding: false });
+    assert.equal(incident.resolution.rule, 'ship_arrival');
+    assert.deepEqual(incident.resolution.eligibleShips, [{ roles: ['courier'] }]);
+    assert.equal(Number.isSafeInteger(incident.resolution.target.x), true);
+    assert.equal(Number.isSafeInteger(incident.resolution.target.y), true);
+    assert.equal(incident.resolution.target.radius, 0);
     assert.ok(incident.dueTurn > incident.createdTurn);
+    assert.ok(incident.healthLoss > 0);
+    assert.equal(incident.turnsRemaining, incident.dueTurn - turn);
     const serialized = JSON.stringify(facts);
     for (const hiddenField of ['generation_roll', 'generation_version', 'pressure_score', 'infrastructure_load']) {
         assert.equal(serialized.includes(hiddenField), false, hiddenField);

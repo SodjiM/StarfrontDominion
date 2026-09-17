@@ -73,3 +73,25 @@ test('legacy combat report sanitizer redacts unseen opponent details', () => {
     assert.equal(known.attacker_id, null);
     assert.equal(known.target_id, 502);
 });
+
+test('incident creation and expiration are public turn activity with explicit consequences', async () => {
+    await run("INSERT OR IGNORE INTO regions(sector_id,region_id,cells_json,health) VALUES(?,'A','[{\"row\":0,\"col\":0}]',55)", [sector]);
+    const incident = await run(
+        `INSERT INTO region_incidents
+         (game_id,sector_id,region_id,incident_key,title,summary,utility_role,severity,status,
+          created_turn,due_turn,pressure_turn,pressure_band,pressure_score,generation_roll,generation_version,health_loss)
+         VALUES(?,?,'A','test-storm','Test Storm','A public environmental test.','engineering','minor','active',88,108,88,'low',10,0.01,1,2)`,
+        [game, sector]
+    );
+    await activity.materializeTurn(db, game, 88, { ownership: await activity.captureOwnership(db, game) });
+    const created = await get("SELECT summary FROM activity_events WHERE game_id=? AND user_id=? AND turn_number=88 AND event_type='region_incident'", [game, alice]);
+    assert.match(created.summary, /Resolve by turn 108/);
+    assert.match(created.summary, /health falls by 2/);
+
+    await run("UPDATE regions SET health=53 WHERE sector_id=? AND region_id='A'", [sector]);
+    await run("UPDATE region_incidents SET status='expired',resolved_turn=108,outcome='environmental_damage',applied_health_delta=-2 WHERE id=?", [incident.lastID]);
+    await activity.materializeTurn(db, game, 108, { ownership: await activity.captureOwnership(db, game) });
+    const expired = await get("SELECT summary,severity FROM activity_events WHERE game_id=? AND user_id=? AND turn_number=108 AND event_type='region_incident_expired'", [game, alice]);
+    assert.equal(expired.severity, 'danger');
+    assert.match(expired.summary, /health fell by 2 to 53/);
+});

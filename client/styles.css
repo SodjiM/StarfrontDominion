@@ -324,6 +324,28 @@ body {
 #galaxy-tab .map-main { grid-template-columns: minmax(0,1fr) 320px; }
 #galaxy-tab .map-sidebar { position: static; width: auto; transform: none; }
 .map-footer { display: none !important; }
+.incident-briefing {
+  position: absolute;
+  z-index: 4;
+  top: 52px;
+  right: 10px;
+  width: min(320px, calc(100% - 20px));
+  max-height: min(58%, 440px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(244, 201, 93, .5);
+  border-radius: 6px;
+  background: rgba(7, 13, 24, .94);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .42);
+  color: var(--text);
+}
+.incident-briefing[hidden] { display: none; }
+.incident-briefing > h3 { margin: 0 0 8px; color: #f4c95d; font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; }
+.incident-briefing-item { padding: 9px 0; border-top: 1px solid rgba(255,255,255,.09); }
+.incident-briefing-item h4 { margin: 0 0 4px; font-size: .83rem; }
+.incident-briefing-item p { margin: 0 0 7px; color: var(--muted); font-size: .72rem; line-height: 1.42; }
+.incident-briefing-item .incident-consequence { color: #f7d67b; }
+.incident-briefing-item .incident-objective { margin-bottom: 0; color: var(--text); }
 
 @media (max-width: 768px) {
   .map-modal { width: calc(100vw - 8px) !important; height: calc(100dvh - 8px) !important; max-height: calc(100dvh - 8px) !important; }
@@ -335,6 +357,7 @@ body {
   .map-overlay-btn { height: 28px; min-width: 30px; padding: 3px 6px; font-size: .62rem; }
   .map-control-divider { margin: 0; }
   .map-mode-hint { bottom: 48px; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
+  .incident-briefing { top: 42px; right: 6px; width: min(300px, calc(100% - 12px)); max-height: 46%; }
   .planner-rail-tab { top: auto; right: 8px; bottom: 8px; min-height: 0; padding: 9px 11px; border: 1px solid rgba(100,181,246,.45); border-radius: 5px; writing-mode: horizontal-tb; transform: none; }
   .planner-rail-tab.is-hidden { transform: translateY(8px); }
   #solar-system-tab .map-sidebar {

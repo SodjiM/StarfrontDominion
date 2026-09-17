@@ -2,7 +2,7 @@ const db = require('../../db');
 
 class SystemFactsService {
     static async getSectorSummary(sectorId, viewerUserId = null) {
-        const sector = await new Promise((resolve, reject) => db.get('SELECT id, game_id, archetype FROM sectors WHERE id = ?', [sectorId], (e, r) => e ? reject(e) : resolve(r || null)));
+        const sector = await new Promise((resolve, reject) => db.get('SELECT id, game_id, archetype, width, height FROM sectors WHERE id = ?', [sectorId], (e, r) => e ? reject(e) : resolve(r || null)));
         if (!sector) return null;
         let visibilityMap = null;
         if (viewerUserId != null) {
@@ -68,6 +68,7 @@ class SystemFactsService {
         ));
         return {
             id: sector.id,
+            dimensions: { width: Number(sector.width || 5000), height: Number(sector.height || 5000) },
             archetype: sector.archetype || null,
             name: archetypeInfo.name,
             regions: regions.map(r => ({

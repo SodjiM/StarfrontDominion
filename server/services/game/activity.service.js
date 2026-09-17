@@ -67,6 +67,18 @@ async function materializeTurn(db,gameId,turnNumber,{ownership=[],movementResult
     const now = await captureOwnership(db,gameId);
     const owners = new Map([...ownership,...now].map(o=>[Number(o.id),Number(o.owner_id)]));
     const combat = await all(db,'SELECT attacker_id,target_id FROM combat_logs WHERE game_id=? AND turn_number=?',[gameId,turnNumber]);
+    // The current strategic map exposes every system in a joined game, so
+    // regional incidents are relevant public activity for every member. When
+    // persistent system-knowledge is introduced, this recipient set can be
+    // narrowed without changing the incident lifecycle.
+    const incidentActivity = await all(db,
+        `SELECT i.id,i.title,i.region_id,i.status,i.due_turn,i.health_loss,i.applied_health_delta,
+                i.created_turn,i.resolved_turn,s.name AS sector_name,r.health
+         FROM region_incidents i
+         JOIN sectors s ON s.id=i.sector_id
+         JOIN regions r ON r.sector_id=i.sector_id AND r.region_id=i.region_id
+         WHERE i.game_id=? AND (i.created_turn=? OR i.resolved_turn=?)
+         ORDER BY i.id`, [gameId,turnNumber,turnNumber]);
     for (const {userId} of players) {
         if (await one(db,"SELECT 1 FROM activity_events WHERE game_id=? AND user_id=? AND turn_number=? AND event_type='turn_complete'",[gameId,userId,turnNumber])) continue;
         const add = (eventType,severity,summary,objectId=null) => append(db,{gameId,userId,turnNumber,eventType,severity,summary,objectId});
@@ -86,6 +98,17 @@ async function materializeTurn(db,gameId,turnNumber,{ownership=[],movementResult
         const pilots = await all(db,'SELECT recovered,recruited FROM turn_pilot_events WHERE game_id=? AND turn_number=? AND user_id=?',[gameId,turnNumber,userId]);
         const total = pilots.reduce((n,x)=>n+Number(x.recovered||0)+Number(x.recruited||0),0);
         if (total) await add('pilots','info',total+' pilots returned to command');
+        for (const incident of incidentActivity) {
+            const place = `${incident.sector_name}, Region ${incident.region_id}`;
+            if (Number(incident.created_turn) === Number(turnNumber)) {
+                await add('region_incident','warning',`${incident.title} reported in ${place}. Resolve by turn ${incident.due_turn} or regional health falls by ${incident.health_loss}.`);
+            }
+            if (Number(incident.resolved_turn) === Number(turnNumber) && incident.status === 'resolved') {
+                await add('region_incident_resolved','success',`${incident.title} resolved in ${place}. Regional health was protected.`);
+            } else if (Number(incident.resolved_turn) === Number(turnNumber) && incident.status === 'expired') {
+                await add('region_incident_expired','danger',`${incident.title} expired in ${place}. Regional health fell by ${Math.abs(Number(incident.applied_health_delta || 0))} to ${incident.health}.`);
+            }
+        }
         // Always include quiet turns, so returning players can account for every turn.
         await add('turn_complete','info','Turn '+turnNumber+' completed');
     }
