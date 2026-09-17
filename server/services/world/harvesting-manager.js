@@ -54,12 +54,13 @@ const HarvestingManager = {
     },
 
     async processHarvestingForTurn(gameId, turnNumber) {
+        const policyModifiersByUser = new Map();
         await new Promise((resolve) => db.run(`CREATE TABLE IF NOT EXISTS turn_harvest_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, turn_number INTEGER NOT NULL,
             ship_id INTEGER NOT NULL, resource_type_id INTEGER NOT NULL, amount INTEGER NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`, () => resolve()));
         const tasks = await new Promise((resolve) => db.all(
-            `SELECT ht.ship_id, ht.resource_node_id, ht.harvest_rate, rn.resource_amount, rn.resource_type_id,
+            `SELECT ht.ship_id, ht.resource_node_id, ht.harvest_rate, so.owner_id, rn.resource_amount, rn.resource_type_id,
                     rt.resource_name, rt.base_size
              FROM harvesting_tasks ht
              JOIN sector_objects so ON so.id = ht.ship_id
@@ -128,6 +129,12 @@ const HarvestingManager = {
                 const bonuses = await getOperationalBonuses(db, ship, { resourceName: t.resource_name });
                 amount = Math.max(0, Math.min(t.resource_amount || 0, Math.ceil(amount * (1 + Math.min(0.5, bonuses.resourceYield || 0)))));
             } catch {}
+            if (!policyModifiersByUser.has(Number(t.owner_id))) {
+                const { getActivePolicyModifiers } = require('../game/policy.service');
+                policyModifiersByUser.set(Number(t.owner_id), await getActivePolicyModifiers(gameId, Number(t.owner_id), db));
+            }
+            const policyYield = Math.max(0, Math.min(1, Number(policyModifiersByUser.get(Number(t.owner_id))?.harvestYieldMultiplier || 0)));
+            amount = Math.max(0, Math.min(t.resource_amount || 0, amount + Math.floor(amount * policyYield)));
             if (amount <= 0) continue;
             const cargo = await CargoManager.getObjectCargo(t.ship_id);
             const baseSize = Number(t.base_size || 1);

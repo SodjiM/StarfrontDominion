@@ -16,9 +16,10 @@ The political system is not a separate minigame. It reads committed events from 
 - All players receive a Senate-session trigger on the same cadence, currently every 100 turns. A player's unresolved session remains available until they act; missed sessions do not stack, and ignoring a session leaves the cabinet unchanged.
 - Senate sessions provide one objective per active senator and present up to four replacement candidates.
 - Senators serve up to four sessions/terms, approximately 400 turns, before mandatory retirement.
-- Happiness is senator-specific; tag mandate is aggregated political strength; institutional influence controls policy capacity; political capital is spendable external leverage.
+- Happiness is senator-specific; tag mandate is aggregated political strength; institutional influence measures the physical political domain; pilot capacity currently unlocks government capacity; political capital is spendable external leverage.
 - The government has four policy slots in the first balance target, with one slot initially unlocked. Additional slots are provisionally unlocked by pilot access/capacity and may later incorporate institutional influence from the station network.
-- Policies require visible tag and happiness conditions and may produce direct, structural, or external effects.
+- The first playable balance baseline unlocks seats and policy slots two through four at total pilot capacities 15, 25, and 35. Senator capacity is also capped by the number of qualifying stations. These thresholds are provisional tuning values, not durable balance commitments.
+- Policies require aggregate tag-mandate thresholds and may produce direct, structural, or external effects. Senator happiness affects eligibility only indirectly by changing each senator's tag contribution to that aggregate mandate.
 - Station type is a strategic tradeoff: sun stations favor broad institutional reach, planet stations favor regional development, and moon stations favor tactical/frontier specialization.
 - More stations should generally be valuable, while maintenance, exposure, logistics, and regional pressure create the balancing surface.
 
@@ -32,7 +33,7 @@ The first playable slice should establish the complete internal loop without req
 4. Reconcile station destruction into a visible senator death and vacant seat.
 5. Resolve terms and retirement at session boundaries.
 6. Evaluate objectives from authoritative committed events and apply continuous happiness changes.
-7. Recalculate tag mandate with happiness, term, objective, and station-post modifiers.
+7. Recalculate tag mandate with happiness and term strength. Objective and station-post modifiers remain later extensions.
 8. Expose a small policy catalog with visible requirements, activation/deactivation, slot limits, and centralized effect metadata.
 9. Generate political capital from senator happiness at session resolution, carry it forward when unspent, and emit session availability and political consequences after turn commit.
 10. Establish civic naming proposals as the first small external political action, while leaving the broader law catalog deferred.
@@ -53,9 +54,9 @@ This slice may use provisional station influence values and a small tag/card cat
 
 - A session opens for every player on the shared cadence, currently turns 100, 200, 300, and so on.
 - A pending session remains available when a player is offline or continues ordinary play. It is not a modal lock and does not block turn progression.
-- There is at most one pending session per player. If another cadence arrives before the player resolves the earlier one, the system must not stack multiple cabinet edits; the exact supersession/preservation rule is an implementation detail to settle before automation.
-- Ignoring or closing a session without saving leaves senators, policies, and vacancies unchanged. Empty seats are not automatically filled.
-- A player may inspect their domain, test eligibility, and revise pending choices before committing. The intended UX includes a revert-to-session-start action and locks the final changes at a turn boundary or explicit session commit; the exact commit timing remains provisional.
+- There is at most one pending session per player. If another cadence arrives before the player resolves the earlier one, the pending session is preserved and missed sessions are consumed rather than stacked. After resolving a late session, the next session opens at the next future 100-turn boundary.
+- Ignoring a session leaves senators, policies, and vacancies unchanged. Empty seats are not automatically filled.
+- In the first playable backbone, appointments and replacements are committed individually and closing the session finalizes its objective and term resolution. A staged draft, revert-to-session-start action, and turn-boundary batch commit remain possible UX extensions rather than current behavior.
 - At most four senators may be active, and every active senator must have a deployed qualifying station.
 
 ### Objectives and happiness
@@ -69,7 +70,7 @@ This slice may use provisional station influence values and a small tag/card cat
 
 ### Policies and capacity
 
-- Policy cards must declare title, description, tag requirements, happiness requirements, optional post/term requirements, category, effect, cost/tradeoff, duration, and invalidation behavior.
+- Policy cards must declare title, description, aggregate required-mandate thresholds, category, effect, cost/tradeoff, duration, and invalidation behavior. They do not directly require a senator count, individual tag instance, happiness level, term, or station post; those inputs may instead change mandate generation or effect scope.
 - Activation is limited by policy slots. Eligibility and capacity are separate checks.
 - The first implementation target has four total policy slots and one unlocked slot. Additional slots are provisionally tied to available pilot capacity/access, with institutional influence retained as a likely later or combined input.
 - Institutional influence, tag mandate, and political capital remain separate resources even if they share station and happiness inputs.
@@ -79,6 +80,8 @@ This slice may use provisional station influence values and a small tag/card cat
 ## Current implementation-ready work
 
 ### Slice A: Senate backbone
+
+Status: implemented and verified as the first playable backbone. Balance and presentation can continue to iterate without changing the lifecycle contract below.
 
 Ready now:
 
@@ -99,12 +102,16 @@ Definition of done:
 
 ### Slice B: Objective event integration
 
-Ready now as a bounded extension:
+Status: implemented and verified for authoritative construction, movement, and damaging-combat records. The same ingestion boundary also consumes existing harvesting, regional-response, and pilot-generation records. Trade, dedicated scan actions, and explicit raid records remain dormant event types until those systems expose authoritative completion records.
 
-- Introduce a single objective-progress service accepting typed server events such as `production`, `ship_build`, `combat`, `raid`, `trade`, `mining`, `scan`, `regional_response`, and `pilot_generation`.
-- Hook only events that already have authoritative completion records first.
-- Store progress against the session objective and make completion idempotent.
-- Apply happiness during session closure or an explicitly defined event-resolution point, but never twice for the same objective.
+Implemented foundation:
+
+- A single objective-progress service accepts typed server events such as `production`, `ship_build`, `combat`, `raid`, `trade`, `mining`, `scan`, `movement`, `regional_response`, and `pilot_generation`.
+- Only events with authoritative completion records are currently connected.
+- Progress is stored against the session objective and completion is idempotent.
+- Happiness is applied during session closure, never twice for the same objective.
+- Immutable progress evidence is keyed by objective and source record, with a safe human-readable explanation exposed in the Senate view.
+- Objective-declared domain, system, region, or station scope is enforced before progress applies. The initial objective catalog uses station scope for industrial construction and system scope for operations and conflict.
 
 Definition of done:
 
@@ -115,20 +122,24 @@ Definition of done:
 
 ### Slice C: Policy-card foundation
 
-Ready now as a rules/persistence slice:
+Status: implemented and verified as the first playable policy-card foundation. Catalog values and the invalidation rule remain provisional balance/design decisions.
+
+Implemented baseline:
 
 - Maintain a small data-driven catalog covering central administration, industry, technology, frontier/security, trade, and regional cooperation.
-- Enforce tag-mandate and happiness requirements server-side.
+- Enforce aggregate required-mandate thresholds server-side. The authoritative chain is happiness -> senator tag contribution -> aggregate mandate -> policy eligibility.
 - Enforce one initially unlocked slot, four total target slots, and provisional pilot-capacity thresholds.
 - Persist activation/deactivation and expose active, eligible, locked, and at-risk states in the UI.
-- Keep effect metadata declarative until each effect has an authoritative consumer.
+- Route effects through a centralized modifier service. Industrial Charter currently adds 10% harvesting yield, rounded down after other harvesting bonuses; Technocratic Works reduces ship construction by one turn, to a minimum duration of one turn. Other catalog effects remain declarative until they gain authoritative consumers.
+- Treat a selected policy that loses a requirement or becomes unsupported after policy capacity falls as at risk: it remains selected, occupies its slot, and preserves its history, but its effects are suspended until eligibility/capacity recovers or the player deactivates it. When capacity falls below the selected loadout, the oldest selections remain effective and newer overflow selections become at risk. This is the first playable invalidation baseline, not a final decision about session-boundary grace periods.
+- Record only genuine activation/deactivation transitions in append-only history. Repeated activation or deactivation requests are idempotent.
 
 Definition of done:
 
 - A policy cannot activate without its requirements or an available slot.
 - Activating the same policy twice is idempotent.
 - Deactivation frees a slot without deleting historical activation information.
-- A senator loss or happiness change reevaluates policy status and presents the result clearly.
+- A senator loss or happiness change recalculates tag mandate and reevaluates policy status, presenting any resulting at-risk state clearly.
 - At least two policies modify real gameplay behavior, not only a displayed number, before this slice is considered complete.
 
 ### Slice D: Political capital and civic naming
@@ -182,10 +193,9 @@ These are meaningful workstreams from the discussion, but they are not prerequis
 
 ## Unresolved design questions
 
-- What pilot-capacity thresholds unlock seats two through four, and how do sun/planet/moon stations contribute pilots?
+- Should the provisional 15/25/35 pilot-capacity thresholds for seats and policy slots diverge after playtesting?
 - How do station costs, maintenance, pilot capacity, and destruction balance the desire to build more stations?
 - Which local station effects should each post provide without making one post universally better?
-- How should the shared-session state behave when a player remains offline across more than one cadence?
 - How much vote weight can political capital buy without making large empires dominant?
 - Which policies receive a grace period after losing a senator, station, or happiness requirement?
 - Which policy effects may change shared regional rules, and which remain owner-only?

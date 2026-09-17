@@ -235,3 +235,17 @@ CREATE TABLE IF NOT EXISTS turn_pilot_events (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_turn_pilot_events_player ON turn_pilot_events(game_id,user_id,turn_number);
+
+CREATE TABLE IF NOT EXISTS turn_harvest_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    turn_number INTEGER NOT NULL,
+    ship_id INTEGER NOT NULL,
+    resource_type_id INTEGER NOT NULL,
+    amount INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (ship_id) REFERENCES sector_objects(id),
+    FOREIGN KEY (resource_type_id) REFERENCES resource_types(id)
+);
+CREATE INDEX IF NOT EXISTS idx_turn_harvest_events_turn ON turn_harvest_events(game_id,turn_number,id);

@@ -65,6 +65,10 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             const { processCombatOrders, cleanupExpiredEffectsAndWrecks } = require('./combat-impl');
             await processCombatOrders(gameId, turnNumber);
             await cleanupExpiredEffectsAndWrecks(gameId, turnNumber);
+            const politicalPlayers = await new Promise((resolve, reject) => db.all('SELECT user_id FROM game_players WHERE game_id=?', [gameId], (error, rows) => error ? reject(error) : resolve(rows || [])));
+            for (const player of politicalPlayers) {
+                await require('./senate.service').recalculatePoliticalState(gameId, player.user_id, turnNumber, db);
+            }
             await require('./pilot.service').processPilotTurn(gameId, turnNumber, db);
             await regenerateShipEnergy(gameId, turnNumber);
 
@@ -94,6 +98,10 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
             // turn resolves before unresolved incidents expire.
             await incidentService.resolveActiveIncidents(gameId, turnNumber);
             await incidentService.expireDueIncidents(gameId, turnNumber);
+
+            // Translate committed server records into idempotent political
+            // objective progress before this turn's transaction is committed.
+            await new (require('./objective-events.service').ObjectiveEventService)(db).processTurn(gameId, turnNumber);
 
             // Record the final regional state after incident outcomes.
             const { tickRegionHealth } = require('../world/region-health.tick');
@@ -133,10 +141,9 @@ function createTurnResolver({ db, io, eventBus, EVENTS }) {
                 io.to(`game-${gameId}`).emit('queue:updated', { shipId });
             }
             for (const build of completedBuilds || []) io.to(`game-${gameId}`).emit('ship-build:completed', build);
-            if (senateSessions.length) {
-                io.to(`game-${gameId}`).emit('senate-session-available', {
-                    openedTurn: nextTurn,
-                    expiresTurn: nextTurn + 9
+            for (const session of senateSessions) {
+                io.to(`user-${session.user_id}`).emit('senate-session-available', {
+                    openedTurn: Number(session.opened_turn)
                 });
             }
 

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS senate_sessions (
     game_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     opened_turn INTEGER NOT NULL,
-    expires_turn INTEGER NOT NULL,
+    expires_turn INTEGER NOT NULL, -- legacy compatibility; player sessions do not expire
     status TEXT NOT NULL DEFAULT 'open',
     closed_turn INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -75,6 +75,30 @@ CREATE TABLE IF NOT EXISTS senator_objectives (
 CREATE INDEX IF NOT EXISTS idx_senator_objectives_active
     ON senator_objectives(senator_id, status);
 
+-- Immutable evidence that an authoritative game event advanced an objective.
+-- The uniqueness key makes turn retries and repeated ingestion idempotent.
+CREATE TABLE IF NOT EXISTS senator_objective_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    objective_id INTEGER NOT NULL,
+    game_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    turn_number INTEGER NOT NULL,
+    amount REAL NOT NULL DEFAULT 1,
+    summary TEXT NOT NULL,
+    context_json TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (objective_id) REFERENCES senator_objectives(id) ON DELETE CASCADE,
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(objective_id, event_type, source_type, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_senator_objective_events_session
+    ON senator_objective_events(objective_id, turn_number, id);
+
 CREATE TABLE IF NOT EXISTS player_tag_mandate (
     game_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -88,7 +112,7 @@ CREATE TABLE IF NOT EXISTS player_political_state (
     game_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     institutional_influence REAL NOT NULL DEFAULT 0,
-    policy_slots INTEGER NOT NULL DEFAULT 5,
+    policy_slots INTEGER NOT NULL DEFAULT 1,
     political_capital REAL NOT NULL DEFAULT 0,
     updated_turn INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (game_id, user_id)
@@ -102,3 +126,21 @@ CREATE TABLE IF NOT EXISTS player_active_policies (
     activated_turn INTEGER NOT NULL,
     PRIMARY KEY (game_id, user_id, policy_key)
 );
+
+-- Append-only record of genuine policy selection transitions. The current
+-- selection lives in player_active_policies; this table is never updated or
+-- deleted when a policy is deactivated.
+CREATE TABLE IF NOT EXISTS player_policy_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    policy_key TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('activation', 'deactivation')),
+    turn_number INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_policy_history
+    ON player_policy_history(game_id, user_id, policy_key, turn_number, id);

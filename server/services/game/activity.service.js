@@ -109,6 +109,10 @@ async function materializeTurn(db,gameId,turnNumber,{ownership=[],movementResult
                 await add('region_incident_expired','danger',`${incident.title} expired in ${place}. Regional health fell by ${Math.abs(Number(incident.applied_health_delta || 0))} to ${incident.health}.`);
             }
         }
+        const senateSession = senateSessions.find(session => Number(session.user_id) === Number(userId));
+        if (senateSession) {
+            await add('senate_session', 'info', `A Senate session is available for turn ${senateSession.opened_turn}. It will remain pending until concluded.`);
+        }
         // Always include quiet turns, so returning players can account for every turn.
         await add('turn_complete','info','Turn '+turnNumber+' completed');
     }

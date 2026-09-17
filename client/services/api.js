@@ -76,7 +76,6 @@
 
   const Senate = {
     state: (gameId) => getJson(`/game/senate/${gameId}/state`),
-    assign: (gameId, senatorId, stationId) => postJson(`/game/senate/${gameId}/assign`, { senatorId, stationId }),
     select: (gameId, candidateId, stationId, replaceSenatorId) => postJson(`/game/senate/${gameId}/select`, { candidateId, stationId, ...(replaceSenatorId ? { replaceSenatorId } : {}) }),
     close: (gameId) => postJson(`/game/senate/${gameId}/close`, {}),
     setPolicy: (gameId, policyKey, active) => postJson(`/game/senate/${gameId}/policy`, { policyKey, active })

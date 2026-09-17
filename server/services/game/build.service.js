@@ -10,6 +10,14 @@ const { infrastructureDefinitionForKey } = require('../../domain/infrastructure'
 const { RegionInfrastructureService } = require('../world/region-infrastructure.service');
 const { InfrastructureLifecycleService } = require('./infrastructure-lifecycle.service');
 
+async function policyAdjustedBuildTurns(gameId, userId, blueprint) {
+    const baseTurns = Math.max(1, Number(blueprint.buildTimeTurns || 1));
+    const { getActivePolicyModifiers } = require('./policy.service');
+    const modifiers = await getActivePolicyModifiers(gameId, userId, db);
+    const reduction = Math.max(0, Math.floor(Number(modifiers.shipBuildTimeReduction || 0)));
+    return Math.max(1, baseTurns - reduction);
+}
+
 const STRUCTURE_BUILD_COSTS = Object.freeze({
     'storage-box': 1, 'warp-beacon': 2, 'interstellar-gate': 5,
     'sun-station': 8, 'planet-station': 6, 'moon-station': 4
@@ -33,7 +41,6 @@ class BuildService {
     async _recordBuild(gameId, userId, objectId, kind, name, turnNumber = null) {
         const turn = await new Promise((resolve) => db.get('SELECT turn_number FROM turns WHERE game_id=? ORDER BY turn_number DESC LIMIT 1', [gameId], (e, r) => resolve(r?.turn_number || 1)));
         await new Promise((resolve, reject) => db.run('INSERT INTO turn_build_events(game_id,turn_number,user_id,object_id,kind,name) VALUES(?,?,?,?,?,?)', [gameId,turnNumber || turn,userId,objectId,kind,name], (e) => e ? reject(e) : resolve()));
-        try { await require('./senate.service').recordObjectiveProgress(gameId, userId, kind === 'ship' ? 'ship_build' : 'production', 1, turnNumber || turn, db); } catch (error) { console.warn('Political objective progress update skipped:', error.message); }
     }
 
     async canBuildShip({ gameId, userId, stationId, blueprintId, freeBuild = false }) {
@@ -60,11 +67,12 @@ class BuildService {
         }
         if (shortages.length) reasons.push({ code: 'insufficient_resources', shortages });
         const currentTurn = await getCurrentTurnNumberServer(gameId);
+        const buildTurns = await policyAdjustedBuildTurns(gameId, userId, bp);
         try {
             const stats = await require('./pilot.service').getPilotStats(gameId, userId, currentTurn, db);
             if (stats.available < Math.max(1, Number(bp.pilotCost || 1))) reasons.push({ code: 'insufficient_pilots', available: stats.available, needed: Math.max(1, Number(bp.pilotCost || 1)) });
         } catch (error) { reasons.push({ code: 'pilot_accounting_unavailable' }); }
-        return { ok: reasons.length === 0, blueprint: bp, stationClass, currentTurn, completionTurn: currentTurn + Math.max(1, Number(bp.buildTimeTurns || 1)) - 1, shortages, reasons };
+        return { ok: reasons.length === 0, blueprint: bp, stationClass, currentTurn, completionTurn: currentTurn + buildTurns - 1, buildTurns, shortages, reasons };
     }
 
     async _gameIdForStation(station) {
@@ -370,9 +378,10 @@ class BuildService {
         }
 
         const shipName = `${blueprint.name} ${Math.floor(Math.random() * 1000)}`;
-        const completionTurn = currentTurn + Math.max(1, Number(blueprint.buildTimeTurns || 1)) - 1;
+        const buildTurns = await policyAdjustedBuildTurns(gameId, userId, blueprint);
+        const completionTurn = currentTurn + buildTurns - 1;
         const buildId = await new Promise((resolve, reject) => db.run(`INSERT INTO ship_builds(game_id,station_id,user_id,blueprint_id,ship_name,pilot_cost,start_turn,completion_turn,status,resource_costs,client_order_id) VALUES(?,?,?,?,?,?,?,?,'queued',?,?)`, [gameId,station.id,userId,blueprint.id,shipName,pilotCost,currentTurn,completionTurn,JSON.stringify(allowFree ? {} : resourceMap),clientOrderId], function(e) { e ? reject(e) : resolve(this.lastID); }));
-        return { success: true, queued: true, buildId, shipName, completionTurn, consumed: allowFree ? {} : resourceMap };
+        return { success: true, queued: true, buildId, shipName, completionTurn, buildTurns, consumed: allowFree ? {} : resourceMap };
     }
 
     async completeDueShipBuilds(gameId, turnNumber) {

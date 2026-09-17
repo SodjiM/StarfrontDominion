@@ -1,4 +1,7 @@
 const dbDefault = require('../../db');
+const { withSavepoint } = require('./savepoint');
+const policyService = require('./policy.service');
+const { POLICY_DEFINITIONS } = policyService;
 
 const query = (db, method, sql, params = []) => new Promise((resolve, reject) => {
     if (method === 'run') {
@@ -18,15 +21,13 @@ const SENATOR_DEFINITIONS = [
 ];
 
 const STATION_INFLUENCE = { 'sun-station': 20, 'planet-station': 10, 'moon-station': 5 };
+const MAX_SENATORS = 4;
+const MAX_POLICY_SLOTS = 4;
+const PILOT_CAPACITY_THRESHOLDS = [15, 25, 35];
+// Kept only because existing databases define expires_turn as NOT NULL. Senate
+// sessions are persistent and are closed by the player, not by this value.
+const PERSISTENT_SESSION_EXPIRY = 2147483647;
 const TAGS = [...new Set(SENATOR_DEFINITIONS.flatMap(d => d.tags))];
-const POLICY_DEFINITIONS = [
-    { key: 'centralized_command', title: 'Centralized Command', description: 'A stronger administrative chain improves coordination across the domain.', requiredMandate: { Centralist: 7.5 }, effect: { key: 'administration', value: 0.05 } },
-    { key: 'industrial_charter', title: 'Industrial Charter', description: 'Grant productive stations a formal mandate to expand ship and infrastructure output.', requiredMandate: { Industrialist: 10 }, effect: { key: 'production', value: 0.05 } },
-    { key: 'technocratic_works', title: 'Technocratic Works', description: 'Prioritize technical expertise in construction, logistics, and fleet operations.', requiredMandate: { Technocrat: 10 }, effect: { key: 'build_efficiency', value: 0.05 } },
-    { key: 'frontier_network', title: 'Frontier Network', description: 'Recognize moon stations and forward operators as a unified frontier service.', requiredMandate: { Security: 10 }, effect: { key: 'frontier_operations', value: 0.05 } },
-    { key: 'open_exchange', title: 'Open Exchange', description: 'Protect trade routes and encourage commercial movement between regional stations.', requiredMandate: { 'Trade Magnate': 10 }, effect: { key: 'trade', value: 0.05 } },
-    { key: 'regional_compacts', title: 'Regional Compacts', description: 'Formalize cooperation between stations that share a regional interest.', requiredMandate: { Humanist: 10, Ecologist: 10 }, effect: { key: 'regional_health', value: 0.05 } }
-];
 
 function parseJson(value, fallback) {
     try { return typeof value === 'string' ? JSON.parse(value || '') : (value ?? fallback); } catch { return fallback; }
@@ -66,6 +67,19 @@ async function getStations(gameId, userId, db) {
         }));
 }
 
+function unlockedCapacity(pilotCapacity, maximum) {
+    return Math.min(maximum, 1 + PILOT_CAPACITY_THRESHOLDS.filter(threshold => Number(pilotCapacity) >= threshold).length);
+}
+
+async function getGovernmentCapacity(gameId, userId, currentTurn, stations, db) {
+    const pilotStats = await require('./pilot.service').getPilotStats(gameId, userId, currentTurn, db);
+    return {
+        pilotCapacity: Number(pilotStats.capacity || 0),
+        seatCapacity: stations.length ? Math.min(stations.length, unlockedCapacity(pilotStats.capacity, MAX_SENATORS)) : 0,
+        policySlots: unlockedCapacity(pilotStats.capacity, MAX_POLICY_SLOTS)
+    };
+}
+
 function definitionFor(key) { return SENATOR_DEFINITIONS.find(def => def.key === key) || SENATOR_DEFINITIONS[0]; }
 
 function publicSenator(row, stationMap = new Map()) {
@@ -87,9 +101,9 @@ function publicSenator(row, stationMap = new Map()) {
 }
 
 async function ensurePoliticalState(gameId, userId, currentTurn, db = dbDefault) {
-    await query(db, 'run', `INSERT OR IGNORE INTO player_political_state(game_id,user_id,institutional_influence,policy_slots,political_capital,updated_turn) VALUES(?,?,0,5,0,?)`, [gameId, userId, currentTurn]);
-    const active = await query(db, 'get', `SELECT COUNT(*) AS count FROM senate_senators WHERE game_id=? AND user_id=? AND status='active'`, [gameId, userId]);
-    if (Number(active?.count || 0) === 0) {
+    await query(db, 'run', `INSERT OR IGNORE INTO player_political_state(game_id,user_id,institutional_influence,policy_slots,political_capital,updated_turn) VALUES(?,?,0,1,0,?)`, [gameId, userId, currentTurn]);
+    const existingSenators = await query(db, 'get', `SELECT COUNT(*) AS count FROM senate_senators WHERE game_id=? AND user_id=?`, [gameId, userId]);
+    if (Number(existingSenators?.count || 0) === 0) {
         const stations = await getStations(gameId, userId, db);
         if (stations.length) {
             const station = stations[0];
@@ -117,7 +131,7 @@ async function recalculatePoliticalState(gameId, userId, currentTurn, db = dbDef
     await reconcileDestroyedSenators(gameId, userId, currentTurn, db);
     const stations = await getStations(gameId, userId, db);
     const institutionalInfluence = stations.reduce((sum, station) => sum + station.influence, 0);
-    const policySlots = 5 + (institutionalInfluence >= 50 ? 1 : 0) + (institutionalInfluence >= 100 ? 1 : 0) + (institutionalInfluence >= 160 ? 1 : 0);
+    const { policySlots } = await getGovernmentCapacity(gameId, userId, currentTurn, stations, db);
     await query(db, 'run', `UPDATE player_political_state SET institutional_influence=?, policy_slots=?, updated_turn=? WHERE game_id=? AND user_id=?`, [institutionalInfluence, policySlots, currentTurn, gameId, userId]);
 
     const senators = await query(db, 'all', `SELECT * FROM senate_senators WHERE game_id=? AND user_id=? AND status='active'`, [gameId, userId]);
@@ -125,9 +139,7 @@ async function recalculatePoliticalState(gameId, userId, currentTurn, db = dbDef
     for (const senator of senators) {
         const happinessMultiplier = 0.5 + Math.max(0, Math.min(100, Number(senator.happiness || 0))) / 200;
         const termMultiplier = 1 + Math.max(0, Number(senator.term_number || 1) - 1) * 0.25;
-        const station = stations.find(candidate => candidate.id === Number(senator.station_id));
-        const postMultiplier = station?.stationClass === 'sun-station' ? 1.25 : station?.stationClass === 'moon-station' ? 0.9 : 1;
-        const contribution = 10 * happinessMultiplier * termMultiplier * postMultiplier;
+        const contribution = 10 * happinessMultiplier * termMultiplier;
         for (const tag of parseJson(senator.tags_json, [])) totals.set(tag, (totals.get(tag) || 0) + contribution);
     }
     for (const tag of TAGS) {
@@ -141,43 +153,21 @@ function objectiveFor(senator, station, currentTurn) {
     const isMoon = station?.stationClass === 'moon-station';
     const isPlanet = station?.stationClass === 'planet-station';
     let objective;
-    if (tags.includes('Raider-Aligned') && isMoon) objective = { key: 'frontier_presence', title: 'Secure the frontier', description: `Maintain a moon-station post and expand activity around ${station.name}.`, target: { stationClass: 'moon-station' } };
-    else if (tags.includes('Industrialist') && isPlanet) objective = { key: 'industrial_presence', title: 'Strengthen local industry', description: `Maintain a productive planet-station post at ${station.name}.`, target: { stationClass: 'planet-station' } };
-    else if (tags.includes('Technocrat')) objective = { key: 'connected_administration', title: 'Improve administration', description: 'Remain assigned to a functioning station while the domain develops.', target: { stationRequired: true } };
+    if (tags.includes('Raider-Aligned') && isMoon) objective = { key: 'frontier_presence', title: 'Secure the frontier', description: `Win a combat engagement in ${station.sectorName || 'this system'} while maintaining the post at ${station.name}.`, target: { stationClass: 'moon-station', eventTypes: ['combat', 'raid'], scope: 'system', sectorId: station.sectorId } };
+    else if (tags.includes('Industrialist') && isPlanet) objective = { key: 'industrial_presence', title: 'Strengthen local industry', description: `Complete construction at ${station.name}.`, target: { stationClass: 'planet-station', eventTypes: ['production', 'ship_build'], scope: 'station', stationId: station.id } };
+    else if (tags.includes('Technocrat')) objective = { key: 'connected_administration', title: 'Improve administration', description: `Advance a fleet operation or resolve a regional incident in ${station?.sectorName || 'this system'}.`, target: { stationRequired: true, eventTypes: ['movement', 'scan', 'regional_response'], scope: 'system', sectorId: station?.sectorId } };
     else objective = { key: 'maintain_office', title: 'Maintain the office', description: `Keep the senator's assigned ${station?.stationClass || 'station'} operational through the session.`, target: { stationRequired: true } };
     const startsComplete = objective.key === 'maintain_office';
     return { ...objective, progress: { current: startsComplete && station ? 1 : 0, target: 1 }, turn: currentTurn };
 }
 
-async function recordObjectiveProgress(gameId, userId, eventKey, amount = 1, currentTurn = null, db = dbDefault) {
-    const turn = currentTurn == null ? await getCurrentTurn(gameId, db) : currentTurn;
-    const objectives = await query(db, 'all', `
-        SELECT so.id, so.objective_key, so.progress_json
-        FROM senator_objectives so
-        JOIN senate_sessions session ON session.id=so.session_id AND session.status='open'
-        JOIN senate_senators senator ON senator.id=so.senator_id AND senator.status='active' AND senator.game_id=? AND senator.user_id=?
-        WHERE so.status='active' AND so.objective_key IN ('industrial_presence','connected_administration','frontier_presence')`, [gameId, userId]);
-    const eventMap = {
-        production: new Set(['industrial_presence', 'connected_administration']),
-        ship_build: new Set(['industrial_presence', 'connected_administration']),
-        combat: new Set(['frontier_presence']),
-        raid: new Set(['frontier_presence'])
-    };
-    const eligible = eventMap[eventKey] || new Set();
-    for (const objective of objectives) {
-        if (!eligible.has(objective.objective_key)) continue;
-        const progress = parseJson(objective.progress_json, { current: 0, target: 1 });
-        progress.current = Math.min(Number(progress.target || 1), Number(progress.current || 0) + Math.max(0, Number(amount) || 0));
-        const status = progress.current >= Number(progress.target || 1) ? 'completed' : 'active';
-        await query(db, 'run', `UPDATE senator_objectives SET progress_json=?,status=?,completed_turn=CASE WHEN ?='completed' THEN COALESCE(completed_turn,?) ELSE completed_turn END WHERE id=?`, [serialize(progress), status, status, turn, objective.id]);
-    }
-}
-
 async function openSession(gameId, userId, openedTurn, db = dbDefault) {
+    const pending = await query(db, 'get', `SELECT * FROM senate_sessions WHERE game_id=? AND user_id=? AND status='open' ORDER BY id DESC LIMIT 1`, [gameId, userId]);
+    if (pending) return { ...pending, newlyOpened: false };
     const existing = await query(db, 'get', `SELECT * FROM senate_sessions WHERE game_id=? AND user_id=? AND opened_turn=?`, [gameId, userId, openedTurn]);
-    if (existing) return existing;
+    if (existing) return { ...existing, newlyOpened: false };
     await ensurePoliticalState(gameId, userId, openedTurn, db);
-    const sessionResult = await query(db, 'run', `INSERT INTO senate_sessions(game_id,user_id,opened_turn,expires_turn,status) VALUES(?,?,?,?, 'open')`, [gameId, userId, openedTurn, openedTurn + 9]);
+    const sessionResult = await query(db, 'run', `INSERT INTO senate_sessions(game_id,user_id,opened_turn,expires_turn,status) VALUES(?,?,?,?, 'open')`, [gameId, userId, openedTurn, PERSISTENT_SESSION_EXPIRY]);
     const sessionId = sessionResult.lastID;
     const active = await query(db, 'all', `SELECT * FROM senate_senators WHERE game_id=? AND user_id=? AND status='active'`, [gameId, userId]);
     const stations = await getStations(gameId, userId, db);
@@ -188,98 +178,106 @@ async function openSession(gameId, userId, openedTurn, db = dbDefault) {
         await query(db, 'run', `INSERT INTO senator_objectives(senator_id,session_id,objective_key,title,description,target_json,progress_json,status,happiness_reward) VALUES(?,?,?,?,?,?,?,?,?)`, [senator.id, sessionId, objective.key, objective.title, objective.description, serialize(objective.target), serialize(objective.progress), 'active', 10]);
     }
     const shuffled = [...SENATOR_DEFINITIONS].sort((a, b) => `${gameId}:${userId}:${openedTurn}:${a.key}`.localeCompare(`${gameId}:${userId}:${openedTurn}:${b.key}`));
-    for (const def of shuffled.slice(0, 5)) {
+    for (const def of shuffled.slice(0, 4)) {
         const preferred = def.preferredStations[0];
         await query(db, 'run', `INSERT INTO senate_candidates(session_id,definition_key,name,tags_json,station_class,rarity) VALUES(?,?,?,?,?,?)`, [sessionId, def.key, def.name, serialize(def.tags), preferred, 'common']);
     }
-    return query(db, 'get', `SELECT * FROM senate_sessions WHERE id=?`, [sessionId]);
+    const created = await query(db, 'get', `SELECT * FROM senate_sessions WHERE id=?`, [sessionId]);
+    return { ...created, newlyOpened: true };
 }
 
 async function ensureOpenSession(gameId, userId, currentTurn, db = dbDefault) {
     const existing = await query(db, 'get', `SELECT * FROM senate_sessions WHERE game_id=? AND user_id=? AND status='open' ORDER BY id DESC LIMIT 1`, [gameId, userId]);
-    if (existing && Number(currentTurn) <= Number(existing.expires_turn)) return existing;
-    if (existing) await query(db, 'run', `UPDATE senate_sessions SET status='expired',closed_turn=? WHERE id=?`, [currentTurn, existing.id]);
+    if (existing) return existing;
     const cadenceTurn = Math.floor(Number(currentTurn) / 100) * 100;
-    if (cadenceTurn < 100 || Number(currentTurn) > cadenceTurn + 9) return null;
+    if (cadenceTurn < 100) return null;
 
-    // A session that was deliberately closed during this cadence must not be
-    // silently recreated by a later state read in the same Senate window.
-    const cadenceSession = await query(db, 'get', `SELECT * FROM senate_sessions WHERE game_id=? AND user_id=? AND opened_turn=? ORDER BY id DESC LIMIT 1`, [gameId, userId, cadenceTurn]);
-    if (cadenceSession) return cadenceSession.status === 'open' ? cadenceSession : null;
+    // A session resolved after one or more missed cadence boundaries consumes
+    // those missed sessions. They never stack or appear immediately afterward.
+    const latest = await query(db, 'get', `SELECT * FROM senate_sessions WHERE game_id=? AND user_id=? ORDER BY opened_turn DESC LIMIT 1`, [gameId, userId]);
+    if (latest && (Number(latest.opened_turn) >= cadenceTurn || Number(latest.closed_turn || 0) >= cadenceTurn)) return null;
     return openSession(gameId, userId, cadenceTurn, db);
 }
 
 async function getState(gameId, userId, db = dbDefault) {
+    await assertMember(gameId, userId, db);
     const currentTurn = await getCurrentTurn(gameId, db);
     await ensurePoliticalState(gameId, userId, currentTurn, db);
     const session = await ensureOpenSession(gameId, userId, currentTurn, db);
     const stations = await getStations(gameId, userId, db);
+    const governmentCapacity = await getGovernmentCapacity(gameId, userId, currentTurn, stations, db);
     const stationMap = new Map(stations.map(station => [station.id, station]));
     const senators = await query(db, 'all', `SELECT * FROM senate_senators WHERE game_id=? AND user_id=? ORDER BY id`, [gameId, userId]);
     const state = await query(db, 'get', `SELECT * FROM player_political_state WHERE game_id=? AND user_id=?`, [gameId, userId]);
     const mandateRows = await query(db, 'all', `SELECT tag,value FROM player_tag_mandate WHERE game_id=? AND user_id=? ORDER BY tag`, [gameId, userId]);
-    const activePolicies = await query(db, 'all', `SELECT policy_key,activated_turn FROM player_active_policies WHERE game_id=? AND user_id=? AND active=1 ORDER BY policy_key`, [gameId, userId]);
+    const evaluatedPolicies = await policyService.getPolicyEvaluation(gameId, userId, db, Object.fromEntries(mandateRows.map(row => [row.tag, Number(row.value || 0)])));
     const objectives = session ? await query(db, 'all', `SELECT * FROM senator_objectives WHERE session_id=? ORDER BY id`, [session.id]) : [];
+    const objectiveEvents = session ? await query(db, 'all', `
+        SELECT event.* FROM senator_objective_events event
+        JOIN senator_objectives objective ON objective.id=event.objective_id
+        WHERE objective.session_id=? ORDER BY event.turn_number,event.id`, [session.id]) : [];
+    const eventsByObjective = new Map();
+    for (const event of objectiveEvents) {
+        const list = eventsByObjective.get(Number(event.objective_id)) || [];
+        list.push({ eventType: event.event_type, turnNumber: Number(event.turn_number), amount: Number(event.amount), summary: event.summary });
+        eventsByObjective.set(Number(event.objective_id), list);
+    }
     const candidates = session ? await query(db, 'all', `SELECT * FROM senate_candidates WHERE session_id=? ORDER BY id`, [session.id]) : [];
     return {
         currentTurn,
-        session: session ? { id: Number(session.id), openedTurn: Number(session.opened_turn), expiresTurn: Number(session.expires_turn), status: session.status } : null,
+        session: session ? { id: Number(session.id), openedTurn: Number(session.opened_turn), status: session.status } : null,
         stations: stations.map(({ row, ...station }) => station),
         senators: senators.map(row => publicSenator(row, stationMap)),
         candidates: candidates.map(row => ({ id: Number(row.id), name: row.name, definitionKey: row.definition_key, tags: parseJson(row.tags_json, []), stationClass: row.station_class, rarity: row.rarity, selected: Boolean(row.selected) })),
-        objectives: objectives.map(row => ({ id: Number(row.id), senatorId: Number(row.senator_id), key: row.objective_key, title: row.title, description: row.description, target: parseJson(row.target_json, {}), progress: parseJson(row.progress_json, {}), status: row.status, happinessReward: Number(row.happiness_reward || 0) })),
+        objectives: objectives.map(row => ({ id: Number(row.id), senatorId: Number(row.senator_id), key: row.objective_key, title: row.title, description: row.description, target: parseJson(row.target_json, {}), progress: parseJson(row.progress_json, {}), status: row.status, happinessReward: Number(row.happiness_reward || 0), events: eventsByObjective.get(Number(row.id)) || [] })),
         institutionalInfluence: Number(state?.institutional_influence || 0),
-        policySlots: Number(state?.policy_slots || 5),
+        pilotCapacity: governmentCapacity.pilotCapacity,
+        seatCapacity: governmentCapacity.seatCapacity,
+        maxSenators: MAX_SENATORS,
+        policySlots: Number(state?.policy_slots || 1),
         politicalCapital: Number(state?.political_capital || 0),
         mandate: Object.fromEntries(mandateRows.map(row => [row.tag, Number(row.value || 0)])),
         policies: {
-            available: POLICY_DEFINITIONS,
-            active: activePolicies.map(row => ({ key: row.policy_key, activatedTurn: Number(row.activated_turn) }))
+            available: evaluatedPolicies,
+            active: evaluatedPolicies.filter(policy => policy.selected)
         }
     };
 }
 
-function policyEligible(policy, mandate) {
-    return Object.entries(policy.requiredMandate || {}).every(([tag, minimum]) => Number(mandate[tag] || 0) >= Number(minimum));
-}
-
-async function setPolicy(gameId, userId, policyKey, active, currentTurn, db = dbDefault) {
+async function setPolicyUnchecked(gameId, userId, policyKey, active, currentTurn, db) {
     await assertMember(gameId, userId, db);
     const policy = POLICY_DEFINITIONS.find(candidate => candidate.key === policyKey);
     if (!policy) return { success: false, error: 'unknown_policy', httpStatus: 404 };
     await ensurePoliticalState(gameId, userId, currentTurn, db);
-    const mandates = await query(db, 'all', `SELECT tag,value FROM player_tag_mandate WHERE game_id=? AND user_id=?`, [gameId, userId]);
-    const mandate = Object.fromEntries(mandates.map(row => [row.tag, Number(row.value || 0)]));
-    if (active && !policyEligible(policy, mandate)) return { success: false, error: 'policy_mandate_requirement_not_met', httpStatus: 409 };
+    const evaluated = await policyService.getPolicyEvaluation(gameId, userId, db);
+    const current = evaluated.find(candidate => candidate.key === policyKey);
     if (active) {
         const state = await query(db, 'get', `SELECT policy_slots FROM player_political_state WHERE game_id=? AND user_id=?`, [gameId, userId]);
+        if (current.selected) return { success: true, state: await getState(gameId, userId, db) };
+        if (!current.eligible) {
+            return { success: false, error: 'policy_mandate_requirement_not_met', unmetRequirements: current.unmetRequirements, httpStatus: 409 };
+        }
         const count = await query(db, 'get', `SELECT COUNT(*) AS count FROM player_active_policies WHERE game_id=? AND user_id=? AND active=1`, [gameId, userId]);
-        const alreadyActive = await query(db, 'get', `SELECT 1 AS active FROM player_active_policies WHERE game_id=? AND user_id=? AND policy_key=? AND active=1`, [gameId, userId, policyKey]);
-        if (!alreadyActive && Number(count?.count || 0) >= Number(state?.policy_slots || 5)) return { success: false, error: 'policy_slots_full', httpStatus: 409 };
-        await query(db, 'run', `INSERT INTO player_active_policies(game_id,user_id,policy_key,active,activated_turn) VALUES(?,?,?,1,?) ON CONFLICT(game_id,user_id,policy_key) DO UPDATE SET active=1,activated_turn=excluded.activated_turn`, [gameId, userId, policyKey, currentTurn]);
+        if (Number(count?.count || 0) >= Number(state?.policy_slots || 1)) return { success: false, error: 'policy_slots_full', httpStatus: 409 };
+        const transition = await query(db, 'run', `INSERT INTO player_active_policies(game_id,user_id,policy_key,active,activated_turn) VALUES(?,?,?,1,?) ON CONFLICT(game_id,user_id,policy_key) DO UPDATE SET active=1,activated_turn=excluded.activated_turn WHERE player_active_policies.active=0`, [gameId, userId, policyKey, currentTurn]);
+        if (!Number(transition.changes || 0)) return { success: true, state: await getState(gameId, userId, db) };
+        await query(db, 'run', `INSERT INTO player_policy_history(game_id,user_id,policy_key,event_type,turn_number) VALUES(?,?,?,?,?)`, [gameId, userId, policyKey, 'activation', currentTurn]);
     } else {
-        await query(db, 'run', `UPDATE player_active_policies SET active=0 WHERE game_id=? AND user_id=? AND policy_key=?`, [gameId, userId, policyKey]);
+        if (!current.selected) return { success: true, state: await getState(gameId, userId, db) };
+        const transition = await query(db, 'run', `UPDATE player_active_policies SET active=0 WHERE game_id=? AND user_id=? AND policy_key=? AND active=1`, [gameId, userId, policyKey]);
+        if (!Number(transition.changes || 0)) return { success: true, state: await getState(gameId, userId, db) };
+        await query(db, 'run', `INSERT INTO player_policy_history(game_id,user_id,policy_key,event_type,turn_number) VALUES(?,?,?,?,?)`, [gameId, userId, policyKey, 'deactivation', currentTurn]);
     }
     return { success: true, state: await getState(gameId, userId, db) };
+}
+
+async function setPolicy(gameId, userId, policyKey, active, currentTurn, db = dbDefault) {
+    return withSavepoint(db, () => setPolicyUnchecked(gameId, userId, policyKey, active, currentTurn, db));
 }
 
 async function assertMember(gameId, userId, db) {
     const row = await query(db, 'get', 'SELECT 1 AS ok FROM game_players WHERE game_id=? AND user_id=?', [gameId, userId]);
     if (!row) { const error = new Error('not_game_member'); error.statusCode = 403; throw error; }
-}
-
-async function assignSenator(gameId, userId, senatorId, stationId, currentTurn, db = dbDefault) {
-    await assertMember(gameId, userId, db);
-    const session = await ensureOpenSession(gameId, userId, currentTurn, db);
-    if (!session) return { success: false, error: 'no_open_senate_session', httpStatus: 409 };
-    const senator = await query(db, 'get', `SELECT * FROM senate_senators WHERE id=? AND game_id=? AND user_id=? AND status='active'`, [senatorId, gameId, userId]);
-    const station = await query(db, 'get', `SELECT so.* FROM sector_objects so JOIN sectors s ON s.id=so.sector_id WHERE so.id=? AND so.owner_id=? AND s.game_id=? AND so.type='station'`, [stationId, userId, gameId]);
-    if (!senator || !station || !['sun-station', 'planet-station', 'moon-station'].includes(stationClass(station))) return { success: false, error: 'invalid_senator_or_station', httpStatus: 400 };
-    const occupied = await query(db, 'get', `SELECT id FROM senate_senators WHERE game_id=? AND station_id=? AND status='active' AND id<>?`, [gameId, stationId, senatorId]);
-    if (occupied) return { success: false, error: 'station_already_hosts_senator', httpStatus: 409 };
-    await query(db, 'run', `UPDATE senate_senators SET station_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, [stationId, senatorId]);
-    await recalculatePoliticalState(gameId, userId, currentTurn, db);
-    return { success: true, state: await getState(gameId, userId, db) };
 }
 
 async function selectCandidate(gameId, userId, candidateId, replaceSenatorId, stationId, currentTurn, db = dbDefault) {
@@ -288,8 +286,10 @@ async function selectCandidate(gameId, userId, candidateId, replaceSenatorId, st
     if (!session) return { success: false, error: 'no_open_senate_session', httpStatus: 409 };
     const candidate = await query(db, 'get', `SELECT * FROM senate_candidates WHERE id=? AND session_id=? AND selected=0`, [candidateId, session.id]);
     if (!candidate) return { success: false, error: 'candidate_not_available', httpStatus: 404 };
+    const stations = await getStations(gameId, userId, db);
+    const { seatCapacity } = await getGovernmentCapacity(gameId, userId, currentTurn, stations, db);
     const activeCount = await query(db, 'get', `SELECT COUNT(*) AS count FROM senate_senators WHERE game_id=? AND user_id=? AND status='active'`, [gameId, userId]);
-    if (!replaceSenatorId && Number(activeCount?.count || 0) >= 5) return { success: false, error: 'senate_capacity_reached', httpStatus: 409 };
+    if (!replaceSenatorId && Number(activeCount?.count || 0) >= seatCapacity) return { success: false, error: 'senate_capacity_reached', httpStatus: 409 };
     const station = await query(db, 'get', `SELECT so.* FROM sector_objects so JOIN sectors s ON s.id=so.sector_id WHERE so.id=? AND so.owner_id=? AND s.game_id=? AND so.type='station'`, [stationId, userId, gameId]);
     if (!station || !['sun-station', 'planet-station', 'moon-station'].includes(stationClass(station))) return { success: false, error: 'invalid_hosting_station', httpStatus: 400 };
     const occupied = await query(db, 'get', `SELECT id FROM senate_senators WHERE game_id=? AND station_id=? AND status='active'`, [gameId, stationId]);
@@ -305,16 +305,16 @@ async function selectCandidate(gameId, userId, candidateId, replaceSenatorId, st
     return { success: true, state: await getState(gameId, userId, db) };
 }
 
-async function closeSession(gameId, userId, currentTurn, db = dbDefault) {
+async function closeSessionUnchecked(gameId, userId, currentTurn, db) {
     await assertMember(gameId, userId, db);
     const session = await ensureOpenSession(gameId, userId, currentTurn, db);
     if (!session) return { success: false, error: 'no_open_senate_session', httpStatus: 409 };
-    const objectives = await query(db, 'all', `SELECT * FROM senator_objectives WHERE session_id=? AND status='active'`, [session.id]);
+    const objectives = await query(db, 'all', `SELECT * FROM senator_objectives WHERE session_id=? AND status IN ('active','completed')`, [session.id]);
     for (const objective of objectives) {
         const senator = await query(db, 'get', `SELECT * FROM senate_senators WHERE id=? AND status='active'`, [objective.senator_id]);
         const progress = parseJson(objective.progress_json, {});
-        const completed = Boolean(senator?.station_id && Number(progress.current || 0) >= Number(progress.target || 1));
-        await query(db, 'run', `UPDATE senator_objectives SET status=?,completed_turn=? WHERE id=?`, [completed ? 'completed' : 'expired', completed ? currentTurn : null, objective.id]);
+        const completed = Boolean(senator?.station_id && (objective.status === 'completed' || Number(progress.current || 0) >= Number(progress.target || 1)));
+        await query(db, 'run', `UPDATE senator_objectives SET status=?,completed_turn=CASE WHEN ?='completed' THEN COALESCE(completed_turn,?) ELSE NULL END WHERE id=?`, [completed ? 'completed' : 'expired', completed ? 'completed' : 'expired', currentTurn, objective.id]);
         if (senator) await query(db, 'run', `UPDATE senate_senators SET happiness=MIN(100,MAX(0,happiness+?)),updated_at=CURRENT_TIMESTAMP WHERE id=?`, [completed ? Number(objective.happiness_reward || 10) : -2, senator.id]);
     }
     const active = await query(db, 'all', `SELECT * FROM senate_senators WHERE game_id=? AND user_id=? AND status='active'`, [gameId, userId]);
@@ -332,12 +332,19 @@ async function closeSession(gameId, userId, currentTurn, db = dbDefault) {
     return { success: true, state: await getState(gameId, userId, db) };
 }
 
+async function closeSession(gameId, userId, currentTurn, db = dbDefault) {
+    return withSavepoint(db, () => closeSessionUnchecked(gameId, userId, currentTurn, db));
+}
+
 async function openSessionsAtTurn(gameId, turnNumber, db = dbDefault) {
     if (Number(turnNumber) % 100 !== 0) return [];
     const players = await query(db, 'all', 'SELECT user_id FROM game_players WHERE game_id=?', [gameId]);
     const opened = [];
-    for (const player of players) opened.push(await openSession(gameId, player.user_id, turnNumber, db));
+    for (const player of players) {
+        const session = await openSession(gameId, player.user_id, turnNumber, db);
+        if (session.newlyOpened) opened.push(session);
+    }
     return opened;
 }
 
-module.exports = { SENATOR_DEFINITIONS, POLICY_DEFINITIONS, getState, assignSenator, selectCandidate, closeSession, setPolicy, recordObjectiveProgress, openSessionsAtTurn, ensurePoliticalState, recalculatePoliticalState, reconcileDestroyedSenators };
+module.exports = { SENATOR_DEFINITIONS, POLICY_DEFINITIONS, getState, selectCandidate, closeSession, setPolicy, openSessionsAtTurn, ensurePoliticalState, recalculatePoliticalState, reconcileDestroyedSenators, getActivePolicyModifiers: policyService.getActivePolicyModifiers };

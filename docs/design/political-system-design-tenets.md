@@ -243,7 +243,7 @@ At the end of a Senate session, each senator contributes political capital from 
 | 80 | 4 |
 | 100 | 5 |
 
-The player's award is the sum across active senators. Unspent capital rolls over. This is an implementation-ready accumulation rule with provisional numbers; it makes senator happiness useful beyond policy eligibility and gives players a reason to maintain a stable cabinet.
+The player's award is the sum across active senators. Unspent capital rolls over. This is an implementation-ready accumulation rule with provisional numbers; it makes senator happiness useful beyond mandate generation and gives players a reason to maintain a stable cabinet.
 
 ## Civic naming rights
 
@@ -567,9 +567,7 @@ A policy card should define:
 
 - Title.
 - Description.
-- Tag requirements.
-- Minimum senator happiness requirements.
-- Optional term or station requirements.
+- Aggregate tag-mandate thresholds. Happiness, senator count, individual tags, terms, and station posts may change how much mandate the Senate produces, but they are not separate policy-card activation requirements.
 - Policy category.
 - Direct effects.
 - Structural or external effects.
@@ -580,23 +578,13 @@ Example requirement:
 
 ```text
 Requires:
-- Two Centralist senators.
-- Both Centralist senators at 70 or higher happiness.
-- One Technocrat senator at 60 or higher happiness.
+- Centralist mandate of at least the card's declared threshold.
+- Technocrat mandate of at least the card's declared threshold, if applicable.
 ```
 
-The player does not necessarily spend mandate to unlock a card. The Senate composition and happiness make it eligible. The player then chooses whether to activate it using an available policy slot.
+The player does not necessarily spend mandate to unlock a card. Each senator's tags, happiness, and term strength produce an aggregate mandate, and the card becomes eligible when its declared thresholds are met. The player then chooses whether to activate it using an available policy slot.
 
-Policy requirements may also care about station posts when the policy is intentionally spatial. For example:
-
-```text
-Requires:
-- Two happy Centralist senators.
-- One Centralist senator assigned to a sun station.
-- One happy Technocrat senator assigned to a planet station.
-```
-
-This allows policy cards to express not only who is in government, but where the government is operating. Such requirements must remain visible and understandable in the UI.
+Station posts, terms, objectives, and future synergies may alter mandate contribution or policy effects, but they should not introduce hidden secondary activation gates. A spatial policy still unlocks from its declared aggregate mandate thresholds; its station context determines where or how its effect applies.
 
 ### Policy categories
 
@@ -695,7 +683,7 @@ Exact thresholds and any hard cap are balance variables. The first implementatio
 Institutional influence, tag mandate, and political capital are separate:
 
 - Institutional influence determines how many policies the government can operate.
-- Tag mandate and senator happiness determine which policy cards are eligible.
+- Aggregate tag mandate determines which policy cards are eligible. Senator happiness matters indirectly by changing each senator's mandate contribution.
 - Political capital is spent on external agendas, diplomacy, and civic naming rights.
 
 This gives the player three distinct political questions:
@@ -724,7 +712,7 @@ This prevents every player from selecting the same universally optimal cards.
 
 ### Centralized Administration
 
-Requires two happy Centralists and one happy Technocrat.
+Requires a high Centralist mandate and a supporting Technocrat mandate.
 
 Possible effects:
 
@@ -735,7 +723,7 @@ Possible effects:
 
 ### Frontier Autonomy
 
-Requires two happy Decentralists and one happy Expansionist.
+Requires a high Decentralist mandate and a supporting Expansionist mandate.
 
 Possible effects:
 
@@ -746,7 +734,7 @@ Possible effects:
 
 ### Industrial Mobilization
 
-Requires two happy Industrialists and one happy Centralist.
+Requires a high Industrialist mandate and a supporting Centralist mandate.
 
 Possible effects:
 
@@ -757,7 +745,7 @@ Possible effects:
 
 ### Shadow Corridor Network
 
-Requires two happy Raider-Aligned senators and one happy Technocrat.
+Requires a high Raider-Aligned mandate and a supporting Technocrat mandate.
 
 Possible effects:
 
@@ -768,7 +756,7 @@ Possible effects:
 
 ### Civilian Recovery Authority
 
-Requires two happy Humanists and one happy Ecologist.
+Requires a high Humanist mandate and a supporting Ecologist mandate.
 
 Possible effects:
 
@@ -1237,10 +1225,10 @@ The current direction is:
 - Happiness is senator-specific.
 - Tag mandate is aggregated across relevant senators.
 - Political capital is a separate spendable external resource.
-- Policy cards require tag and happiness conditions.
+- Policy cards require aggregate tag-mandate thresholds; happiness influences eligibility only through mandate contribution.
 - The government begins with one unlocked policy slot and a current target of four total slots.
 - Additional policy slots initially depend on pilot access/capacity; institutional influence may become a combined later input.
-- Some policy cards may require senators to be happy and assigned to particular station types.
+- Senator posts, terms, and happiness may modify mandate generation or the scope of a policy's effect, but are not separate activation gates.
 - Policies include direct bonuses and structural world effects.
 - Same-tag senators reinforce a political movement.
 - Cross-tag combinations create hybrid policy paths.
@@ -1292,7 +1280,7 @@ The first end-to-end political test should be small:
 3. Each senator offers a different location-aware objective.
 4. The player completes one objective and ignores the other.
 5. One senator becomes happier and contributes more to a tag.
-6. A policy card becomes eligible because of tag, happiness, and possibly post requirements.
+6. The happiness change alters aggregate tag mandate, causing a policy card to become eligible when its declared mandate threshold is met.
 7. The player activates it in a limited policy slot.
 8. The policy changes an existing behavior such as pilot generation, lane operation, mining, or scouting.
 9. The station hosting one senator is damaged or destroyed and the political consequence is shown.

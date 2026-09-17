@@ -195,24 +195,13 @@ protectedApi.get('/game/senate/:gameId/state', async (req, res) => {
     }
 });
 
-protectedApi.post('/game/senate/:gameId/assign', async (req, res) => {
-    try {
-        const senate = require('./services/game/senate.service');
-        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
-        const result = await senate.assignSenator(Number(req.params.gameId), Number(req.userId), Number(req.body?.senatorId), Number(req.body?.stationId), current.currentTurn, db);
-        res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
-    } catch (e) {
-        const status = Number(e.statusCode || 500);
-        console.error('senate assign error:', e);
-        res.status(status).json({ error: status === 500 ? 'server_error' : e.message });
-    }
-});
-
 protectedApi.post('/game/senate/:gameId/select', async (req, res) => {
     try {
-        const senate = require('./services/game/senate.service');
-        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
-        const result = await senate.selectCandidate(Number(req.params.gameId), Number(req.userId), Number(req.body?.candidateId), req.body?.replaceSenatorId ? Number(req.body.replaceSenatorId) : null, Number(req.body?.stationId), current.currentTurn, db);
+        const result = await require('./services/game/mutation-lock').run(async () => {
+            const senate = require('./services/game/senate.service');
+            const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+            return senate.selectCandidate(Number(req.params.gameId), Number(req.userId), Number(req.body?.candidateId), req.body?.replaceSenatorId ? Number(req.body.replaceSenatorId) : null, Number(req.body?.stationId), current.currentTurn, db);
+        });
         res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
     } catch (e) {
         const status = Number(e.statusCode || 500);
@@ -223,9 +212,11 @@ protectedApi.post('/game/senate/:gameId/select', async (req, res) => {
 
 protectedApi.post('/game/senate/:gameId/close', async (req, res) => {
     try {
-        const senate = require('./services/game/senate.service');
-        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
-        const result = await senate.closeSession(Number(req.params.gameId), Number(req.userId), current.currentTurn, db);
+        const result = await require('./services/game/mutation-lock').run(async () => {
+            const senate = require('./services/game/senate.service');
+            const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+            return senate.closeSession(Number(req.params.gameId), Number(req.userId), current.currentTurn, db);
+        });
         res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
     } catch (e) {
         const status = Number(e.statusCode || 500);
@@ -236,9 +227,11 @@ protectedApi.post('/game/senate/:gameId/close', async (req, res) => {
 
 protectedApi.post('/game/senate/:gameId/policy', async (req, res) => {
     try {
-        const senate = require('./services/game/senate.service');
-        const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
-        const result = await senate.setPolicy(Number(req.params.gameId), Number(req.userId), String(req.body?.policyKey || ''), Boolean(req.body?.active), current.currentTurn, db);
+        const result = await require('./services/game/mutation-lock').run(async () => {
+            const senate = require('./services/game/senate.service');
+            const current = await senate.getState(Number(req.params.gameId), Number(req.userId), db);
+            return senate.setPolicy(Number(req.params.gameId), Number(req.userId), String(req.body?.policyKey || ''), Boolean(req.body?.active), current.currentTurn, db);
+        });
         res.status(result.httpStatus || (result.success ? 200 : 400)).json(result);
     } catch (e) {
         const status = Number(e.statusCode || 500);

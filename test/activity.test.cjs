@@ -58,6 +58,17 @@ test('materialization preserves a destroyed owned ship and is idempotent', async
     assert.equal(after, before);
 });
 
+test('Senate availability is materialized only for the player whose session opened', async () => {
+    await activity.materializeTurn(db, game, 79, {
+        ownership: await activity.captureOwnership(db, game),
+        senateSessions: [{ user_id: alice, opened_turn: 100 }]
+    });
+    const aliceEvent = await get("SELECT summary FROM activity_events WHERE game_id=? AND user_id=? AND turn_number=79 AND event_type='senate_session'", [game, alice]);
+    const bobEvent = await get("SELECT summary FROM activity_events WHERE game_id=? AND user_id=? AND turn_number=79 AND event_type='senate_session'", [game, bob]);
+    assert.match(aliceEvent.summary, /turn 100/);
+    assert.equal(bobEvent, undefined);
+});
+
 test('legacy combat report sanitizer redacts unseen opponent details', () => {
     const row = { id: 9, game_id: game, turn_number: 4, attacker_id: 501, target_id: 502,
         event_type: 'attack', summary: 'A combat event',
