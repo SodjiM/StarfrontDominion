@@ -240,6 +240,28 @@ protectedApi.post('/game/senate/:gameId/policy', async (req, res) => {
     }
 });
 
+protectedApi.post('/game/senate/:gameId/naming-proposals', async (req, res) => {
+    try {
+        const result = await require('./services/game/mutation-lock').run(async () => {
+            const senate = require('./services/game/senate.service');
+            const gameId = Number(req.params.gameId);
+            const current = await senate.getState(gameId, Number(req.userId), db);
+            return senate.proposeCivicName(gameId, Number(req.userId), {
+                targetType: req.body?.targetType,
+                targetId: req.body?.targetId,
+                proposedName: req.body?.proposedName,
+                clientRequestId: req.body?.clientRequestId
+            }, current.currentTurn, db);
+        });
+        const status = result.success ? 200 : result.code === 'insufficient_political_capital' ? 409 : 400;
+        res.status(status).json(result);
+    } catch (e) {
+        const status = Number(e.statusCode || 500);
+        console.error('civic naming proposal error:', e);
+        res.status(status).json({ error: status === 500 ? 'server_error' : e.message });
+    }
+});
+
 // Serve React landing at root
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../web/dist/index.html'));

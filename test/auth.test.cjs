@@ -91,8 +91,8 @@ test('construction catalog and purchases agree over authenticated HTTP',async()=
  const insufficient=await request('/game/build-structure',{stationId,structureType:'sun-station'},bob.cookie);
  assert.equal(insufficient.status,400);
  await CargoManager.addResourceToCargo(stationId,'rock',1);
- await n.run("CREATE TEMP TRIGGER reject_explorer BEFORE INSERT ON sector_objects WHEN NEW.type='ship' BEGIN SELECT RAISE(ABORT,'injected explorer failure'); END");
- try {assert.equal((await request('/game/build-basic-explorer',{stationId},bob.cookie)).status,500);}
- finally {await n.run('DROP TRIGGER reject_explorer');}
+ // The Explorer remains a normal blueprint, but its legacy one-off build route
+ // was retired in favor of the authenticated, queued /build-ship workflow.
+ assert.equal((await request('/game/build-basic-explorer',{stationId},bob.cookie)).status,404);
  assert.equal((await CargoManager.getObjectCargo(stationId)).items.find(i=>i.resource_name==='rock').quantity,1);
 });

@@ -260,12 +260,11 @@ A player may spend political capital to name or rename:
 
 The first naming rule is intentionally permissive: a player who has previously seen an object through authorized visibility may propose a name. Discovery is therefore the minimum eligibility to put a naming item on the docket, not proof of ownership. A deployed station or local infrastructure may later determine stakeholder weight, but there is no settled binary ownership requirement for naming.
 
-Naming proposals should consume a small amount of political capital to enter the docket; five capital is a provisional starting point. The proposal then becomes a vote or bid at the object's appropriate scope. The proposer does not automatically win, and other players may spend capital to support or oppose the name.
+Naming proposals should consume a small amount of political capital to enter the docket. The current provisional fee is two political capital for any supported target. The proposal then becomes a vote or bid at the object's appropriate scope. The proposer does not automatically win, and other players may spend capital to support or oppose the name.
 
 ```text
-Moon, asteroid belt, or minor object: low proposal cost
-Planet or sun: moderate proposal cost
-Solar system: higher proposal cost
+Moon, asteroid belt, planet, sun, or solar system: 2 political capital
+Differentiated fees by target significance: possible later balance tool
 Major lane or political region: deferred
 ```
 
@@ -274,6 +273,10 @@ Names should persist as historical identity even if the proposer loses their sta
 Renaming should create a visible historical record rather than erase the past. The UI may show the current official name, previous names, naming player or authority, and the turn and reason for each change.
 
 Naming rights are primarily expressive and historical, not a direct combat advantage. They are still politically meaningful because they communicate legitimacy, ownership, legacy, and cultural influence.
+
+The Senate interface should make this political rhythm legible between meetings. It is a major command surface and may use nearly the full viewport, comparable to the strategic map, rather than compressing cabinet, policy, agenda, and session decisions into a small modal. Four senator seats remain visible with identity, happiness, tags, and local post; active policy slots read as the government's current loadout; and the upcoming agenda previews proposals before voting opens. Candidate appointment controls belong to an open Senate session, while the policy catalog may remain available through a secondary disclosure.
+
+The agenda and proposal creation are separate interactions. The agenda shows docketed items and, when implemented, their voting state. A distinct **Add a proposal** action opens a proposal-family chooser. Civic naming is the first available family; choosing it opens a focused editor with target, proposed name, exact capital cost, and submission confirmation. Future regional measures and galactic laws may occupy the same chooser only after their rules exist. Submission places an item on the agenda and must never look like an immediate name change or completed vote.
 
 The first version needs a visible cost and confirmation step, historical names remaining discoverable, and a server-authoritative vote record. Cooldowns, name-safety filtering, and higher costs to overwrite established names are future safeguards; moderation is not a current prototype prerequisite.
 
@@ -1266,7 +1269,7 @@ These questions should remain explicit until playtesting resolves them:
 19. Which alliance permissions belong in the first diplomatic implementation?
 20. What actions escalate a dispute into limited hostilities or declared war?
 21. Which war effects should be automatic, and which require a political resolution?
-22. What is the exact proposal fee and bidding/voting rule for naming actions?
+22. What bidding/voting rule should resolve naming actions after the provisional two-capital submission fee is paid?
 23. How should stakeholder voting work when visibility is sufficient to propose but infrastructure is not ownership?
 24. How many local naming proposals may be active at once, and how are current and historical names displayed?
 25. How should station destruction/replacement interact with names when station capture is not a supported mechanic?

@@ -151,7 +151,10 @@ Implementation-ready foundation:
 - The happiness-to-capital mapping is a provisional balance table, but the accumulation, rollover, and server authority are current direction.
 - A player who has seen an object through authorized visibility may submit a low-cost naming proposal for a sun, planet, moon, asteroid belt, or solar system.
 - Naming proposals are political agenda items rather than direct ownership. Names persist until a later successful naming vote changes them, and naming has no mechanical combat or production effect in the current direction.
-- Naming proposals should be cheap enough to act as an approachable first political action; an initial proposal fee around five political capital is a provisional starting point.
+- Naming proposals should be cheap enough to act as an approachable first political action. The current provisional proposal fee is exactly two political capital for every supported target type; differentiated fees may be reconsidered only after playtesting.
+- The Senate command view should use a near-full-screen command surface, lead with four visual senator seats, and continue through the active policy-slot loadout and an expandable policy catalog. Candidate appointment controls appear only while a Senate session is open. The agenda remains visible between sessions so players can anticipate pending items.
+- Agenda inspection and proposal authoring are distinct. **Add a proposal** opens a proposal-family chooser; civic naming is the first enabled family and opens a focused target/name/cost submission editor. Regional measures and galactic laws may be shown as unavailable future families, but must not expose nonfunctional submission controls.
+- Until stakeholder and vote-weight rules are settled, the agenda may display pending naming proposals and explain the future voting window, but it must not expose nonfunctional voting controls or imply that submission enacts a name.
 
 Definition of done:
 
@@ -163,6 +166,11 @@ Definition of done:
 - The command/Senate UI shows upcoming proposals relevant to the player, while public proposal inspection remains available without interruptive notifications for unrelated local agendas.
 
 The first agenda board may reserve one optional galaxy-wide slot, one optional system-wide slot per solar system, and one optional regional slot per region. This is ready as a persistence/UI foundation; final vote weighting and law effects remain later work.
+
+Current implementation status:
+
+- Implemented: per-senator session awards, rollover, append-only capital ledger, two-capital naming submissions, request idempotency, durable-discovery authorization, pending proposal snapshots, player-scoped activity, and the near-full-screen Senate command surface with separate agenda and proposal-authoring flows.
+- Deferred: stakeholder voting, agenda-slot limits, proposal resolution, authoritative name enactment, and the current/previous-name history shown after a successful vote.
 
 ## Dependencies and interactions
 

@@ -138,6 +138,50 @@ test('a senator retires after four completed terms without being silently replac
     assert.equal(finalState.senators.filter(candidate => candidate.status === 'active').length, 0);
 });
 
+test('session close awards post-objective political capital once per senator and records the result', async () => {
+    const world = await createWorld();
+    await advanceTo(world.gameId, 100);
+    const opened = await senate.getState(world.gameId, world.userId, db);
+    assert.equal(opened.senators[0].happiness, 50);
+    await run("UPDATE senator_objectives SET status='completed' WHERE session_id=?", [opened.session.id]);
+
+    const closed = await senate.closeSession(world.gameId, world.userId, 100, db);
+    assert.equal(closed.success, true);
+    assert.equal(closed.state.politicalCapital, 3);
+    assert.equal(closed.state.politicalCapitalLedger.length, 1);
+    assert.equal(closed.state.politicalCapitalLedger[0].amount, 3);
+
+    const replay = await require('../server/services/game/political-capital.service')
+        .awardCapitalForSession(world.gameId, world.userId, opened.session.id, 100, db);
+    assert.equal(replay.award, 0);
+    assert.equal((await senate.getState(world.gameId, world.userId, db)).politicalCapital, 3);
+    const activity = await get("SELECT COUNT(*) AS count FROM activity_events WHERE game_id=? AND user_id=? AND event_type='senate_session_closed'", [world.gameId, world.userId]);
+    assert.equal(activity.count, 1);
+});
+
+test('a previously seen civic target accepts one two-capital pending naming proposal', async () => {
+    const world = await createWorld();
+    await senate.getState(world.gameId, world.userId, db);
+    const planetId = (await run("INSERT INTO sector_objects(sector_id,type,celestial_type,x,y,meta) VALUES(?,'planet','planet',40,40,?)", [world.sectorId, JSON.stringify({ name: 'Old World' })])).lastID;
+    await run('INSERT INTO object_visibility(game_id,user_id,sector_id,object_id,best_visibility_level) VALUES(?,?,?,?,1)', [world.gameId, world.userId, world.sectorId, planetId]);
+    await run('UPDATE player_political_state SET political_capital=2 WHERE game_id=? AND user_id=?', [world.gameId, world.userId]);
+
+    const first = await senate.proposeCivicName(world.gameId, world.userId, {
+        targetType: 'planet', targetId: planetId, proposedName: 'Haven', clientRequestId: 'political-integration-name-1'
+    }, 1, db);
+    assert.equal(first.success, true);
+    assert.equal(first.state.politicalCapital, 0);
+    assert.equal(first.state.naming.pendingProposals[0].proposedName, 'Haven');
+    assert.equal(first.state.naming.proposalCost, 2);
+
+    const retry = await senate.proposeCivicName(world.gameId, world.userId, {
+        targetType: 'planet', targetId: planetId, proposedName: 'Changed on retry', clientRequestId: 'political-integration-name-1'
+    }, 1, db);
+    assert.equal(retry.idempotent, true);
+    assert.equal(retry.proposal.proposedName, 'Haven');
+    assert.equal((await get("SELECT COUNT(*) AS count FROM activity_events WHERE game_id=? AND user_id=? AND event_type='civic_naming_proposal'", [world.gameId, world.userId])).count, 1);
+});
+
 test('tag mandate still gates the existing policy scaffold and persists changes', async () => {
     const world = await createWorld();
     const state = await senate.getState(world.gameId, world.userId, db);

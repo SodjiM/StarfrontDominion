@@ -1,10 +1,8 @@
 const crypto = require('node:crypto');
 const defaultDb = require('../../db');
-const navigation = require('../../utils/navigation');
 const { withSavepoint } = require('../game/savepoint');
 const { isLiveShip } = require('../game/combat-rules');
-const { physicalObjects } = require('./physical-placement');
-const { parseCells, regionAt } = require('./region-geometry');
+const { findDeterministicIncidentTarget } = require('./incident-target-placement');
 const { resolveKey } = require('./unified-archetype-registry');
 
 const GENERATION_VERSION = 1;
@@ -37,6 +35,7 @@ const INCIDENT_DEFINITIONS = Object.freeze(Object.fromEntries([
 
 const RESOLUTION_RULE_HANDLERS = Object.freeze({
     [SHIP_ARRIVAL_RULE]: Object.freeze({
+        findTarget: findShipArrivalTarget,
         findCandidate: findShipArrivalCandidate,
         publicState: publicShipArrivalResolution
     })
@@ -252,34 +251,22 @@ class RegionIncidentService {
     }
 
     async findIncidentTarget(snapshot, definition, turnNumber) {
-        const cells = parseCells(snapshot.cells_json)
-            .filter(cell => Number.isInteger(Number(cell.row)) && Number.isInteger(Number(cell.col)))
-            .sort((a, b) => Number(a.row) - Number(b.row) || Number(a.col) - Number(b.col));
-        if (!cells.length) return null;
-        const width = Math.max(1, Number(snapshot.width) || 5000);
-        const height = Math.max(1, Number(snapshot.height) || 5000);
-        const cellWidth = width / 3;
-        const cellHeight = height / 3;
-        const digest = crypto.createHash('sha256').update([GENERATION_VERSION, snapshot.sector_id, snapshot.region_id, turnNumber, definition.key, 'target'].join(':')).digest();
-        const start = digest.readUInt16BE(0) % cells.length;
-        const xFraction = 0.2 + (digest.readUInt16BE(2) / 0xffff) * 0.6;
-        const yFraction = 0.2 + (digest.readUInt16BE(4) / 0xffff) * 0.6;
-        const objects = await physicalObjects(this.db, snapshot.sector_id);
-        const mover = { id: null, type: 'ship', meta: { role: PROTOTYPE_UTILITY_ROLE, blueprintId: 'swift-courier' } };
-        for (let offset = 0; offset < cells.length; offset += 1) {
-            const cell = cells[(start + offset) % cells.length];
-            const origin = {
-                x: Math.round((Number(cell.col) + xFraction) * cellWidth),
-                y: Math.round((Number(cell.row) + yFraction) * cellHeight)
-            };
-            const target = navigation.findPlacement(objects, mover, origin, {
-                maxRadius: Math.max(24, Math.floor(Math.min(cellWidth, cellHeight) * 0.2)),
-                accept: point => regionAt(point.x, point.y, [{ region_id: snapshot.region_id, cells_json: snapshot.cells_json }], { width, height }) === String(snapshot.region_id)
-            });
-            if (target) return target;
-        }
-        return null;
+        const handler = RESOLUTION_RULE_HANDLERS[definition.resolutionRule];
+        return handler?.findTarget ? handler.findTarget(this, snapshot, definition, turnNumber) : null;
     }
+}
+
+async function findShipArrivalTarget(service, snapshot, definition, turnNumber) {
+    return findDeterministicIncidentTarget({
+        db: service.db,
+        sectorId: snapshot.sector_id,
+        regionId: snapshot.region_id,
+        cellsJson: snapshot.cells_json,
+        width: snapshot.width,
+        height: snapshot.height,
+        seed: [GENERATION_VERSION, snapshot.sector_id, snapshot.region_id, turnNumber, definition.key, 'target'].join(':'),
+        mover: { id: null, type: 'ship', meta: { role: PROTOTYPE_UTILITY_ROLE, blueprintId: 'swift-courier' } }
+    });
 }
 
 async function findShipArrivalCandidate(service, incident, requirements) {

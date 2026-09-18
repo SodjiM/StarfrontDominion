@@ -78,7 +78,8 @@
     state: (gameId) => getJson(`/game/senate/${gameId}/state`),
     select: (gameId, candidateId, stationId, replaceSenatorId) => postJson(`/game/senate/${gameId}/select`, { candidateId, stationId, ...(replaceSenatorId ? { replaceSenatorId } : {}) }),
     close: (gameId) => postJson(`/game/senate/${gameId}/close`, {}),
-    setPolicy: (gameId, policyKey, active) => postJson(`/game/senate/${gameId}/policy`, { policyKey, active })
+    setPolicy: (gameId, policyKey, active) => postJson(`/game/senate/${gameId}/policy`, { policyKey, active }),
+    proposeName: (gameId, targetType, targetId, proposedName, clientRequestId) => postJson(`/game/senate/${gameId}/naming-proposals`, { targetType, targetId, proposedName, clientRequestId })
   };
 
   window.SFApi = { getJson, postJson, Cargo, Resources, Abilities, Players, Build, State, Senate };

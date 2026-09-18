@@ -73,4 +73,4 @@ function geometry(points) {
 }
 function pointAt(g,s) {s=Math.max(0,Math.min(g.total,s));let i=0;while(i<g.points.length-2&&g.acc[i+1]<s)i++;const a=g.points[i],b=g.points[i+1],t=(s-g.acc[i])/Math.max(1e-9,g.acc[i+1]-g.acc[i]);return {x:Math.round(a.x+(b.x-a.x)*t),y:Math.round(a.y+(b.y-a.y)*t)};}
 function advance(start,end,budget) {const used=Math.min(Math.abs(end-start),Math.max(0,budget));return {position:start+Math.sign(end-start)*used,used,arrived:used>=Math.abs(end-start)};}
-module.exports={findPlacement,scale,validPoint,occupancy,canStep,findPath,geometry,pointAt,advance};
+module.exports={WORLD_SIZE:SIZE,findPlacement,scale,validPoint,occupancy,canStep,findPath,geometry,pointAt,advance};

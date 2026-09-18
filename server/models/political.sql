@@ -118,6 +118,61 @@ CREATE TABLE IF NOT EXISTS player_political_state (
     PRIMARY KEY (game_id, user_id)
 );
 
+-- Append-only political capital journal. player_political_state remains the
+-- authoritative cached balance; writers update it with each journal entry so
+-- unspent capital rolls over between sessions.
+CREATE TABLE IF NOT EXISTS political_capital_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    entry_type TEXT NOT NULL CHECK (entry_type IN ('award', 'spend', 'adjustment')),
+    source_key TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    session_id INTEGER,
+    turn_number INTEGER,
+    happiness INTEGER,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(game_id, user_id, source_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_political_capital_ledger_balance
+    ON political_capital_ledger(game_id, user_id, id);
+
+-- Naming is intentionally proposal-only in this slice. The target and name
+-- snapshots are immutable, while decision/enactment fields leave room for a
+-- later civic-history transition without rewriting proposal records.
+CREATE TABLE IF NOT EXISTS civic_naming_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    client_request_key TEXT NOT NULL,
+    target_type TEXT NOT NULL CHECK (target_type IN ('sun', 'planet', 'moon', 'asteroid_belt', 'solar_system')),
+    target_id INTEGER NOT NULL,
+    target_snapshot_json TEXT NOT NULL,
+    proposed_name TEXT NOT NULL,
+    previous_name TEXT,
+    current_name TEXT,
+    capital_cost REAL NOT NULL DEFAULT 2,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'enacted')),
+    submitted_turn INTEGER NOT NULL DEFAULT 0,
+    decided_turn INTEGER,
+    enacted_turn INTEGER,
+    history_entry_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(game_id, user_id, client_request_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_civic_naming_proposals_target
+    ON civic_naming_proposals(game_id, target_type, target_id, status);
+
 CREATE TABLE IF NOT EXISTS player_active_policies (
     game_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,

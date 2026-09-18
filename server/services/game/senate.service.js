@@ -1,6 +1,9 @@
 const dbDefault = require('../../db');
 const { withSavepoint } = require('./savepoint');
 const policyService = require('./policy.service');
+const politicalCapitalService = require('./political-capital.service');
+const civicNamingService = require('./civic-naming.service');
+const activityService = require('./activity.service');
 const { POLICY_DEFINITIONS } = policyService;
 
 const query = (db, method, sql, params = []) => new Promise((resolve, reject) => {
@@ -211,6 +214,7 @@ async function getState(gameId, userId, db = dbDefault) {
     const state = await query(db, 'get', `SELECT * FROM player_political_state WHERE game_id=? AND user_id=?`, [gameId, userId]);
     const mandateRows = await query(db, 'all', `SELECT tag,value FROM player_tag_mandate WHERE game_id=? AND user_id=? ORDER BY tag`, [gameId, userId]);
     const evaluatedPolicies = await policyService.getPolicyEvaluation(gameId, userId, db, Object.fromEntries(mandateRows.map(row => [row.tag, Number(row.value || 0)])));
+    const civic = await civicNamingService.getCivicNamingReadModel(gameId, userId, db);
     const objectives = session ? await query(db, 'all', `SELECT * FROM senator_objectives WHERE session_id=? ORDER BY id`, [session.id]) : [];
     const objectiveEvents = session ? await query(db, 'all', `
         SELECT event.* FROM senator_objective_events event
@@ -236,6 +240,12 @@ async function getState(gameId, userId, db = dbDefault) {
         maxSenators: MAX_SENATORS,
         policySlots: Number(state?.policy_slots || 1),
         politicalCapital: Number(state?.political_capital || 0),
+        politicalCapitalLedger: civic.recentLedgerEntries,
+        naming: {
+            proposalCost: civicNamingService.CAPITAL_COST,
+            eligibleTargets: civic.eligibleNamingTargets,
+            pendingProposals: civic.pendingProposals
+        },
         mandate: Object.fromEntries(mandateRows.map(row => [row.tag, Number(row.value || 0)])),
         policies: {
             available: evaluatedPolicies,
@@ -318,6 +328,7 @@ async function closeSessionUnchecked(gameId, userId, currentTurn, db) {
         if (senator) await query(db, 'run', `UPDATE senate_senators SET happiness=MIN(100,MAX(0,happiness+?)),updated_at=CURRENT_TIMESTAMP WHERE id=?`, [completed ? Number(objective.happiness_reward || 10) : -2, senator.id]);
     }
     const active = await query(db, 'all', `SELECT * FROM senate_senators WHERE game_id=? AND user_id=? AND status='active'`, [gameId, userId]);
+    const capitalAward = await politicalCapitalService.awardCapitalForSession(gameId, userId, session.id, currentTurn, db);
     for (const senator of active) {
         if (Number(senator.appointed_turn) < Number(session.opened_turn)) {
             if (Number(senator.term_number) >= 4) {
@@ -328,12 +339,44 @@ async function closeSessionUnchecked(gameId, userId, currentTurn, db) {
         }
     }
     await query(db, 'run', `UPDATE senate_sessions SET status='closed',closed_turn=? WHERE id=?`, [currentTurn, session.id]);
+    await activityService.append(db, {
+        gameId,
+        userId,
+        turnNumber: currentTurn,
+        eventType: 'senate_session_closed',
+        severity: 'info',
+        summary: `Senate session concluded; gained ${capitalAward.award} political capital.`,
+        data: { sessionId: Number(session.id), capitalAward: capitalAward.award }
+    });
     await recalculatePoliticalState(gameId, userId, currentTurn, db);
     return { success: true, state: await getState(gameId, userId, db) };
 }
 
 async function closeSession(gameId, userId, currentTurn, db = dbDefault) {
     return withSavepoint(db, () => closeSessionUnchecked(gameId, userId, currentTurn, db));
+}
+
+async function proposeCivicNameUnchecked(gameId, userId, input, currentTurn, db) {
+    await assertMember(gameId, userId, db);
+    await ensurePoliticalState(gameId, userId, currentTurn, db);
+    const result = await civicNamingService.proposeCivicName(gameId, userId, { ...input, submittedTurn: currentTurn }, db);
+    if (!result.success) return result;
+    if (!result.idempotent) {
+        await activityService.append(db, {
+            gameId,
+            userId,
+            turnNumber: currentTurn,
+            eventType: 'civic_naming_proposal',
+            severity: 'info',
+            summary: `Naming proposal submitted: ${result.proposal.proposedName}.`,
+            data: { proposalId: result.proposal.id, targetType: result.proposal.targetType, targetId: result.proposal.targetId, cost: civicNamingService.CAPITAL_COST }
+        });
+    }
+    return { ...result, state: await getState(gameId, userId, db) };
+}
+
+async function proposeCivicName(gameId, userId, input, currentTurn, db = dbDefault) {
+    return withSavepoint(db, () => proposeCivicNameUnchecked(gameId, userId, input, currentTurn, db));
 }
 
 async function openSessionsAtTurn(gameId, turnNumber, db = dbDefault) {
@@ -347,4 +390,4 @@ async function openSessionsAtTurn(gameId, turnNumber, db = dbDefault) {
     return opened;
 }
 
-module.exports = { SENATOR_DEFINITIONS, POLICY_DEFINITIONS, getState, selectCandidate, closeSession, setPolicy, openSessionsAtTurn, ensurePoliticalState, recalculatePoliticalState, reconcileDestroyedSenators, getActivePolicyModifiers: policyService.getActivePolicyModifiers };
+module.exports = { SENATOR_DEFINITIONS, POLICY_DEFINITIONS, getState, selectCandidate, closeSession, setPolicy, proposeCivicName, openSessionsAtTurn, ensurePoliticalState, recalculatePoliticalState, reconcileDestroyedSenators, getActivePolicyModifiers: policyService.getActivePolicyModifiers };

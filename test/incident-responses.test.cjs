@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 process.env.DATABASE_PATH = ':memory:';
 const db = require('../server/db');
 const { NavigationService } = require('../server/services/game/navigation.service');
+const { createTurnResolver } = require('../server/services/game/turn-resolution.service');
 const { RegionIncidentService, matchesEligibleShip } = require('../server/services/world/region-incident.service');
 
 const run = (sql, params = []) => new Promise((resolve, reject) => {
@@ -156,6 +157,37 @@ test('a qualifying arrival on the due turn resolves before expiration and preser
     assert.equal((await service.resolveActiveIncidents(scenario.gameId, 12)).resolved.length, 1);
     assert.deepEqual(await service.expireDueIncidents(scenario.gameId, 12), []);
     assert.deepEqual(await get('SELECT health FROM regions WHERE sector_id=? AND region_id=?', [scenario.sectorId, 'A']), { health: scenario.health });
+});
+
+test('the turn resolver moves an un-enrolled member courier to the stored target before incident expiration', async () => {
+    const scenario = await createScenario({ dueTurn: 12 });
+    const navigation = new NavigationService(db);
+    const events = [];
+    await run("INSERT INTO turns(game_id,turn_number,status) VALUES(?,?,'waiting')", [scenario.gameId, 12]);
+    await navigation.order(scenario.ships.alpha, { x: 500, y: 500 }, {
+        userId: scenario.users.alpha,
+        gameId: scenario.gameId
+    });
+
+    const resolveTurn = createTurnResolver({
+        db,
+        io: { to: () => ({ emit: event => events.push(event) }) },
+        eventBus: { emit() {} },
+        EVENTS: { TurnResolved: 'turn-resolved', TurnStarted: 'turn-started' }
+    });
+    await resolveTurn(scenario.gameId, 12);
+
+    assert.equal((await get('SELECT status FROM turns WHERE game_id=? AND turn_number=?', [scenario.gameId, 12])).status, 'completed');
+    assert.deepEqual(await get('SELECT x,y FROM sector_objects WHERE id=?', [scenario.ships.alpha]), { x: 500, y: 500 });
+    assert.deepEqual(await incidentRow(scenario.incidentId), {
+        status: 'resolved',
+        resolved_turn: 12,
+        outcome: 'stabilized',
+        resolved_by_object_id: scenario.ships.alpha,
+        resolved_by_user_id: scenario.users.alpha
+    });
+    assert.deepEqual(await get('SELECT health FROM regions WHERE sector_id=? AND region_id=?', [scenario.sectorId, 'A']), { health: scenario.health });
+    assert.ok(events.includes('turn-resolved'));
 });
 
 test('an unresolved due incident expires once and applies its health loss', async () => {

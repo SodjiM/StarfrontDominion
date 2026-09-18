@@ -146,6 +146,25 @@ test('incident definitions map prototype archetypes and fall back safely', () =>
     assert.equal(incidentDefinitionForArchetype(null).key, 'navigation-instability');
 });
 
+test('arrival targets stay inside both a custom region and navigable world bounds', async () => {
+    const scenario = await createScenario('standard', 70);
+    await run('UPDATE sectors SET width=6000,height=6000 WHERE id=?', [scenario.sectorId]);
+    await run("UPDATE regions SET cells_json=? WHERE sector_id=? AND region_id='A'", [
+        JSON.stringify([{ row: 2, col: 2 }]),
+        scenario.sectorId
+    ]);
+    const target = await new RegionIncidentService(db).findIncidentTarget({
+        sector_id: scenario.sectorId,
+        region_id: 'A',
+        width: 6000,
+        height: 6000,
+        cells_json: JSON.stringify([{ row: 2, col: 2 }])
+    }, incidentDefinitionForArchetype('standard'), 17);
+    assert.ok(target);
+    assert.ok(target.x >= 4000 && target.x < 5000);
+    assert.ok(target.y >= 4000 && target.y < 5000);
+});
+
 test('generation preserves regional health for every supported incident archetype', async () => {
     for (const archetype of ['asteroid-heavy', 'wormhole', 'dark-nebula', 'standard']) {
         const scenario = await createScenario(archetype, 57);

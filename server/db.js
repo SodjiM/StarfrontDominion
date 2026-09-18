@@ -1,12 +1,76 @@
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
+const { parseCells } = require('./services/world/region-geometry');
+const { findDeterministicIncidentTarget } = require('./services/world/incident-target-placement');
 
 const db = new sqlite3.Database(process.env.DATABASE_PATH || './database.sqlite');
 
 // Initialize tables sequentially to avoid issues
 let dbReadyResolve;
 const dbReady = new Promise((resolve) => { dbReadyResolve = resolve; });
+
+function dbAll(sql, params = []) {
+    return new Promise((resolve, reject) => db.all(sql, params, (error, rows) => error ? reject(error) : resolve(rows || [])));
+}
+
+// Incident targets were added after some campaigns already existed.  Keep the
+// migration independent of RegionIncidentService (which imports this module),
+// but use the same physical-placement and region-geometry contracts as new
+// incident generation so old incidents receive a valid courier destination.
+async function backfillIncidentTargets() {
+    const incidents = await dbAll(
+        `SELECT i.id,i.sector_id,i.region_id,i.created_turn,i.target_x,i.target_y,s.width,s.height,r.cells_json
+         FROM region_incidents i
+         JOIN sectors s ON s.id=i.sector_id
+         JOIN regions r ON r.sector_id=i.sector_id AND r.region_id=i.region_id
+         WHERE i.status='active'
+         ORDER BY i.id`
+    );
+    for (const incident of incidents) {
+        const cells = parseCells(incident.cells_json)
+            .filter(cell => Number.isInteger(Number(cell.row)) && Number.isInteger(Number(cell.col)))
+            .sort((a, b) => Number(a.row) - Number(b.row) || Number(a.col) - Number(b.col));
+        if (!cells.length) continue;
+        const width = Math.max(1, Number(incident.width) || 5000);
+        const height = Math.max(1, Number(incident.height) || 5000);
+        const cellWidth = width / 3;
+        const cellHeight = height / 3;
+        const firstCell = cells[0];
+        const legacyCenter = {
+            x: Math.floor((Number(firstCell.col) + 0.5) * cellWidth),
+            y: Math.floor((Number(firstCell.row) + 0.5) * cellHeight)
+        };
+        const missingTarget = incident.target_x == null || incident.target_y == null;
+        const rawLegacyTarget = Number(incident.target_x) === legacyCenter.x && Number(incident.target_y) === legacyCenter.y;
+        if (!missingTarget && !rawLegacyTarget) continue;
+        const target = await findDeterministicIncidentTarget({
+            db,
+            sectorId: incident.sector_id,
+            regionId: incident.region_id,
+            cellsJson: incident.cells_json,
+            width,
+            height,
+            seed: ['legacy-incident-target', incident.id, incident.sector_id, incident.region_id, incident.created_turn].join(':'),
+            mover: { id: null, type: 'ship', meta: { role: 'courier', blueprintId: 'swift-courier' } }
+        });
+        if (!target) {
+            await new Promise((resolve, reject) => db.run(
+                `UPDATE region_incidents
+                 SET status='cancelled',outcome='migration_no_reachable_target',updated_at=CURRENT_TIMESTAMP
+                 WHERE id=? AND status='active'`,
+                [incident.id],
+                error => error ? reject(error) : resolve()
+            ));
+            continue;
+        }
+        await new Promise((resolve, reject) => db.run(
+            'UPDATE region_incidents SET target_x=?,target_y=? WHERE id=? AND status=\'active\'',
+            [target.x, target.y, incident.id],
+            error => error ? reject(error) : resolve()
+        ));
+    }
+}
 
 const initializeDatabase = async () => {
     try {
@@ -272,20 +336,9 @@ const initializeDatabase = async () => {
                                      WHERE resolution_rule IS NULL OR resolution_rule=''`,
                                     (resolutionError) => {
                                         if (resolutionError) return reject(resolutionError);
-                                        db.run(
-                                            `UPDATE region_incidents
-                                             SET target_x=COALESCE(target_x,(
-                                                    SELECT CAST((json_extract(r.cells_json,'$[0].col')+0.5)*(COALESCE(s.width,5000)/3.0) AS INTEGER)
-                                                    FROM regions r JOIN sectors s ON s.id=r.sector_id
-                                                    WHERE r.sector_id=region_incidents.sector_id AND r.region_id=region_incidents.region_id
-                                                )),
-                                                 target_y=COALESCE(target_y,(
-                                                    SELECT CAST((json_extract(r.cells_json,'$[0].row')+0.5)*(COALESCE(s.height,5000)/3.0) AS INTEGER)
-                                                    FROM regions r JOIN sectors s ON s.id=r.sector_id
-                                                    WHERE r.sector_id=region_incidents.sector_id AND r.region_id=region_incidents.region_id
-                                                ))`,
-                                            (targetError) => targetError ? reject(targetError) : resolve()
-                                        );
+                                        backfillIncidentTargets()
+                                            .then(resolve)
+                                            .catch(reject);
                                     }
                                 );
                             });
